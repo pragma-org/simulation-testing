@@ -1,0 +1,104 @@
+cabal-version:   3.0
+name:            moskstraumen
+version:         0.0.0
+
+-- synopsis:
+-- description:
+license:         BSD-2-Clause
+license-file:    LICENSE
+author:          Stevan A
+maintainer:      stevana@users.noreply.github.com
+
+-- copyright:
+category:        Testing
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+-- extra-source-files:
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import:             warnings
+  exposed-modules:
+    Moskstraumen.Codec
+    Moskstraumen.Example.Broadcast
+    Moskstraumen.Example.Echo
+    Moskstraumen.Interface
+    Moskstraumen.Marshal
+    Moskstraumen.Message
+    Moskstraumen.Node
+    Moskstraumen.NodeId
+    Moskstraumen.Parse
+    Moskstraumen.Prelude
+    Moskstraumen.Pretty
+    Moskstraumen.Simulate
+
+  default-extensions:
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DuplicateRecordFields
+    GeneralizedNewtypeDeriving
+    LambdaCase
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    StrictData
+
+  -- NOTE: GHC 9.2 is needed for OverloadedRecordDot and
+  -- OverloadedRecordUpdate, and that version uses base 4.16.
+  build-depends:
+    , aeson       >=2.0.2.0
+    , base        >=4.16
+    , bytestring
+    , containers
+    , mtl
+    , process
+    , random
+    , scientific
+    , text
+    , vector
+
+  hs-source-dirs:     src
+  default-language:   Haskell2010
+
+executable echo
+  import:           warnings
+  main-is:          Main.hs
+
+  -- other-modules:
+  -- other-extensions:
+  build-depends:
+    , base
+    , moskstraumen
+
+  hs-source-dirs:   app/echo
+  default-language: Haskell2010
+
+executable broadcast
+  import:           warnings
+  main-is:          Main.hs
+
+  -- other-modules:
+  -- other-extensions:
+  build-depends:
+    , base
+    , moskstraumen
+
+  hs-source-dirs:   app/broadcast
+  default-language: Haskell2010
+
+test-suite test
+  import:           warnings
+  default-language: Haskell2010
+
+  -- other-modules:
+  -- other-extensions:
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , moskstraumen
