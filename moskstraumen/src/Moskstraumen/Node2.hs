@@ -21,7 +21,10 @@ import Moskstraumen.Pretty
 ------------------------------------------------------------------------
 
 data NodeF state input output x
-  = SetPeers [NodeId] x
+  = GetNodeId (NodeId -> x)
+  | GetPeers ([NodeId] -> x)
+  | SetPeers [NodeId] x
+  | GetSender (NodeId -> x)
   | Send NodeId input x
   | Reply output x
   | RPC
@@ -62,11 +65,20 @@ instance Monad (Node' state input output) where
 
 ------------------------------------------------------------------------
 
+getNodeId :: Node' state input output NodeId
+getNodeId = Fix (GetNodeId Pure)
+
+getPeers :: Node' state input output [NodeId]
+getPeers = Fix (GetPeers Pure)
+
 setPeers :: [NodeId] -> Node state input output
 setPeers neighbours = Fix (SetPeers neighbours (Pure ()))
 
 send :: NodeId -> input -> Node state input output
 send toNodeId input = Fix (Send toNodeId input (Pure ()))
+
+getSender :: Node' state input output NodeId
+getSender = Fix (GetSender Pure)
 
 reply :: output -> Node state input output
 reply output = Fix (Reply output (Pure ()))
@@ -118,6 +130,8 @@ example = do
   text <- getState
   info text
   putState (text <> text)
+  sender <- getSender
+  info ("sender: " <> unNodeId sender)
 
 ------------------------------------------------------------------------
 
@@ -174,9 +188,18 @@ runNode' ::
       a
 runNode' (Pure x) = return x
 runNode' (m :>>= k) = runNode' m >>= runNode' . k
+runNode' (Fix (GetNodeId rest)) = do
+  nodeState <- get
+  runNode' (rest nodeState.self)
+runNode' (Fix (GetPeers rest)) = do
+  nodeState <- get
+  runNode' (rest nodeState.neighbours)
 runNode' (Fix (SetPeers myNeighbours rest)) = do
   modify (\nodeState -> nodeState {neighbours = myNeighbours})
   runNode' rest
+runNode' (Fix (GetSender rest)) = do
+  nodeContext <- ask
+  runNode' (rest nodeContext.request.src)
 runNode' (Fix (Send toNodeId input rest)) = do
   nodeContext <- ask
   nodeState <- get
@@ -337,7 +360,18 @@ eventLoop node initialState validateMarshal runtime =
               -- XXX: Is there a better way to deal with this?
               let nodeContext =
                     NodeContext
-                      { request = error "reply cannot be used in timers"
+                      { request =
+                          Message
+                            { src = "dummy"
+                            , dest = "dummy"
+                            , body =
+                                Payload
+                                  { kind = "reply cannot be used in timers"
+                                  , msgId = Nothing
+                                  , inReplyTo = Nothing
+                                  , fields = Map.empty
+                                  }
+                            }
                       , validateMarshal = validateMarshal
                       }
               runNode node' nodeContext nodeState {timers = timers'}
@@ -409,7 +443,7 @@ consoleRuntime codec = do
           decodeMessage line
         Just (time, timerId) -> do
           now <- getCurrentTime
-          let nanos = realToFrac (diffUTCTime now time)
+          let nanos = realToFrac (diffUTCTime time now)
               micros = round (nanos * 1_000_000)
           -- NOTE: `timeout 0` times out immediately while negative values
           -- don't, hence the `max 0`.
@@ -431,7 +465,7 @@ consoleRuntime codec = do
       hFlush stderr
     consoleSink timerWheelRef (TIMER timerId micros) = do
       now <- getCurrentTime
-      let later = addUTCTime (realToFrac (fromIntegral micros / 1_000_000_000)) now
+      let later = addUTCTime (realToFrac (fromIntegral micros / 1_000_000)) now
       modifyIORef' timerWheelRef (insertTimer later timerId)
 
 ------------------------------------------------------------------------

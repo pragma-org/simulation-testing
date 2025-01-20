@@ -8,7 +8,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 
 import Moskstraumen.Message
-import Moskstraumen.Node
+import Moskstraumen.Node2
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -32,21 +32,22 @@ type BroadcastState = Set Value
 initialState :: BroadcastState
 initialState = Set.empty
 
-broadcast :: BroadcastInput -> Node BroadcastState ()
+broadcast ::
+  BroadcastInput -> Node BroadcastState BroadcastInput BroadcastOutput
 broadcast (Init self nodeIds) = do
-  setNodeId self
-  setNeighbours nodeIds
+  info ("Initialising: " <> unNodeId self)
+  setPeers nodeIds
   reply InitOk
 broadcast (Topology nodeIds) = do
   NodeId self <- getNodeId
-  setNeighbours (nodeIds Map.! self)
+  setPeers (nodeIds Map.! self)
   reply TopologyOk
 broadcast (Broadcast msg) = do
   reply BroadcastOk
   seenMessages <- getState
   when (msg `Set.notMember` seenMessages) $ do
     modifyState (Set.insert msg)
-    neighbours <- getNeighbours
+    neighbours <- getPeers
     sender <- getSender
     let unAcked = neighbours \\ [sender]
     info
@@ -55,7 +56,7 @@ broadcast (Broadcast msg) = do
           <> "\" to "
           <> Text.pack (show unAcked)
       )
-    forM_ unAcked $ \nodeId -> rpc nodeId (Broadcast msg) $ \resp ->
+    forM_ unAcked $ \nodeId -> rpcRetryForever nodeId (Broadcast msg) $ \resp ->
       case resp of
         BroadcastOk -> do
           info ("Got ack from: " <> unNodeId nodeId)
@@ -64,19 +65,19 @@ broadcast Read = do
   seenMessages <- getState
   reply (ReadOk (Set.toList seenMessages))
 
+rpcRetryForever ::
+  NodeId
+  -> input
+  -> (output -> Node state input output)
+  -> Node state input output
+rpcRetryForever nodeId input success = do
+  info "RPC timeout, retrying..."
+  rpc nodeId input (rpcRetryForever nodeId input success) success
+
 ------------------------------------------------------------------------
 
-reply :: BroadcastOutput -> Node BroadcastState ()
-reply output = uncurry reply_ (marshalOutput output)
-
-rpc ::
-  NodeId -> BroadcastInput -> (BroadcastOutput -> Node s ()) -> Node s ()
-rpc receiver request callback =
-  rpc_ receiver (marshalInput request)
-    $ \response -> callback (unmarshalOutput response)
-
-broadcastValidate :: Parser BroadcastInput
-broadcastValidate =
+broadcastValidateInput :: Parser BroadcastInput
+broadcastValidateInput =
   asum
     [ Init
         <$ hasKind "init"
@@ -89,9 +90,10 @@ broadcastValidate =
     , Read <$ hasKind "read"
     ]
 
-marshalInput :: BroadcastInput -> (MessageKind, [(Field, Value)])
-marshalInput (Broadcast msg) = ("broadcast", [("message", msg)])
-marshalInput (Topology topology) =
+broadcastMarshalInput ::
+  BroadcastInput -> (MessageKind, [(Field, Value)])
+broadcastMarshalInput (Broadcast msg) = ("broadcast", [("message", msg)])
+broadcastMarshalInput (Topology topology) =
   ( "topology"
   ,
     [
@@ -102,23 +104,35 @@ marshalInput (Topology topology) =
     ]
   )
 
-marshalOutput :: BroadcastOutput -> (MessageKind, [(Field, Value)])
-marshalOutput InitOk = ("init_ok", [])
-marshalOutput TopologyOk = ("topology_ok", [])
-marshalOutput BroadcastOk = ("broadcast_ok", [])
-marshalOutput (ReadOk msgs) = ("read_ok", [("messages", List msgs)])
+broadcastMarshalOutput ::
+  BroadcastOutput -> (MessageKind, [(Field, Value)])
+broadcastMarshalOutput InitOk = ("init_ok", [])
+broadcastMarshalOutput TopologyOk = ("topology_ok", [])
+broadcastMarshalOutput BroadcastOk = ("broadcast_ok", [])
+broadcastMarshalOutput (ReadOk msgs) = ("read_ok", [("messages", List msgs)])
 
-unmarshalOutput :: (MessageKind, [(Field, Value)]) -> BroadcastOutput
-unmarshalOutput ("init_ok", _) = InitOk
-unmarshalOutput ("topology_ok", _) = TopologyOk
-unmarshalOutput ("broadcast_ok", _) = BroadcastOk
-unmarshalOutput ("read_ok", [("messages", List msgs)]) = ReadOk msgs
-unmarshalOutput msg = error ("unmarshalOutput: " ++ show msg)
+broadcastValidateOutput :: Parser BroadcastOutput
+broadcastValidateOutput =
+  asum
+    [ InitOk <$ hasKind "init_ok"
+    , TopologyOk <$ hasKind "topology_ok"
+    , BroadcastOk <$ hasKind "broadcast_ok"
+    , ReadOk <$ hasKind "read_ok" <*> hasListField "messages" Just
+    ]
 
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain = start broadcastValidate broadcast initialState
+libMain =
+  consoleEventLoop
+    broadcast
+    initialState
+    ValidateMarshal
+      { validateInput = broadcastValidateInput
+      , validateOutput = broadcastValidateOutput
+      , marshalInput = broadcastMarshalInput
+      , marshalOutput = broadcastMarshalOutput
+      }
 
 {-
 NFO [2025-01-16 10:54:37,275] jepsen test runner - jepsen.core {:perf {:latency-graph {:valid? true},
