@@ -20,69 +20,89 @@ import Moskstraumen.Pretty
 
 ------------------------------------------------------------------------
 
-data NodeF input output x
+data NodeF state input output x
   = SetPeers [NodeId] x
   | Send NodeId input x
   | Reply output x
-  | RPC NodeId input (Node input output) (output -> Node input output) x
+  | RPC
+      NodeId
+      input
+      (Node state input output)
+      (output -> Node state input output)
+      x
   | Log Text x
-  | After Int (Node input output) x
+  | After Int (Node state input output) x
+  | GetState (state -> x)
+  | PutState state x
 
-data Node' input output a where
-  Pure :: a -> Node' input output a
+data Node' state nput output a where
+  Pure :: a -> Node' state input output a
   (:>>=) ::
-    Node' input output a
-    -> (a -> Node' input output b)
-    -> Node' input output b
-  Fix :: NodeF input output (Node' input output a) -> Node' input output a
+    Node' state input output a
+    -> (a -> Node' state input output b)
+    -> Node' state input output b
+  Fix ::
+    NodeF state input output (Node' state input output a)
+    -> Node' state input output a
 
-type Node input output = Node' input output ()
+type Node state input output = Node' state input output ()
 
 ------------------------------------------------------------------------
 
-instance Functor (Node' input output) where
+instance Functor (Node' state input output) where
   fmap = liftM
 
-instance Applicative (Node' input output) where
+instance Applicative (Node' state input output) where
   pure = Pure
   (<*>) = ap
 
-instance Monad (Node' input output) where
+instance Monad (Node' state input output) where
   return = pure
   (>>=) = (:>>=)
 
 ------------------------------------------------------------------------
 
-setPeers :: [NodeId] -> Node input output
+setPeers :: [NodeId] -> Node state input output
 setPeers neighbours = Fix (SetPeers neighbours (Pure ()))
 
-send :: NodeId -> input -> Node input output
+send :: NodeId -> input -> Node state input output
 send toNodeId input = Fix (Send toNodeId input (Pure ()))
 
-reply :: output -> Node input output
+reply :: output -> Node state input output
 reply output = Fix (Reply output (Pure ()))
 
 rpc ::
   NodeId
   -> input
-  -> Node input output
-  -> (output -> Node input output)
-  -> Node input output
+  -> Node state input output
+  -> (output -> Node state input output)
+  -> Node state input output
 rpc toNodeId input failure success =
   Fix (RPC toNodeId input failure success (Pure ()))
 
-info :: Text -> Node input output
+info :: Text -> Node state input output
 info text = Fix (Log text (Pure ()))
 
-after :: Int -> Node input output -> Node input output
+after :: Int -> Node state input output -> Node state input output
 after millis task = Fix (After millis task (Pure ()))
 
-every :: Int -> Node input output -> Node input output
+every :: Int -> Node state input output -> Node state input output
 every millis task = after millis (task >> every millis task)
+
+getState :: Node' state input output state
+getState = Fix (GetState Pure)
+
+putState :: state -> Node state input output
+putState state = Fix (PutState state (Pure ()))
+
+modifyState :: (state -> state) -> Node state input output
+modifyState f = do
+  state <- getState
+  putState (f state)
 
 ------------------------------------------------------------------------
 
-example :: Node Int Bool
+example :: Node Text Int Bool
 example = do
   send "n1" 42
   reply True
@@ -95,6 +115,9 @@ example = do
   after 10000
     $ info "good morning"
   every 20000 (info "hi")
+  text <- getState
+  info text
+  putState (text <> text)
 
 ------------------------------------------------------------------------
 
@@ -108,22 +131,23 @@ data Effect
   | LOG Text
   | TIMER TimerId Int
 
-data NodeContext input output = NodeContext
+data NodeContext state input output = NodeContext
   { request :: Message
   , validateMarshal :: ValidateMarshal input output
   }
 
-data NodeState input output = NodeState
+data NodeState state input output = NodeState
   { self :: NodeId
   , neighbours :: [NodeId]
-  , timers :: Map TimerId (Node input output)
-  , rpcs :: Map MessageId (output -> Node input output)
+  , timers :: Map TimerId (Node state input output)
+  , rpcs :: Map MessageId (output -> Node state input output)
   , nextMessageId :: MessageId
   , nextTimerId :: TimerId
+  , state :: state
   }
 
-initialNodeState :: NodeState input output
-initialNodeState =
+initialNodeState :: state -> NodeState state input output
+initialNodeState initialState =
   NodeState
     { self = "uninitialised"
     , neighbours = []
@@ -131,18 +155,23 @@ initialNodeState =
     , rpcs = Map.empty
     , nextMessageId = 0
     , nextTimerId = 0
+    , state = initialState
     }
 
 runNode ::
-  Node input output
-  -> NodeContext input output
-  -> NodeState input output
-  -> (NodeState input output, [Effect])
+  Node state input output
+  -> NodeContext state input output
+  -> NodeState state input output
+  -> (NodeState state input output, [Effect])
 runNode node = execRWS (runNode' node)
 
 runNode' ::
-  Node' input output a
-  -> RWS (NodeContext input output) [Effect] (NodeState input output) a
+  Node' state input output a
+  -> RWS
+      (NodeContext state input output)
+      [Effect]
+      (NodeState state input output)
+      a
 runNode' (Pure x) = return x
 runNode' (m :>>= k) = runNode' m >>= runNode' . k
 runNode' (Fix (SetPeers myNeighbours rest)) = do
@@ -233,6 +262,12 @@ runNode' (Fix (After micros timeout rest)) = do
       , nextTimerId = timerId + 1
       }
   runNode' rest
+runNode' (Fix (GetState rest)) = do
+  nodeState <- get
+  runNode' (rest nodeState.state)
+runNode' (Fix (PutState state' rest)) = do
+  modify (\nodeState -> nodeState {state = state'})
+  runNode' rest
 
 ------------------------------------------------------------------------
 
@@ -249,14 +284,15 @@ data ValidateMarshal input output = ValidateMarshal
   }
 
 eventLoop ::
-  forall m input output.
+  forall m state input output.
   (Monad m) =>
-  (input -> Node input output)
+  (input -> Node state input output)
+  -> state
   -> ValidateMarshal input output
   -> Runtime m
   -> m ()
-eventLoop node validateMarshal runtime =
-  loop initialNodeState
+eventLoop node initialState validateMarshal runtime =
+  loop (initialNodeState initialState)
   where
     loop nodeState = do
       event <- runtime.source
@@ -265,7 +301,9 @@ eventLoop node validateMarshal runtime =
       loop nodeState'
       where
         handleEvent ::
-          Event -> NodeState input output -> (NodeState input output, [Effect])
+          Event
+          -> NodeState state input output
+          -> (NodeState state input output, [Effect])
         handleEvent (MessageEvent message) nodeState = do
           let nodeContext =
                 NodeContext
@@ -313,10 +351,10 @@ eventLoop node validateMarshal runtime =
 
         lookupRPC ::
           Maybe MessageId
-          -> Map MessageId (output -> Node input output)
+          -> Map MessageId (output -> Node state input output)
           -> Maybe
-              ( output -> Node input output
-              , Map MessageId (output -> Node input output)
+              ( output -> Node state input output
+              , Map MessageId (output -> Node state input output)
               )
         lookupRPC Nothing _pendingRpcs = Nothing
         lookupRPC (Just inReplyToMessageId) pendingRpcs =
@@ -399,9 +437,10 @@ consoleRuntime codec = do
 ------------------------------------------------------------------------
 
 consoleEventLoop ::
-  (input -> Node input output)
+  (input -> Node state input output)
+  -> state
   -> ValidateMarshal input output
   -> IO ()
-consoleEventLoop node validateMarshal = do
+consoleEventLoop node initialState validateMarshal = do
   runtime <- consoleRuntime jsonCodec
-  eventLoop node validateMarshal runtime
+  eventLoop node initialState validateMarshal runtime

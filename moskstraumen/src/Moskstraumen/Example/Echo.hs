@@ -14,7 +14,9 @@ data EchoInput = Init NodeId [NodeId] | Echo Text
 
 data EchoOutput = InitOk | EchoOk Text
 
-echo :: EchoInput -> Node EchoInput EchoOutput
+type EchoState = ()
+
+echo :: EchoInput -> Node EchoState EchoInput EchoOutput
 echo (Init myNodeId myNeighbours) = do
   info ("Initalising: " <> unNodeId myNodeId)
   setPeers myNeighbours
@@ -29,6 +31,7 @@ libMain :: IO ()
 libMain =
   consoleEventLoop
     echo
+    ()
     ValidateMarshal
       { validateInput = echoValidateInput
       , validateOutput = echoValidateOutput
