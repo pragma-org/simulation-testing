@@ -158,7 +158,7 @@ echoPureDeployment :: Deployment IO
 echoPureDeployment =
   Deployment
     { nodeCount = 1
-    , spawn = undefined -- pureSpawn echoValidate echo ()
+    , spawn = pureSpawn echo () echoValidateMarshal
     }
 
 s :: Seed -> IO ()

@@ -32,12 +32,16 @@ libMain =
   consoleEventLoop
     echo
     ()
-    ValidateMarshal
-      { validateInput = echoValidateInput
-      , validateOutput = echoValidateOutput
-      , marshalInput = echoMarshalInput
-      , marshalOutput = echoMarshalOutput
-      }
+    echoValidateMarshal
+
+echoValidateMarshal :: ValidateMarshal EchoInput EchoOutput
+echoValidateMarshal =
+  ValidateMarshal
+    { validateInput = echoValidateInput
+    , validateOutput = echoValidateOutput
+    , marshalInput = echoMarshalInput
+    , marshalOutput = echoMarshalOutput
+    }
 
 ------------------------------------------------------------------------
 

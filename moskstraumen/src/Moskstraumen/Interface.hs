@@ -22,37 +22,36 @@ data Interface m = Interface
 ------------------------------------------------------------------------
 
 pureSpawn ::
-  Parser input
-  -> (input -> Node state input output)
+  (input -> Node state input output)
   -> state
+  -> ValidateMarshal input output
   -> IO (Interface IO)
-pureSpawn parse node initialState = do
-  undefined
-
-{-
-ref <- newIORef (initialNodeState initialState)
-return
-  Interface
-    { handle = \message -> case runParser parse message of
-        Nothing -> return []
-        Just input -> do
-          nodeState <- readIORef ref
-          let nodeContext = NodeContext message.src message.body.msgId
-          let nodeState' = snd (runNode (node input) nodeContext nodeState)
-          outgoing <- flip foldMapM (reverse nodeState'.effects)
-            $ \effect -> do
+pureSpawn node initialState validateMarshal = do
+  nodeStateRef <- newIORef (initialNodeState initialState)
+  return
+    Interface
+      { handle = \message -> case runParser validateMarshal.validateInput message of
+          Nothing -> return []
+          Just input -> do
+            nodeState <- readIORef nodeStateRef
+            let nodeContext =
+                  NodeContext
+                    { request = message
+                    , validateMarshal = validateMarshal
+                    }
+            let (nodeState', effects) = runNode (node input) nodeContext nodeState
+            outgoing <- flip foldMapM effects $ \effect -> do
               case effect of
-                Send message' -> return [message']
-                Log text -> do
+                SEND message' -> return [message']
+                LOG text -> do
                   Text.hPutStr stderr text
                   Text.hPutStr stderr "\n"
                   hFlush stderr
                   return []
-          writeIORef ref (nodeState' {effects = []})
-          return outgoing
-    , close = return ()
-    }
- -}
+            writeIORef nodeStateRef nodeState'
+            return outgoing
+      , close = return ()
+      }
 
 ------------------------------------------------------------------------
 
