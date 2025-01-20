@@ -5,6 +5,12 @@ date: 2025-01-20
 
 # Maelstrom testing echo example
 
+In this post we'll have a look at a very simple distributed system where the
+nodes simply echo back whatever message one sends them.
+
+We'll separate the "business logic" from all the I/O involved in logging and
+sending messages.
+
 ## Functional core of SUT
 
 ```haskell
@@ -82,6 +88,10 @@ data Effect
 
 ## Manual test
 
+If we create an executable using `libMain` from above and run it, then we can
+feed it input via `stdin` and get logging on `stderr` and responses on
+`stdout`:
+
 ```
 $ cabal run echo
 {"src": "c1", "dest": "n1", "body": {"msg_id": 1, "type": "echo", "echo": "hello there"}}
@@ -90,6 +100,12 @@ Got: hello there
 ```
 
 ## Maelstrom tests
+
+Why would we want to do messaging over `stdin` and `stdout`? Well there's this
+wrapper around Jepsen, called
+[Maelstrom](https://github.com/jepsen-io/maelstrom) which takes a path to a
+binary and spawns a process per node and then does the message orchestration
+between the nodes via `stdin` and `stdout`:
 
 ```
 $ ./maelstrom test -w echo --bin echo --time-limit 5 --log-stderr --rate 10 --nodes n1
@@ -409,3 +425,16 @@ real    0m12.901s
 user    0m13.264s
 sys     0m0.606s
 ```
+
+Note that this is a language agnostic approach and the Maelstrom protocol can
+easily be ported to any language.
+
+## Conclusion
+
+We've seen how to represent simple distributed programs and how to deploy them
+and do actual I/O, in particular how to do messaging via `stdin` and `stdout`,
+as well as how this functionality can be used to Jepsen test our programs via
+Maelstrom.
+
+The Maelstrom tests made 50 echo calls and they took around 13s. Next we'll
+have a look at how we can test the same program but using simulation testing.

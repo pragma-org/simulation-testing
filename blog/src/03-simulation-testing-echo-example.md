@@ -11,12 +11,19 @@ example without modifying it.
 
 ## Using same stdin/stout as Maelstrom
 
+We start of by defining an interface between the simulator and the system under
+test (SUT).
+
 ```haskell
 data Interface m = Interface
   { handle :: Message -> m [Message]
   , close :: m ()
   }
 ```
+
+One way we can make the simulator communicate with our SUT is via pipes, i.e.
+the simulator writes incoming messages to the SUTs `stdin` and reads responses
+via `stdout`:
 
 ```haskell
 pipeInterface :: Handle -> Handle -> ProcessHandle -> Interface IO
@@ -180,7 +187,12 @@ Success
 (0.21 secs, 9,013,848 bytes)
 ```
 
+~60x faster than Jepsen
+
 ## Avoiding the overhead of the event loop
+
+We can avoid creating an event loop and hook up the interface directly to the
+SUT state machine, effecively creating a fake:
 
 ```haskell
 pureSpawn ::
@@ -232,3 +244,5 @@ Got: hi
 Success
 (0.01 secs, 3,515,256 bytes)
 ```
+
+~20x faster than above, or 1300x faster than Jepsen.
