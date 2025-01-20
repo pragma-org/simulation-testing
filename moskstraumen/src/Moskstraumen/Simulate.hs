@@ -9,7 +9,7 @@ import System.Random
 import Moskstraumen.Example.Echo
 import Moskstraumen.Interface
 import Moskstraumen.Message
-import Moskstraumen.Node
+import Moskstraumen.Node2
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 
@@ -87,8 +87,8 @@ test deployment initialMessages prng = do
       deployment
       initialMessages
       prng
-  traverse_ (.close) world.nodes
   resultingTrace <- runWorld world
+  traverse_ (.close) world.nodes
   -- XXX: assert something about trace, e.g.:
 
   -- if sat
@@ -149,7 +149,7 @@ echoPipeDeployment =
     { nodeCount = 1
     , spawn =
         pipeSpawn
-          "/home/stevan/src/moskstraumen/dist-newstyle/build/x86_64-linux/ghc-9.10.1/moskstraumen-0.0.0/x/echo/build/echo/echo"
+          "/home/stevan/src/simulation-testing/moskstraumen/dist-newstyle/build/x86_64-linux/ghc-9.10.1/moskstraumen-0.0.0/x/echo/build/echo/echo"
     }
 
 ------------------------------------------------------------------------
