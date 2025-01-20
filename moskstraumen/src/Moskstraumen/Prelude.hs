@@ -3,10 +3,15 @@ module Moskstraumen.Prelude (module X, Generic, Text, module Moskstraumen.Prelud
 import Control.Monad as X
 import Data.Foldable as X
 import Data.Functor.Identity as X
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.String as X
 import Data.Text (Text)
+import Data.Word as X
 import GHC.Generics (Generic)
 import Prelude as X
+
+------------------------------------------------------------------------
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
@@ -21,3 +26,8 @@ foldMapM f xs = foldl step return xs mempty
   where
     step r x z = f x >>= \y -> r $! z `mappend` y
 {-# INLINE foldMapM #-}
+
+lookupDelete :: (Ord k) => k -> Map k v -> Maybe (v, Map k v)
+lookupDelete k m = case Map.lookup k m of
+  Nothing -> Nothing
+  Just v -> Just (v, Map.delete k m)

@@ -1,5 +1,6 @@
 module Moskstraumen.Node (module Moskstraumen.Node) where
 
+import Control.Monad.Reader
 import Control.Monad.State.Strict hiding (state)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Map.Strict (Map)
@@ -17,14 +18,18 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
-newtype Node state a = Node {unNode :: State (NodeState state) a}
+newtype Node state a = Node {unNode :: ReaderT NodeContext (State (NodeState state)) a}
   deriving newtype
-    (Functor, Applicative, Monad, MonadState (NodeState state))
+    (Functor, Applicative, Monad, MonadReader NodeContext, MonadState (NodeState state))
+
+data NodeContext = NodeContext
+  { sender :: NodeId
+  , msgId :: Maybe MessageId
+  }
 
 data NodeState state = NodeState
   { nodeId :: NodeId
   , neighbours :: [NodeId]
-  , incoming :: Maybe Message
   , effects :: [Effect]
   , nextMsgId :: Word64
   , state :: state
@@ -40,15 +45,14 @@ initialNodeState initialState =
   NodeState
     { nodeId = "Uninitialised"
     , neighbours = []
-    , incoming = Nothing
     , effects = []
     , nextMsgId = 0
     , state = initialState
     , callbacks = Map.empty
     }
 
-runNode :: Node s a -> NodeState s -> (a, NodeState s)
-runNode = runState . unNode
+runNode :: Node s a -> NodeContext -> NodeState s -> (a, NodeState s)
+runNode node context state = runState (runReaderT (unNode node) context) state
 
 ------------------------------------------------------------------------
 
@@ -73,11 +77,7 @@ getNeighbours = do
   return nodeState.neighbours
 
 getSender :: Node s NodeId
-getSender = do
-  nodeState <- get
-  case nodeState.incoming of
-    Nothing -> error "getSender"
-    Just msg -> return msg.src
+getSender = sender <$> ask
 
 modifyState :: (state -> state) -> Node state ()
 modifyState f = modify (\nodeState -> nodeState {state = f nodeState.state})
@@ -120,20 +120,15 @@ send_ receiver payload = do
 
 reply_ :: MessageKind -> [(Field, Value)] -> Node s ()
 reply_ messageKind fieldValues = do
-  nodeState <- get
-  let request =
-        maybe
-          (error "reply_: impossible, no incoming message")
-          id
-          nodeState.incoming
+  NodeContext { sender = senderNodeId, msgId = requestMessageId } <- ask
   let payload =
         Payload
           { kind = messageKind
-          , msgId = request.body.msgId
-          , inReplyTo = request.body.msgId
+          , msgId = requestMessageId
+          , inReplyTo = requestMessageId
           , fields = Map.fromList fieldValues
           }
-  send_ request.src payload
+  send_ senderNodeId payload
 
 rpc_ ::
   NodeId
@@ -164,13 +159,16 @@ start parse node initialState = do
           let nodeState' = case lookupCallback message.body.inReplyTo nodeState of
                 Nothing -> case runParser parse message of
                   Nothing -> error ("Unknown request: " <> show message)
-                  Just input -> snd (runNode (node input) nodeState {incoming = Just message})
+                  Just input -> do
+                    let nodeContext = NodeContext message.src message.body.msgId
+                    snd (runNode (node input) nodeContext nodeState)
                 Just (inReplyToMessageId, callback) ->
                   let nodeState'' =
                         snd
                           ( runNode
                               (callback (message.body.kind, Map.toList message.body.fields))
-                              nodeState {incoming = Just message}
+                              (NodeContext message.src message.body.msgId)
+                              nodeState
                           )
                   in  nodeState''
                         { callbacks = Map.delete inReplyToMessageId nodeState''.callbacks

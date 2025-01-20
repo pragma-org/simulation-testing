@@ -3,7 +3,7 @@ module Moskstraumen.Example.Echo (module Moskstraumen.Example.Echo) where
 import Control.Applicative
 
 import Moskstraumen.Message
-import Moskstraumen.Node
+import Moskstraumen.Node2
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -14,12 +14,10 @@ data EchoInput = Init NodeId [NodeId] | Echo Text
 
 data EchoOutput = InitOk | EchoOk Text
 
-type EchoState = ()
-
-echo :: EchoInput -> Node EchoState ()
-echo (Init self neighbours) = do
-  setNodeId self
-  info ("Initalised: " <> unNodeId self)
+echo :: EchoInput -> Node EchoInput EchoOutput
+echo (Init myNodeId myNeighbours) = do
+  info ("Initalising: " <> unNodeId myNodeId)
+  setPeers myNeighbours
   reply InitOk
 echo (Echo text) = do
   info ("Got: " <> text)
@@ -28,20 +26,22 @@ echo (Echo text) = do
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain = start echoValidate echo ()
+libMain =
+  consoleEventLoop
+    echo
+    ValidateMarshal
+      { validateInput = echoValidateInput
+      , validateOutput = echoValidateOutput
+      , marshalInput = echoMarshalInput
+      , marshalOutput = echoMarshalOutput
+      }
 
 ------------------------------------------------------------------------
 
 -- XXX: make this generic...
 
-class Marshal a where
-  marshal :: a -> (MessageKind, [(Field, Value)])
-
-reply :: (Marshal output) => output -> Node EchoState ()
-reply output = uncurry reply_ (marshal output)
-
-echoValidate :: Parser EchoInput
-echoValidate =
+echoValidateInput :: Parser EchoInput
+echoValidateInput =
   asum
     [ Init
         <$ hasKind "init"
@@ -52,6 +52,23 @@ echoValidate =
         <*> hasTextField "echo"
     ]
 
-instance Marshal EchoOutput where
-  marshal InitOk = ("init_ok", [])
-  marshal (EchoOk text) = ("echo_ok", [("echo", String text)])
+echoValidateOutput :: Parser EchoOutput
+echoValidateOutput =
+  asum
+    [ InitOk <$ hasKind "init_ok"
+    , EchoOk <$ hasKind "echo_ok" <*> hasTextField "echo"
+    ]
+
+echoMarshalInput :: EchoInput -> (MessageKind, [(Field, Value)])
+echoMarshalInput (Init myNodeId myNeighbours) =
+  ( "init"
+  ,
+    [ ("node_id", String (unNodeId myNodeId))
+    , ("node_ids", List (map (String . unNodeId) myNeighbours))
+    ]
+  )
+echoMarshalInput (Echo text) = ("echo", [("echo", String text)])
+
+echoMarshalOutput :: EchoOutput -> (MessageKind, [(Field, Value)])
+echoMarshalOutput InitOk = ("init_ok", [])
+echoMarshalOutput (EchoOk text) = ("echo_ok", [("echo", String text)])

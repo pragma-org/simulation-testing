@@ -34,7 +34,8 @@ pureSpawn parse node initialState = do
           Nothing -> return []
           Just input -> do
             nodeState <- readIORef ref
-            let nodeState' = snd (runNode (node input) (nodeState {incoming = Just message}))
+            let nodeContext = NodeContext message.src message.body.msgId
+            let nodeState' = snd (runNode (node input) nodeContext nodeState)
             outgoing <- flip foldMapM (reverse nodeState'.effects)
               $ \effect -> do
                 case effect of

@@ -5,7 +5,7 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
-type Pretty output = output -> [(MessageKind, [(Field, Value)])]
+type Pretty output = output -> (MessageKind, [(Field, Value)])
 
 marshal :: Pretty output -> output -> Message
 marshal pretty = undefined
