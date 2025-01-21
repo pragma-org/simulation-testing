@@ -192,7 +192,7 @@ Success
 ## Avoiding the overhead of the event loop
 
 We can avoid creating an event loop and hook up the interface directly to the
-SUT state machine, effecively creating a fake:
+SUT state machine, effectively creating a fake:
 
 ```haskell
 pureSpawn ::
