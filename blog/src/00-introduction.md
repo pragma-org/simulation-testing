@@ -3,7 +3,7 @@ author: Stevan A
 date: 2025-01-21
 ---
 
-# Simulation testing
+# Introduction to simulation testing
 
 This is a series of post about simulation testing. In this post, which is the
 first in the series, we'll start by explaining the origins of and motivation
