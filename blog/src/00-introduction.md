@@ -196,7 +196,8 @@ a warm up for then later simulation testing the exact same example.
     2. https://dropbox.tech/infrastructure/-testing-our-new-sync-engine
 
 [^5]: Tigerbeetle has several videos about their simulation testing:
-    1. [TigerStyle! (Or How To Design Safer Systems in Less Time)] by Joran
+    1. [TigerStyle! (Or How To Design Safer Systems in Less
+       Time)](https://www.youtube.com/watch?v=w3WYdYyjek4) by Joran
        Dirk Greef (Systems Distributed, 2023);
     2. Joran Dirk Greef's talk [SimTigerBeetle (Director's
        Cut)](https://www.youtube.com/watch?v=Vch4BWUVzMM) (2023);
