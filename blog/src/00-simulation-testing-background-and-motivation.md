@@ -71,7 +71,7 @@ What are the results from this kind of testing? Will
 
 > I think we only ever had one or two bugs reported by a customer. Ever.
 
-and that:
+Will continues saying:
 
 > Kyle Kingsbury aka “aphyr” didn’t even bother testing it with Jepsen, because
 > he didn’t think he’d find anything:
@@ -84,9 +84,15 @@ found problems that simulators missed, which makes sense given that there can
 obviously be bugs in the simulator itself.
 
 Simulation testing has since been adopted by other companies, in particular
-Dropbox[^4] which in turn inspired TigerbeetleDB[^5]. [IOG](https://iog.io/)
-also implemented simulation testing, but taking a seemingly different approach
-to that of FoundationDB[^6].
+Dropbox[^4] which in turn inspired TigerBeetleDB[^5]. Joran Dirk Greef,
+TigerBeetle's CEO, has [claimed](https://youtu.be/w3WYdYyjek4?t=849) that their
+simulation testing helped them get the same confidence that would normal take
+10 years to get for a consensus algorithm and storage engine using conventional
+testing, within a single year, i.e. a 10x improvement how fast the system can
+get production ready.
+
+IOG also implemented simulation testing, but taking a seemingly different
+approach to that of FoundationDB[^6].
 
 As a final note, let me close by saying that the people behind FoundationDB
 went on to found Antithesis and spent 5 years building a language agnostic
@@ -94,32 +100,64 @@ simulator by implementing a deterministic hypervisor.
 
 ## Related testing techniques
 
+If you've done testing in the distributed systems space, then simulation
+testing might remind you of:
+
 * Property-based testing with a (state machine) model as oracle
-* Chaos testing
+* Chaos engineering
 * Jepsen
 
-The main difference is that simulation testing is deterministic and "mocks"
-time, which means that we can reproduce failures reliably and not have to wait
-for timeouts to happen in real time (which speeds up testing).
+These are all related to simulation testing. However the main difference is
+that simulation testing is deterministic and "mocks" time, which means that we
+can reproduce failures reliably and not have to wait for timeouts to happen in
+real time (which speeds up testing).
+
+We've already covered how we can achieve determinism, typically this involves
+designing the system with simulation in mind from the ground up, or a major
+refactor which abstracts away all non-determinism behind interfaces.
+
+Regarding speeding up time, this can be done in different ways. One way is to
+do it like discrete-event simulators do:
+
+  1. Each network message (or event more generally) gets assigned an arrival
+     time;
+  2. When the message is delivered by the simulator to the receiving node, the
+     clock of the node is advanced to the arrival time;
+  3. All timeouts and messages resulting from the timeouts triggering are
+     collected by the simulator and assigned random arrival times;
+  4. The message is then sent to the receiving node, any outgoing messages are
+     again collected and assigned random arrival times by the simulator;
+  5. The process repeats until there are no more client requests or some
+     predetermined time T has passed.
+
+Property-based testing typically doesn't involve fault-injection, although
+there's nothing that stops one from adding it. Jepsen and Chaos engineering
+always involve fault-injection, however not in deterministic and reproducible
+way. For example, Jepsen will introduce network partitions by using `iptables`
+to isolate nodes from each other. This is so coarse grained that it will result
+in slightly different messages being dropped, due to timing factors, where as
+with simulation testing you can always drop a specific message
+deterministically.
 
 ## Plan for and overview of this series
 
-Now that we've gone through what simulation testing is and how it's useful,
-let's have a look at what the plan is for the remaining posts in this
-series.
-
-* Language agnostic
-* Cheap (in the order of 2 days rather than 2 years)
-
-## Conclusion
-
 Having explained what simulation testing is, its origins and how it's
 different from other similar testing techniques, as well as highlighted some
-uses of the technique in industry, we should now be ready to move on to the
-next part where we'll introduce a simple example which 
+uses of the technique in industry, we now have enough background to explain
+what this series of posts is about.
 
-give an overview of the rest of the series of posts on
-simulation testing.
+The goal of this series of posts on simulation testing is to make the technique
+more accessible. In particular we'd like to explain how simulation testing
+works in a way that is:
+
+* Language agnostic (can be ported to any language and capable of testing
+  systems written in different languages);
+* Easy to implement (in the order of a couple of days rather than a couple of
+  years).
+
+As far as I know no prior work has been done in this direction. Stay tuned for
+the next post where we'll start by Jepsen testing a simple echo node example as
+a warm up for then later simulation testing the exact same example.
 
 
 [^1]: Although there's an interesting reference in the (in)famous NATO software
