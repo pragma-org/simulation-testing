@@ -1,29 +1,96 @@
+---
+author: Stevan A
+date: 2025-01-21
+---
+
 # Simulation testing
 
 This is a series of post about simulation testing. In this post, which is the
-first in the series, we'll start by giving explaining the origins and
-motivation of simulation testing.
+first in the series, we'll start by explaining the origins of and motivation
+behind simulation testing, as well as give an overview of the posts
+in the rest of the series.
 
 ## Metaphor
 
-I know nothing about building airplanes, but I could imagine that having access
-to a wind tunnel when building an airplane could be useful. Being able to
-simulate harsh conditions, such as a storm, without waiting for one to happen
-in nature must be a massive time saver.
+The fastest way, that I know of, to get the essence of the idea behind
+simulation testing across is by means of a metaphor.
+
+Imagine you are about to start building an aircraft. Even if you don't know
+much about aeronautics (I certainly don't), I hope that you'll agree that
+having access to a wind tunnel for testing purposes is probably a good idea.
+
+My reasoning is that being able to simulate harsh weather conditions, such as a
+storm, without 1) having to waiting for one to happen in nature and 2) risk
+losing your aircraft to the storm, in the case of your construction not being
+solid enough, must be a massive time and cost saver.
 
 Simulation testing can be thought of as the wind tunnel equivalent for
 distributed systems. It allows us to simulate and test under rare network
-conditions, without having to wait for them to occur.
+conditions, without having to wait for them to occur and without risking to
+lose customer data.
 
 ## Background
 
 Simulation testing was probably first popularised by Will Wilson in his
 StrangeLoop 2014 [talk](https://www.youtube.com/watch?v=4fFDFbi3toc)[^1] about
-how FoundationDB is tested.
+how FoundationDB is tested. If you prefer reading, see the FoundationDB
+[documentation](https://apple.github.io/foundationdb/testing.html) instead[^2].
 
-If you prefer reading, see the FoundationDB
-[documentation](https://apple.github.io/foundationdb/testing.html) or Tyler
-Neely's [post](https://sled.rs/simulation.html) instead.
+In the talk Will explains that the team spent the first *two years* building a
+custom C++ preprocessor and a simulator, before they implemented the database
+using the custom language targeting the simulation.
+
+This first version didn't do any real networking or stable storage, all
+networking and storage was simulated using in-memory data structures. 
+
+In fact all sources of non-deterministic are abstracted away and hidden behind
+interfaces. These interfaces are then implemented by the simulator. The
+simulator is parametrised by a seed for a deterministic pseudo-random number
+generator (PRNG), which is used to introduce randomness without breaking
+determinism. For example the order in which messages arrive is controlled by
+the simulator and permuting the seed can result in different message orders.
+
+The PRNG can also be used to inject faults, e.g. every time a message gets
+sent between the nodes in the system, roll a 100-sided die and if we get 1,
+then don't deliver that message. Or every time we try to write something to
+disk, don't write with some small probability. Or sometimes crash a node, etc.
+
+So the overall testing strategy is: generate random client requests, introduce
+faults while serving the requests, make sure no assertions fail while serving
+the requests, and potentially make some global assertions across all nodes
+after the tests, e.g. all nodes have the same data or the client requests and
+responses all linearise, etc. If anything fails we can share the seed with out
+colleagues which can reproduce the exact same test execution and outcome.
+
+Once many such tests passed, FoundationDB introduced implementations of
+interfaces that actually did real networking, storage, random number generation
+and so on, which could then be deployed outside of the simulation so to say.
+
+What are the results from this kind of testing? Will
+[said](https://antithesis.com/blog/is_something_bugging_you/):
+
+> I think we only ever had one or two bugs reported by a customer. Ever.
+
+and that:
+
+> Kyle Kingsbury aka “aphyr” didn’t even bother testing it with Jepsen, because
+> he didn’t think he’d find anything:
+
+![Aphyr's tweet about testing
+FoundationDB](https://antithesis.com/blog/is_something_bugging_you/images/aphyr_twitter_fdb.png) 
+
+Kyle has said[^3] that that quote is a bit exaggerated and that Jepsen has
+found problems that simulators missed, which makes sense given that there can
+obviously be bugs in the simulator itself.
+
+Simulation testing has since been adopted by other companies, in particular
+Dropbox[^4] which in turn inspired TigerbeetleDB[^5]. [IOG](https://iog.io/)
+also implemented simulation testing, but taking a seemingly different approach
+to that of FoundationDB[^6].
+
+As a final note, let me close by saying that the people behind FoundationDB
+went on to found Antithesis and spent 5 years building a language agnostic
+simulator by implementing a deterministic hypervisor.
 
 ## Related testing techniques
 
@@ -35,27 +102,24 @@ The main difference is that simulation testing is deterministic and "mocks"
 time, which means that we can reproduce failures reliably and not have to wait
 for timeouts to happen in real time (which speeds up testing).
 
-## Uses in industry
+## Plan for and overview of this series
 
-* FoundationDB
-* Dropbox
-  + https://dropbox.tech/infrastructure/rewriting-the-heart-of-our-sync-engine
-  + https://dropbox.tech/infrastructure/-testing-our-new-sync-engine
-* Tigerbeetle
-  + https://youtu.be/AGxAnkrhDGY
-* Antithesis
+Now that we've gone through what simulation testing is and how it's useful,
+let's have a look at what the plan is for the remaining posts in this
+series.
 
-## Other posts
-
-* https://notes.eatonphil.com/2024-08-20-deterministic-simulation-testing.html
+* Language agnostic
+* Cheap (in the order of 2 days rather than 2 years)
 
 ## Conclusion
 
-Having explained what simulation testing is, explained its origins and how it's
+Having explained what simulation testing is, its origins and how it's
 different from other similar testing techniques, as well as highlighted some
-uses of the technique in industry, we are ready to move on to the next part
-where we'll give an overview of the rest of the series of posts on simulation
-testing.
+uses of the technique in industry, we should now be ready to move on to the
+next part where we'll introduce a simple example which 
+
+give an overview of the rest of the series of posts on
+simulation testing.
 
 
 [^1]: Although there's an interesting reference in the (in)famous NATO software
@@ -82,3 +146,65 @@ testing.
     >       modules that are deeper and more detailed goes on with the simulation
     >       model controlling, as it were, the place and order in which these things
     >       are done."
+
+[^2]: Other posts about simulation testing that are worth reading include:
+    * Tyler Neely's [post](https://sled.rs/simulation.html) instead;
+    * Phil Eaton's [post](https://notes.eatonphil.com/2024-08-20-deterministic-simulation-testing.html).
+
+[^3]: I can't find the reference right now.
+
+[^4]: Dropbox has written two posts about it:
+    1. https://dropbox.tech/infrastructure/rewriting-the-heart-of-our-sync-engine
+    2. https://dropbox.tech/infrastructure/-testing-our-new-sync-engine
+
+[^5]: Tigerbeetle has several videos about their simulation testing:
+    1. [TigerStyle! (Or How To Design Safer Systems in Less Time)] by Joran
+       Dirk Greef (Systems Distributed, 2023);
+    2. Joran Dirk Greef's talk [SimTigerBeetle (Director's
+       Cut)](https://www.youtube.com/watch?v=Vch4BWUVzMM) (2023);
+    3. Aleksei "matklad" Kladov's talk [A Deterministic Walk Down TigerBeetle’s
+       main() Street](https://youtu.be/AGxAnkrhDGY) (P99 CONF, 2023) .
+
+[^6]: IOG published a
+    [paper](http://www.cse.chalmers.se/~rjmh/tfp/proceedings/TFP_2020_paper_11.pdf)
+    called "Flexibility with Formality: Practical Experience with Agile Formal
+    Methods in Large-Scale Functional Programming" (2020), where they write:
+
+    > "Both the network and consensus layers must make significant use of
+    > concurrency which is notoriously hard to get right and to test. We
+    > use Software Transactional Memory (STM) to manage the internal state
+    > of a node. While STM makes it much easier to write correct concurrent
+    > code, it is of course still possible to get wrong, which leads to
+    > intermittent failures that are hard to reproduce and debug.
+    >
+    > In order to reliably test our code for such concurrency bugs,
+    > we wrote a simulator that can execute the concurrent code with
+    > both timing determinism and giving global observability, producing
+    > execution traces. This enables us to write property tests that can
+    > use the execution traces and to run the tests in a deterministic
+    > way so that any failures are always reproducible.  The use of the
+    > mini-protocol design pattern, the encoding of protocol interactions
+    > in session types and the use of a timing reproducable simulation has
+    > yielded several advantages:
+    >
+    >   * Adding new protocols (for new functionality) with strong
+    >     assurance that they will not interact adversly with existing
+    >     functionality and/or performance consistency.
+    >
+    >   * Consistent approaches (re-usable design approaches) to issues
+    >     of latency hiding, intra mini-protocol flow control and
+    >     timeouts / progress criteria.
+    >
+    >   * Performance consistent protocol layer abstraction /
+    >     subsitution: construct real world realistic timing for operation
+    >     without complexity of simulating all the underlying layer protocol
+    >     complexity. This helps designs / development to maintain performance
+    >     target awareness during development.
+    >
+    >   * Consitent error propagation and mitigation (mini protocols to
+    >     a peer live/die together) removing issues of resource lifetime
+    >     management away from mini-protocol designers / implementors."
+    
+    The simulation code is open source and can be found
+    [here](https://github.com/input-output-hk/io-sim).
+    

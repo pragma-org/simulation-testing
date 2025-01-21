@@ -1,10 +1,30 @@
-# Overview
+# Table of contents
 
-Now that we've gone through what simulation testing is and how it's useful,
-let's have a look at what the the plan is for the remaining posts in this
-series.
+* Introduction
+  - Background
+  - Related work
+* https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-simulation-testing-background-and-motivation.md
 
-## Plan
+* [Echo
+  example](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
+  - Send and log effects
 
-* Language agnostic
-* Cheap
+* Broadcast example
+  - RPC and timer effects
+
+* Network faults
+
+* Statistics
+
+* CRDTs example 
+  - Timer effect
+
+* Console run-time
+
+* Networked run-time
+* Pipelining run-time?
+
+* Language and semantics?
+
+* Stable storage?
+

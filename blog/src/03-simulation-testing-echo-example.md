@@ -246,3 +246,6 @@ Success
 ```
 
 ~20x faster than above, or 1300x faster than Jepsen.
+
+A lot of Jepsen's slowness is due to the JVM booting up, and `--time-limit` and
+`--rate` can probably be tweaked to produce more requests faster.
