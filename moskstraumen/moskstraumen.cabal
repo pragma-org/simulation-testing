@@ -30,6 +30,7 @@ library
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node2
+    Moskstraumen.Node3
     Moskstraumen.NodeId
     Moskstraumen.Parse
     Moskstraumen.Prelude
