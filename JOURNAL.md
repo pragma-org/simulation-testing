@@ -1,3 +1,34 @@
+## 17-23rd Jan 2025
+
+The main highlight this week is that I finished the simulation testing
+[introduction](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-introduction.md),
+which explains what I'm working on and what the current plan is.
+
+I had a couple of meetings this week. The first one with Arnaud, where I showed
+what I got so far and what the plan is, and he seems to agree that it's the
+right way forward. The second was an onboarding with the team, were I got a bit
+of background about everyone, and this years milestones and budget was also
+shared. Finally, I joined the Amaru maintainer committee, it was very short
+because most people were away, but Damien asked if I could show something for
+the next demo day and I said I could.
+
+Otherwise I've been continuing to extend the "node language" to add more
+features that Maelstrom has. This week I added timeouts for RPC calls, periodic
+timers and synchronous RPC calls (this is something that Arnaud also seemed to
+need). 
+
+To test that these constructs work I implement the Maelstrom examples
+(broadcast, CRDT and key-value store) and run the Maelstrom tests. The
+key-value store example is still failing on the second part. Once the key-value
+store is done, there's one final Maelstrom example (raft), once that's done the
+"node language" should be expressive enough. The effort can then shift to
+simulating this language (as opposed to deploying it and using Maelstrom). The
+Maelstrom results will be used as sanity checks, as well as coverage and
+performance baseline.
+
+Next I hope to document how these Maelstrom examples work and show how
+simulation testing can be 1000x faster.
+
 ## 9-16th Jan 2025
 
 I started working on a simulation testing library/framework that can be used
