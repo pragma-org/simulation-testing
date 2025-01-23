@@ -131,6 +131,10 @@ instance ToJSON Value where
   toJSON (Int int) = Json.Number (fromInteger (fromIntegral int))
   toJSON (Map keyValues) = Json.Object (Json.fromMapText (Map.map Json.toJSON keyValues))
   toJSON (List values) = Json.Array (Vector.fromList (map Json.toJSON values))
+  toJSON (Bool bool) = Json.Bool bool
+
+instance FromJSON Value where
+  parseJSON = Json.withText "String" (pure . String)
 
 ------------------------------------------------------------------------
 

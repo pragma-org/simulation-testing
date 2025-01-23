@@ -1,8 +1,12 @@
 module Moskstraumen.Example.KeyValueStore (module Moskstraumen.Example.KeyValueStore) where
 
+import qualified Data.Aeson as Json
+import qualified Data.ByteString.Lazy as LBS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 
 import Moskstraumen.Message
 import Moskstraumen.Node3
@@ -15,16 +19,27 @@ import Moskstraumen.Prelude
 data Input
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
   | Txn {txn :: [MicroOp]}
+  | Read {key :: Text}
+  | Cas
+      { key :: Text
+      , from :: Text
+      , to :: Text
+      , create_if_not_exists :: Bool
+      }
 
 data MicroOp
   = R Key [Value]
   | Append Key Value
+  deriving (Show)
 
-type Key = Value
+type Key = Text
 
 data Output
   = InitOk
   | TxnOk {txn :: [MicroOp]}
+  | ReadOk {value :: State}
+  | CasOk
+  | Error {code :: Int, text :: Text}
 
 type State = Map Key [Value]
 
@@ -38,9 +53,12 @@ keyValueStore (Init myNodeId nodeIds) = do
   reply InitOk
 keyValueStore (Txn ops) = do
   store <- getState
-  let (store', ops') = go [] ops store
+  let (store', ops') = transact ops store
   putState store'
   reply (TxnOk ops')
+
+transact :: [MicroOp] -> State -> (State, [MicroOp])
+transact = go []
   where
     go acc [] store = (store, reverse acc)
     go acc (op : ops') store = case op of
@@ -55,8 +73,51 @@ keyValueStore (Txn ops) = do
           (Append key value : acc)
           ops'
           (Map.insertWith (\new old -> old <> new) key [value] store)
+kEY :: Text
+kEY = "root"
+
+keyValueStoreV2 :: Input -> Node () Input Output
+keyValueStoreV2 (Init myNodeId nodeIds) = do
+  info ("Initialising: " <> unNodeId myNodeId)
+  setPeers nodeIds
+  reply InitOk
+keyValueStoreV2 (Txn ops) = do
+  sender <- getSender
+  info
+    $ "Got txn from: "
+    <> unNodeId sender
+    <> " "
+    <> fromString (show ops)
+  readResponse <- syncRpc "lin-kv" (Read kEY) (info "failed")
+  store <- case readResponse of
+    Error code text -> do
+      info
+        ("Read failed, code: " <> Text.pack (show code) <> ", text: " <> text)
+      return initialState
+    ReadOk store -> do
+      info $ "Successful read: " <> fromString (show store)
+      return store
+  let (store', ops') = transact ops store
+  info $ "attempting CAS " <> toJson store <> " " <> toJson store'
+  casResponse <-
+    syncRpc
+      "lin-kv"
+      (Cas kEY (toJson store) (toJson store') True)
+      (info "failed")
+  case casResponse of
+    Error code text ->
+      info
+        ("CAS failed, code: " <> Text.pack (show code) <> ", text: " <> text)
+    CasOk -> info "CAS successful!"
+
+  sender <- getSender
+  info $ "replying to sender: " <> unNodeId sender
+  reply (TxnOk ops')
 
 ------------------------------------------------------------------------
+
+toJson :: State -> Text
+toJson = Text.decodeUtf8 . LBS.toStrict . Json.encode
 
 validateInput_ :: Parser Input
 validateInput_ =
@@ -71,27 +132,51 @@ validateInput_ =
     ]
 
 validateMicroOp :: Value -> Maybe MicroOp
-validateMicroOp (List [String "r", k, List []]) = Just (R k [])
-validateMicroOp (List [String "append", k, v]) = Just (Append k v)
+validateMicroOp (List [String "r", Int k, List []]) = Just (R (Text.pack (show k)) [])
+validateMicroOp (List [String "append", Int k, v]) = Just (Append (Text.pack (show k)) v)
 validateMicroOp _ = Nothing
 
 marshalInput_ :: Input -> (MessageKind, [(Field, Value)])
 marshalInput_ (Init _myNodeId _myNeighbours) = ("init", [])
 marshalInput_ (Txn _ops) = ("txn", [])
+marshalInput_ (Read key) = ("read", [("key", String key)])
+marshalInput_ (Cas key old new create) =
+  ( "cas"
+  ,
+    [ ("key", String key)
+    , ("from", String old)
+    , ("to", String new)
+    , ("create_if_not_exists", Bool create)
+    ]
+  )
 
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (TxnOk ops) = ("txn_ok", [("txn", List (map marshalMicroOp ops))])
 
 marshalMicroOp :: MicroOp -> Value
-marshalMicroOp (R key values) = List [String "r", key, List values]
-marshalMicroOp (Append key value) = List [String "append", key, value]
+marshalMicroOp (R key values) = List [String "r", String key, List values]
+marshalMicroOp (Append key value) = List [String "append", String key, value]
 
 validateOutput_ :: Parser Output
 validateOutput_ =
   asum
     [ InitOk <$ hasKind "init_ok"
     , TxnOk <$ hasKind "txn_ok" <*> pure [] -- XXX: not used...
+    , ReadOk
+        <$ hasKind "read_ok"
+        <*> ( ( either (error . show) id
+                  . Json.eitherDecode
+                  . LBS.fromStrict
+                  . Text.encodeUtf8
+              )
+                <$> hasTextField "value"
+            )
+    , CasOk <$ hasKind "cas_ok"
+    , Error
+        <$ hasKind "error"
+        <*> hasField "code" isInt
+        <*> hasField "text" isText
     ]
 
 ------------------------------------------------------------------------
@@ -99,8 +184,8 @@ validateOutput_ =
 libMain :: IO ()
 libMain =
   consoleEventLoop
-    keyValueStore
-    initialState
+    keyValueStoreV2
+    ()
     ValidateMarshal
       { validateInput = validateInput_
       , validateOutput = validateOutput_

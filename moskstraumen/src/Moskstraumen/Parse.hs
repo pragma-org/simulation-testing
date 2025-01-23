@@ -30,10 +30,13 @@ isInt :: Value -> Maybe Int
 isInt (Int i) = Just i
 isInt _ = Nothing
 
-hasIntField :: Field -> Parser Int
-hasIntField field = do
+hasField :: Field -> (Value -> Maybe a) -> Parser a
+hasField field fieldParser = do
   message <- ask
-  lift (isInt =<< Map.lookup field message.body.fields)
+  lift (fieldParser =<< Map.lookup field message.body.fields)
+
+hasIntField :: Field -> Parser Int
+hasIntField field = hasField field isInt
 
 isText :: Value -> Maybe Text
 isText (String text) = Just text

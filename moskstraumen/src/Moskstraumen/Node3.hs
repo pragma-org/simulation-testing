@@ -45,6 +45,7 @@ data NodeF state input output x
   | NewVar (VarId -> x)
   | DeliverVar VarId output x
   | AwaitVar VarId (output -> x)
+  | Fail Text
   deriving (Functor)
 
 newtype VarId = VarId Word64
@@ -54,9 +55,19 @@ data Free f x
   = Pure x
   | Free (f (Free f x))
 
-type Node' state input output a = Free (NodeF state input output) a
+iterM ::
+  (Monad m, Functor f) =>
+  (f (m a) -> m a)
+  -> (x -> m a)
+  -> Free f x
+  -> m a
+iterM _f p (Pure x) = p x
+iterM f p (Free op) = f (fmap (iterM f p) op)
 
-type Node state input output = Free (NodeF state input output) ()
+newtype Node' state input output a = Node (Free (NodeF state input output) a)
+  deriving newtype (Functor, Applicative, Monad)
+
+type Node state input output = Node' state input output ()
 
 ------------------------------------------------------------------------
 
@@ -72,25 +83,28 @@ instance (Functor f) => Monad (Free f) where
   Pure x >>= k = k x
   Free m >>= k = Free (fmap (>>= k) m)
 
+instance MonadFail (Node' state input output) where
+  fail = Node . Free . Fail . fromString
+
 ------------------------------------------------------------------------
 
 getNodeId :: Node' state input output NodeId
-getNodeId = Free (GetNodeId Pure)
+getNodeId = Node (Free (GetNodeId Pure))
 
 getPeers :: Node' state input output [NodeId]
-getPeers = Free (GetPeers Pure)
+getPeers = Node (Free (GetPeers Pure))
 
 setPeers :: [NodeId] -> Node state input output
-setPeers neighbours = Free (SetPeers neighbours (Pure ()))
+setPeers neighbours = Node (Free (SetPeers neighbours (Pure ())))
 
 send :: NodeId -> input -> Node state input output
-send toNodeId input = Free (Send toNodeId input (Pure ()))
+send toNodeId input = Node (Free (Send toNodeId input (Pure ())))
 
 getSender :: Node' state input output NodeId
-getSender = Free (GetSender Pure)
+getSender = Node (Free (GetSender Pure))
 
 reply :: output -> Node state input output
-reply output = Free (Reply output (Pure ()))
+reply output = Node (Free (Reply output (Pure ())))
 
 rpc ::
   NodeId
@@ -99,16 +113,17 @@ rpc ::
   -> (output -> Node state input output)
   -> Node state input output
 rpc toNodeId input failure success =
-  Free (RPC toNodeId input failure success (Pure ()))
+  Node
+    $ Free (RPC toNodeId input failure success (Pure ()))
 
 newVar :: Node' state input output VarId
-newVar = Free (NewVar Pure)
+newVar = Node (Free (NewVar Pure))
 
 deliverVar :: VarId -> a -> Node state input a
-deliverVar varId output = Free (DeliverVar varId output (Pure ()))
+deliverVar varId output = Node (Free (DeliverVar varId output (Pure ())))
 
 awaitVar :: VarId -> Node' state input output output
-awaitVar varId = Free (AwaitVar varId Pure)
+awaitVar varId = Node (Free (AwaitVar varId Pure))
 
 syncRpc ::
   NodeId
@@ -122,19 +137,19 @@ syncRpc toNodeId input failure = do
   awaitVar var
 
 info :: Text -> Node state input output
-info text = Free (Log text (Pure ()))
+info text = Node (Free (Log text (Pure ())))
 
 after :: Int -> Node state input output -> Node state input output
-after millis task = Free (After millis task (Pure ()))
+after millis task = Node (Free (After millis task (Pure ())))
 
 every :: Int -> Node state input output -> Node state input output
 every millis task = after millis (task >> every millis task)
 
 getState :: Node' state input output state
-getState = Free (GetState Pure)
+getState = Node (Free (GetState Pure))
 
 putState :: state -> Node state input output
-putState state = Free (PutState state (Pure ()))
+putState state = Node (Free (PutState state (Pure ())))
 
 modifyState :: (state -> state) -> Node state input output
 modifyState f = do
@@ -194,7 +209,7 @@ data NodeState state input output = NodeState
   }
 
 data SomeNode state input output
-  = forall a. SomeNode (Node' state input output a)
+  = forall a. SomeNode Message (Node' state input output a)
 
 initialNodeState :: state -> NodeState state input output
 initialNodeState initialState =
@@ -225,20 +240,20 @@ runNode' ::
       [Effect]
       (NodeState state input output)
       (Maybe a)
-runNode' (Pure x) = return (Just x)
-runNode' (Free (GetNodeId rest)) = do
+runNode' (Node (Pure x)) = return (Just x)
+runNode' (Node (Free (GetNodeId rest))) = do
   nodeState <- get
-  runNode' (rest nodeState.self)
-runNode' (Free (GetPeers rest)) = do
+  runNode' (Node (rest nodeState.self))
+runNode' (Node (Free (GetPeers rest))) = do
   nodeState <- get
-  runNode' (rest nodeState.neighbours)
-runNode' (Free (SetPeers myNeighbours rest)) = do
+  runNode' (Node (rest nodeState.neighbours))
+runNode' (Node (Free (SetPeers myNeighbours rest))) = do
   modify (\nodeState -> nodeState {neighbours = myNeighbours})
-  runNode' rest
-runNode' (Free (GetSender rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (GetSender rest))) = do
   nodeContext <- ask
-  runNode' (rest nodeContext.request.src)
-runNode' (Free (Send toNodeId input rest)) = do
+  runNode' (Node (rest nodeContext.request.src))
+runNode' (Node (Free (Send toNodeId input rest))) = do
   nodeContext <- ask
   nodeState <- get
   let (kind_, fields_) = nodeContext.validateMarshal.marshalInput input
@@ -257,8 +272,8 @@ runNode' (Free (Send toNodeId input rest)) = do
             }
         )
     ]
-  runNode' rest
-runNode' (Free (Reply output rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (Reply output rest))) = do
   nodeContext <- ask
   nodeState <- get
   let toNodeId = nodeContext.request.src
@@ -278,8 +293,8 @@ runNode' (Free (Reply output rest)) = do
             }
         )
     ]
-  runNode' rest
-runNode' (Free (RPC toNodeId input failure success rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (RPC toNodeId input failure success rest))) = do
   nodeContext <- ask
   nodeState <- get
   let messageId = nodeState.nextMessageId
@@ -309,11 +324,11 @@ runNode' (Free (RPC toNodeId input failure success rest)) = do
       , nextMessageId = messageId + 1
       , nextTimerId = timerId + 1
       }
-  runNode' rest
-runNode' (Free (Log text rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (Log text rest))) = do
   tell [LOG text]
-  runNode' rest
-runNode' (Free (After micros timeout rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (After micros timeout rest))) = do
   nodeState <- get
   let timerId = nodeState.nextTimerId
   tell [TIMER timerId micros]
@@ -322,45 +337,53 @@ runNode' (Free (After micros timeout rest)) = do
       { timers = Map.insert timerId timeout nodeState.timers
       , nextTimerId = timerId + 1
       }
-  runNode' rest
-runNode' (Free (GetState rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (GetState rest))) = do
   nodeState <- get
-  runNode' (rest nodeState.state)
-runNode' (Free (PutState state' rest)) = do
+  runNode' (Node (rest nodeState.state))
+runNode' (Node (Free (PutState state' rest))) = do
   modify (\nodeState -> nodeState {state = state'})
-  runNode' rest
-runNode' (Free (NewVar rest)) = do
+  runNode' (Node rest)
+runNode' (Node (Free (NewVar rest))) = do
   nodeState <- get
   let varId = nodeState.nextVarId
   put nodeState {nextVarId = nodeState.nextVarId + 1}
-  runNode' (rest varId)
-runNode' (Free (DeliverVar varId output rest)) = do
+  runNode' (Node (rest varId))
+runNode' (Node (Free (DeliverVar varId output rest))) = do
   nodeState <- get
   case Map.lookup varId nodeState.awaits of
     Nothing -> do
       traceM ("no awaits for: " ++ show varId)
       put nodeState {vars = Map.insert varId output nodeState.vars}
-      runNode' rest
+      runNode' (Node rest)
     Just continuation -> case continuation output of
-      SomeNode node -> do
+      SomeNode request_ node -> do
         traceM "running cont"
-        runNode' node
+        local (\nodeContext -> nodeContext {request = request_}) (runNode' node)
         traceM "running rest"
-        runNode' rest
-runNode' (Free (AwaitVar varId success)) = do
+        runNode' (Node rest)
+runNode' (Node (Free (AwaitVar varId success))) = do
   -- XXX: timeout and failure
+  nodeContext <- ask
   nodeState <- get
   case lookupDelete varId nodeState.vars of
     Nothing -> do
       put
         nodeState
-          { awaits = Map.insert varId (SomeNode . success) nodeState.awaits
+          { awaits =
+              Map.insert
+                varId
+                (SomeNode nodeContext.request . Node . success)
+                nodeState.awaits
           }
       traceM $ "awaiting: " ++ show varId
       return Nothing
     Just (output, vars') -> do
       put nodeState {vars = vars'}
-      runNode' (success output)
+      runNode' (Node (success output))
+runNode' (Node (Free (Fail errorMessage))) = do
+  tell [LOG errorMessage]
+  return Nothing
 
 ------------------------------------------------------------------------
 
@@ -424,7 +447,7 @@ eventLoop node initialState validateMarshal runtime =
                     (continuation output)
                     nodeContext
                     nodeState {rpcs = rpcs'}
-                Nothing -> error "eventLoop, failed to parse output"
+                Nothing -> error ("eventLoop, failed to parse output: " <> show message)
         handleEvent (TimerEvent timerId) nodeState =
           case lookupDelete timerId nodeState.timers of
             Nothing -> (nodeState, [])
