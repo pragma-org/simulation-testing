@@ -416,7 +416,7 @@ eventLoop node initialState validateMarshal runtime =
                       (node input)
                       nodeContext
                       nodeState {self = myNodeId}
-              Nothing -> error "eventLoop, failed to parse input"
+              Nothing -> error ("eventLoop, failed to parse input: " <> show message)
             Just (continuation, rpcs') ->
               case runParser validateMarshal.validateOutput message of
                 Just output -> do

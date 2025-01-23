@@ -60,6 +60,7 @@ data Value
   | Double Double
   | List [Value]
   | Map (Map Text Value)
+  | Bool Bool
   deriving stock (Eq, Ord, Show)
 
 instance IsString Value where
@@ -122,8 +123,8 @@ instance FromJSON Payload where
       parseJsonValue (Json.Number s) = case floatingOrInteger s of
         Left double -> Double double
         Right int -> Int int
-      parseJsonValue (Json.Bool _) = error "parseJsonValue: bool"
-      parseJsonValue Json.Null = error "parseJsonValue: null"
+      parseJsonValue (Json.Bool bool) = Bool bool
+      parseJsonValue Json.Null = List []
 
 instance ToJSON Value where
   toJSON (String text) = Json.String text

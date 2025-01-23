@@ -3,7 +3,6 @@
 * Introduction
   - Background
   - Related work
-* https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-simulation-testing-background-and-motivation.md
 
 * [Echo
   example](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
@@ -22,7 +21,11 @@
 * Console run-time
 
 * Networked run-time
-* Pipelining run-time?
+
+* Optimisations
+  + Pipelining run-time?
+  + Cache storage?
+  + Pre-allocate memory?
 
 * Language and semantics?
 
