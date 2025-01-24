@@ -5,6 +5,8 @@
 
 module Moskstraumen.Marshal (module Moskstraumen.Marshal) where
 
+-- https://stackoverflow.com/questions/42583838/generically-build-parsers-from-custom-data-types
+
 import GHC.Generics
 
 import Moskstraumen.Message

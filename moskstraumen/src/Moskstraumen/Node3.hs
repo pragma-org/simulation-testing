@@ -17,11 +17,14 @@ import System.IO
 import System.Timeout (timeout)
 
 import Moskstraumen.Codec
+import Moskstraumen.EventLoop
 import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Pretty
+import Moskstraumen.Runtime
+import Moskstraumen.TimerWheel
 
 ------------------------------------------------------------------------
 
@@ -125,6 +128,19 @@ deliverVar varId output = Node (Free (DeliverVar varId output (Pure ())))
 awaitVar :: VarId -> Node' state input output output
 awaitVar varId = Node (Free (AwaitVar varId Pure))
 
+rpcRetryForever ::
+  NodeId
+  -> input
+  -> (output -> Node state input output)
+  -> Node state input output
+rpcRetryForever nodeId input success = do
+  rpc
+    nodeId
+    input
+    ( info "RPC timeout, retrying..." >> rpcRetryForever nodeId input success
+    )
+    success
+
 syncRpc ::
   NodeId
   -> input
@@ -134,6 +150,22 @@ syncRpc toNodeId input failure = do
   var <- newVar
   rpc toNodeId input failure $ \output -> do
     deliverVar var output
+  awaitVar var
+
+syncRpcRetry :: NodeId -> input -> Node' state input output output
+syncRpcRetry toNodeId input = do
+  info "syncRpcRetry: start"
+  var <- newVar
+  rpcRetryForever toNodeId input $ \output -> do
+    info "syncRpcRetry: success, deliever"
+    deliverVar var output
+  -- let success = \output -> info "syncRpcRetry: deliever" >> deliverVar var output
+  -- rpc
+  --  toNodeId
+  --  input
+  --  (info "syncRpc: failed...")
+  --  success
+  info "syncRpcRetry: await..."
   awaitVar var
 
 info :: Text -> Node state input output
@@ -178,17 +210,6 @@ example = do
   info ("sender: " <> unNodeId sender)
 
 ------------------------------------------------------------------------
-
-newtype TimerId = TimerId Word64
-  deriving newtype (Eq, Ord, Num, Show)
-
-data Event = MessageEvent Message | TimerEvent TimerId | ExitEvent
-  deriving (Eq)
-
-data Effect
-  = SEND Message
-  | LOG Text
-  | TIMER TimerId Int
 
 data NodeContext state input output = NodeContext
   { request :: Message
@@ -299,6 +320,7 @@ runNode' (Node (Free (RPC toNodeId input failure success rest))) = do
   nodeState <- get
   let messageId = nodeState.nextMessageId
   let (kind_, fields_) = nodeContext.validateMarshal.marshalInput input
+  traceM "RPC: SEND"
   tell
     [ SEND
         ( Message
@@ -316,6 +338,7 @@ runNode' (Node (Free (RPC toNodeId input failure success rest))) = do
     ]
   let timerId = nodeState.nextTimerId
   let rpcTimeoutMicros = 5_000_000
+  traceM "RPC: TIMER"
   tell [TIMER timerId rpcTimeoutMicros]
   put
     nodeState
@@ -387,11 +410,6 @@ runNode' (Node (Free (Fail errorMessage))) = do
 
 ------------------------------------------------------------------------
 
-data Runtime m = Runtime
-  { source :: m Event
-  , sink :: Effect -> m ()
-  }
-
 data ValidateMarshal input output = ValidateMarshal
   { validateInput :: Parser input
   , validateOutput :: Parser output
@@ -408,161 +426,78 @@ eventLoop ::
   -> Runtime m
   -> m ()
 eventLoop node initialState validateMarshal runtime =
-  loop (initialNodeState initialState)
+  eventLoop_ handleEvent (initialNodeState initialState) runtime
   where
-    loop nodeState = do
-      event <- runtime.source
-      if event == ExitEvent
-        then return ()
-        else do
-          let (nodeState', effects) = handleEvent event nodeState
-          mapM_ runtime.sink effects
-          loop nodeState'
-      where
-        handleEvent ::
-          Event
-          -> NodeState state input output
-          -> (NodeState state input output, [Effect])
-        handleEvent (MessageEvent message) nodeState = do
+    handleEvent ::
+      Event
+      -> NodeState state input output
+      -> (NodeState state input output, [Effect])
+    handleEvent (MessageEvent message) nodeState = do
+      let nodeContext =
+            NodeContext
+              { request = message
+              , validateMarshal = validateMarshal
+              }
+      case lookupRPC message.body.inReplyTo nodeState.rpcs of
+        Nothing -> case runParser validateMarshal.validateInput message of
+          Just input ->
+            case handleInit message of
+              Nothing -> runNode (node input) nodeContext nodeState
+              Just myNodeId ->
+                runNode
+                  (node input)
+                  nodeContext
+                  nodeState {self = myNodeId}
+          Nothing -> error ("eventLoop, failed to parse input: " <> show message)
+        Just (continuation, rpcs') ->
+          case runParser validateMarshal.validateOutput message of
+            Just output -> do
+              runNode
+                (continuation output)
+                nodeContext
+                nodeState {rpcs = rpcs'}
+            Nothing -> error ("eventLoop, failed to parse output: " <> show message)
+    handleEvent (TimerEvent timerId) nodeState =
+      case lookupDelete timerId nodeState.timers of
+        Nothing -> (nodeState, [])
+        Just (node', timers') -> do
+          -- XXX: Is there a better way to deal with this?
           let nodeContext =
                 NodeContext
-                  { request = message
+                  { request =
+                      Message
+                        { src = "dummy"
+                        , dest = "dummy"
+                        , body =
+                            Payload
+                              { kind = "reply cannot be used in timers"
+                              , msgId = Nothing
+                              , inReplyTo = Nothing
+                              , fields = Map.empty
+                              }
+                        }
                   , validateMarshal = validateMarshal
                   }
-          case lookupRPC message.body.inReplyTo nodeState.rpcs of
-            Nothing -> case runParser validateMarshal.validateInput message of
-              Just input ->
-                case handleInit message of
-                  Nothing -> runNode (node input) nodeContext nodeState
-                  Just myNodeId ->
-                    runNode
-                      (node input)
-                      nodeContext
-                      nodeState {self = myNodeId}
-              Nothing -> error ("eventLoop, failed to parse input: " <> show message)
-            Just (continuation, rpcs') ->
-              case runParser validateMarshal.validateOutput message of
-                Just output -> do
-                  runNode
-                    (continuation output)
-                    nodeContext
-                    nodeState {rpcs = rpcs'}
-                Nothing -> error ("eventLoop, failed to parse output: " <> show message)
-        handleEvent (TimerEvent timerId) nodeState =
-          case lookupDelete timerId nodeState.timers of
-            Nothing -> (nodeState, [])
-            Just (node', timers') -> do
-              -- XXX: Is there a better way to deal with this?
-              let nodeContext =
-                    NodeContext
-                      { request =
-                          Message
-                            { src = "dummy"
-                            , dest = "dummy"
-                            , body =
-                                Payload
-                                  { kind = "reply cannot be used in timers"
-                                  , msgId = Nothing
-                                  , inReplyTo = Nothing
-                                  , fields = Map.empty
-                                  }
-                            }
-                      , validateMarshal = validateMarshal
-                      }
-              runNode node' nodeContext nodeState {timers = timers'}
-        handleEvent ExitEvent _nodeState = error "not reachable"
+          runNode node' nodeContext nodeState {timers = timers'}
+    handleEvent ExitEvent _nodeState = error "not reachable"
 
-        handleInit :: Message -> Maybe NodeId
-        handleInit message = case message.body.kind of
-          "init" -> case Map.lookup "node_id" message.body.fields of
-            Just (String myNodeId) -> Just (NodeId myNodeId)
-            _otherwise -> Nothing
-          _otherwise -> Nothing
+    handleInit :: Message -> Maybe NodeId
+    handleInit message = case message.body.kind of
+      "init" -> case Map.lookup "node_id" message.body.fields of
+        Just (String myNodeId) -> Just (NodeId myNodeId)
+        _otherwise -> Nothing
+      _otherwise -> Nothing
 
-        lookupRPC ::
-          Maybe MessageId
-          -> Map MessageId (output -> Node state input output)
-          -> Maybe
-              ( output -> Node state input output
-              , Map MessageId (output -> Node state input output)
-              )
-        lookupRPC Nothing _pendingRpcs = Nothing
-        lookupRPC (Just inReplyToMessageId) pendingRpcs =
-          lookupDelete inReplyToMessageId pendingRpcs
-
-------------------------------------------------------------------------
-
--- XXX: Use a heap instead.
-data TimerWheel time = TimerWheel [(time, TimerId)]
-
-newTimerWheel :: TimerWheel time
-newTimerWheel = TimerWheel []
-
-insertTimer ::
-  (Ord time) => time -> TimerId -> TimerWheel time -> TimerWheel time
-insertTimer time timerId (TimerWheel agenda) =
-  TimerWheel (sort ((time, timerId) : agenda))
-
-deleteTimer :: TimerId -> TimerWheel time -> TimerWheel time
-deleteTimer timerId (TimerWheel agenda) =
-  TimerWheel (filter ((/= timerId) . snd) agenda)
-
-nextTimer :: TimerWheel time -> Maybe (time, TimerId)
-nextTimer (TimerWheel []) = Nothing
-nextTimer (TimerWheel (next : _agenda)) = Just next
-
-------------------------------------------------------------------------
-
-consoleRuntime :: Codec -> IO (Runtime IO)
-consoleRuntime codec = do
-  timerWheelRef <- newIORef newTimerWheel
-  return
-    Runtime
-      { source = consoleSource timerWheelRef
-      , sink = consoleSink timerWheelRef
-      }
-  where
-    consoleSource :: IORef (TimerWheel UTCTime) -> IO Event
-    consoleSource timerWheelRef = do
-      timerWheel <- readIORef timerWheelRef
-
-      let decodeMessage line = case codec.decode line of
-            Right message -> return (MessageEvent message)
-            Left err ->
-              error
-                $ "consoleSource: failed to decode message: "
-                ++ show err
-
-      case nextTimer timerWheel of
-        Nothing -> do
-          line <- BS8.hGetLine stdin
-          decodeMessage line
-        Just (time, timerId) -> do
-          now <- getCurrentTime
-          let nanos = realToFrac (diffUTCTime time now)
-              micros = round (nanos * 1_000_000)
-          -- NOTE: `timeout 0` times out immediately while negative values
-          -- don't, hence the `max 0`.
-          mLine <- timeout (max 0 micros) (BS8.hGetLine stdin)
-          case mLine of
-            Nothing -> do
-              writeIORef timerWheelRef (deleteTimer timerId timerWheel)
-              return (TimerEvent timerId)
-            Just line -> decodeMessage line
-
-    consoleSink :: IORef (TimerWheel UTCTime) -> Effect -> IO ()
-    consoleSink _timerWheelRef (SEND message) = do
-      BS8.hPutStr stdout (codec.encode message)
-      BS8.hPutStr stdout "\n"
-      hFlush stdout
-    consoleSink _timerWheelRef (LOG text) = do
-      Text.hPutStr stderr text
-      Text.hPutStr stderr "\n"
-      hFlush stderr
-    consoleSink timerWheelRef (TIMER timerId micros) = do
-      now <- getCurrentTime
-      let later = addUTCTime (realToFrac (fromIntegral micros / 1_000_000)) now
-      modifyIORef' timerWheelRef (insertTimer later timerId)
+    lookupRPC ::
+      Maybe MessageId
+      -> Map MessageId (output -> Node state input output)
+      -> Maybe
+          ( output -> Node state input output
+          , Map MessageId (output -> Node state input output)
+          )
+    lookupRPC Nothing _pendingRpcs = Nothing
+    lookupRPC (Just inReplyToMessageId) pendingRpcs =
+      lookupDelete inReplyToMessageId pendingRpcs
 
 ------------------------------------------------------------------------
 
@@ -683,4 +618,26 @@ unit_example2 = do
         }
     ]
 
+{-
+example3 :: Node () () Int
+example3 = do
+  info "starting"
+  readResponse <- syncRpcRetry "lin-kv" (Read "root")
+  store <- case readResponse of
+    Error code text -> do
+      info
+        ("Read failed, code: " <> Text.pack (show code) <> ", text: " <> text)
+      return initialState
+    ReadOk store -> do
+      info $ "Successful read: " <> fromString (show store)
+      return store
+  syncRpcRetrying "kv-lin"o
+    info "delivering x"
+    deliverVar x 3
+  info "awaiting..."
+  i <- awaitVar x
+  info "done waiting"
+  info (fromString (show i))
+
 t = unit_example2
+ -}

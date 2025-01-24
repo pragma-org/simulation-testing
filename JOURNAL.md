@@ -7,7 +7,7 @@ which explains what I'm working on and what the current plan is.
 I had a couple of meetings this week. The first one with Arnaud, where I showed
 what I got so far and what the plan is, and he seems to agree that it's the
 right way forward. The second was an onboarding with the team, were I got a bit
-of background about everyone, and this years milestones and budget was also
+of background about everyone, and this year's milestones and budget was also
 shared. Finally, I joined the Amaru maintainer committee, it was very short
 because most people were away, but Damien asked if I could show something for
 the next demo day and I said I could.

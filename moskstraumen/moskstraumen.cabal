@@ -23,6 +23,7 @@ library
   import:             warnings
   exposed-modules:
     Moskstraumen.Codec
+    Moskstraumen.EventLoop
     Moskstraumen.Example.Broadcast
     Moskstraumen.Example.CRDT.GSet
     Moskstraumen.Example.Echo
@@ -36,7 +37,9 @@ library
     Moskstraumen.Parse
     Moskstraumen.Prelude
     Moskstraumen.Pretty
+    Moskstraumen.Runtime
     Moskstraumen.Simulate
+    Moskstraumen.TimerWheel
 
   default-extensions:
     DeriveAnyClass

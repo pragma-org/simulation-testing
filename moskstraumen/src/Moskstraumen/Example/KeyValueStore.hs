@@ -1,9 +1,10 @@
 module Moskstraumen.Example.KeyValueStore (module Moskstraumen.Example.KeyValueStore) where
 
 import qualified Data.Aeson as Json
+import Data.ByteString.Lazy (LazyByteString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IntMap
 import Data.Maybe
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -28,11 +29,11 @@ data Input
       }
 
 data MicroOp
-  = R Key [Value]
-  | Append Key Value
+  = R Key [Int]
+  | Append Key Int
   deriving (Show)
 
-type Key = Text
+type Key = Int
 
 data Output
   = InitOk
@@ -41,10 +42,10 @@ data Output
   | CasOk
   | Error {code :: Int, text :: Text}
 
-type State = Map Key [Value]
+type State = IntMap [Int]
 
 initialState :: State
-initialState = Map.empty
+initialState = IntMap.empty
 
 keyValueStore :: Input -> Node State Input Output
 keyValueStore (Init myNodeId nodeIds) = do
@@ -64,7 +65,7 @@ transact = go []
     go acc (op : ops') store = case op of
       R key [] ->
         go
-          (R key (concat (maybeToList (Map.lookup key store))) : acc)
+          (R key (concat (maybeToList (IntMap.lookup key store))) : acc)
           ops'
           store
       R _key (_ : _) -> error "keyValueStore: client read contains values"
@@ -72,7 +73,7 @@ transact = go []
         go
           (Append key value : acc)
           ops'
-          (Map.insertWith (\new old -> old <> new) key [value] store)
+          (IntMap.insertWith (\new old -> old <> new) key [value] store)
 kEY :: Text
 kEY = "root"
 
@@ -88,7 +89,7 @@ keyValueStoreV2 (Txn ops) = do
     <> unNodeId sender
     <> " "
     <> fromString (show ops)
-  readResponse <- syncRpc "lin-kv" (Read kEY) (info "failed")
+  readResponse <- syncRpcRetry "lin-kv" (Read kEY)
   store <- case readResponse of
     Error code text -> do
       info
@@ -100,10 +101,9 @@ keyValueStoreV2 (Txn ops) = do
   let (store', ops') = transact ops store
   info $ "attempting CAS " <> toJson store <> " " <> toJson store'
   casResponse <-
-    syncRpc
+    syncRpcRetry
       "lin-kv"
       (Cas kEY (toJson store) (toJson store') True)
-      (info "failed")
   case casResponse of
     Error code text ->
       info
@@ -132,8 +132,8 @@ validateInput_ =
     ]
 
 validateMicroOp :: Value -> Maybe MicroOp
-validateMicroOp (List [String "r", Int k, List []]) = Just (R (Text.pack (show k)) [])
-validateMicroOp (List [String "append", Int k, v]) = Just (Append (Text.pack (show k)) v)
+validateMicroOp (List [String "r", Int k, List []]) = Just ((R k) [])
+validateMicroOp (List [String "append", Int k, Int v]) = Just (Append k v)
 validateMicroOp _ = Nothing
 
 marshalInput_ :: Input -> (MessageKind, [(Field, Value)])
@@ -155,8 +155,8 @@ marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (TxnOk ops) = ("txn_ok", [("txn", List (map marshalMicroOp ops))])
 
 marshalMicroOp :: MicroOp -> Value
-marshalMicroOp (R key values) = List [String "r", String key, List values]
-marshalMicroOp (Append key value) = List [String "append", String key, value]
+marshalMicroOp (R key values) = List [String "r", Int key, List (map Int values)]
+marshalMicroOp (Append key value) = List [String "append", Int key, Int value]
 
 validateOutput_ :: Parser Output
 validateOutput_ =
@@ -165,10 +165,12 @@ validateOutput_ =
     , TxnOk <$ hasKind "txn_ok" <*> pure [] -- XXX: not used...
     , ReadOk
         <$ hasKind "read_ok"
-        <*> ( ( either (error . show) id
-                  . Json.eitherDecode
-                  . LBS.fromStrict
-                  . Text.encodeUtf8
+        <*> ( ( \text ->
+                  either (\err -> error (show (text, err))) id
+                    . (Json.eitherDecode :: LazyByteString -> Either String State)
+                    . LBS.fromStrict
+                    . Text.encodeUtf8
+                    $ text
               )
                 <$> hasTextField "value"
             )

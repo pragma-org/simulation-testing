@@ -17,6 +17,8 @@ import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Pretty
+import Moskstraumen.Runtime
+import Moskstraumen.TimerWheel
 
 ------------------------------------------------------------------------
 
@@ -134,16 +136,6 @@ example = do
   info ("sender: " <> unNodeId sender)
 
 ------------------------------------------------------------------------
-
-newtype TimerId = TimerId Word64
-  deriving newtype (Eq, Ord, Num)
-
-data Event = MessageEvent Message | TimerEvent TimerId
-
-data Effect
-  = SEND Message
-  | LOG Text
-  | TIMER TimerId Int
 
 data NodeContext state input output = NodeContext
   { request :: Message
@@ -294,11 +286,6 @@ runNode' (Fix (PutState state' rest)) = do
 
 ------------------------------------------------------------------------
 
-data Runtime m = Runtime
-  { source :: m Event
-  , sink :: Effect -> m ()
-  }
-
 data ValidateMarshal input output = ValidateMarshal
   { validateInput :: Parser input
   , validateOutput :: Parser output
@@ -393,80 +380,6 @@ eventLoop node initialState validateMarshal runtime =
         lookupRPC Nothing _pendingRpcs = Nothing
         lookupRPC (Just inReplyToMessageId) pendingRpcs =
           lookupDelete inReplyToMessageId pendingRpcs
-
-------------------------------------------------------------------------
-
--- XXX: Use a heap instead.
-data TimerWheel time = TimerWheel [(time, TimerId)]
-
-newTimerWheel :: TimerWheel time
-newTimerWheel = TimerWheel []
-
-insertTimer ::
-  (Ord time) => time -> TimerId -> TimerWheel time -> TimerWheel time
-insertTimer time timerId (TimerWheel agenda) =
-  TimerWheel (sort ((time, timerId) : agenda))
-
-deleteTimer :: TimerId -> TimerWheel time -> TimerWheel time
-deleteTimer timerId (TimerWheel agenda) =
-  TimerWheel (filter ((/= timerId) . snd) agenda)
-
-nextTimer :: TimerWheel time -> Maybe (time, TimerId)
-nextTimer (TimerWheel []) = Nothing
-nextTimer (TimerWheel (next : _agenda)) = Just next
-
-------------------------------------------------------------------------
-
-consoleRuntime :: Codec -> IO (Runtime IO)
-consoleRuntime codec = do
-  timerWheelRef <- newIORef newTimerWheel
-  return
-    Runtime
-      { source = consoleSource timerWheelRef
-      , sink = consoleSink timerWheelRef
-      }
-  where
-    consoleSource :: IORef (TimerWheel UTCTime) -> IO Event
-    consoleSource timerWheelRef = do
-      timerWheel <- readIORef timerWheelRef
-
-      let decodeMessage line = case codec.decode line of
-            Right message -> return (MessageEvent message)
-            Left err ->
-              error
-                $ "consoleSource: failed to decode message: "
-                ++ show err
-
-      case nextTimer timerWheel of
-        Nothing -> do
-          line <- BS8.hGetLine stdin
-          decodeMessage line
-        Just (time, timerId) -> do
-          now <- getCurrentTime
-          let nanos = realToFrac (diffUTCTime time now)
-              micros = round (nanos * 1_000_000)
-          -- NOTE: `timeout 0` times out immediately while negative values
-          -- don't, hence the `max 0`.
-          mLine <- timeout (max 0 micros) (BS8.hGetLine stdin)
-          case mLine of
-            Nothing -> do
-              writeIORef timerWheelRef (deleteTimer timerId timerWheel)
-              return (TimerEvent timerId)
-            Just line -> decodeMessage line
-
-    consoleSink :: IORef (TimerWheel UTCTime) -> Effect -> IO ()
-    consoleSink _timerWheelRef (SEND message) = do
-      BS8.hPutStr stdout (codec.encode message)
-      BS8.hPutStr stdout "\n"
-      hFlush stdout
-    consoleSink _timerWheelRef (LOG text) = do
-      Text.hPutStr stderr text
-      Text.hPutStr stderr "\n"
-      hFlush stderr
-    consoleSink timerWheelRef (TIMER timerId micros) = do
-      now <- getCurrentTime
-      let later = addUTCTime (realToFrac (fromIntegral micros / 1_000_000)) now
-      modifyIORef' timerWheelRef (insertTimer later timerId)
 
 ------------------------------------------------------------------------
 
