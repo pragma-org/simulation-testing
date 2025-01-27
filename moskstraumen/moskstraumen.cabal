@@ -24,25 +24,30 @@ library
   exposed-modules:
     Moskstraumen.Codec
     Moskstraumen.EventLoop
+    Moskstraumen.EventLoop2
     Moskstraumen.Example.Broadcast
     Moskstraumen.Example.CRDT.GSet
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
+    Moskstraumen.FreeMonad
     Moskstraumen.Interface
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node2
     Moskstraumen.Node3
+    Moskstraumen.Node4
     Moskstraumen.NodeId
     Moskstraumen.Parse
     Moskstraumen.Prelude
     Moskstraumen.Pretty
     Moskstraumen.Runtime
+    Moskstraumen.Runtime2
     Moskstraumen.Simulate
     Moskstraumen.TimerWheel
 
   default-extensions:
     DeriveAnyClass
+    DeriveFunctor
     DeriveGeneric
     DerivingStrategies
     DuplicateRecordFields
