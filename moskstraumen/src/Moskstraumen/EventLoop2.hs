@@ -14,28 +14,28 @@ import Moskstraumen.TimerWheel (TimerId)
 ------------------------------------------------------------------------
 
 data EventLoopState node nodeState output = EventLoopState
-  { timers :: Map TimerId (node ())
-  , rpcs :: Map MessageId (output -> node ())
-  , vars :: Map VarId output
-  , awaits :: Map VarId (output -> Some node)
+  { rpcs :: Map MessageId (output -> node ())
   , nodeState :: nodeState
-  , nextMessageId :: MessageId
-  , nextTimerId :: TimerId
-  , nextVarId :: VarId
+  -- { timers :: Map TimerId (node ())
+  -- , vars :: Map VarId output
+  -- , awaits :: Map VarId (output -> Some node)
+  -- , nextMessageId :: MessageId
+  -- , nextTimerId :: TimerId
+  -- , nextVarId :: VarId
   }
 
 initialEventLoopState ::
   nodeState -> EventLoopState nodenode nodeState output
 initialEventLoopState initialNodeState =
   EventLoopState
-    { timers = Map.empty
-    , rpcs = Map.empty
-    , vars = Map.empty
-    , awaits = Map.empty
+    { rpcs = Map.empty
     , nodeState = initialNodeState
-    , nextMessageId = 0
-    , nextTimerId = 0
-    , nextVarId = 0
+    -- , vars = Map.empty
+    -- , awaits = Map.empty
+    -- { timers = Map.empty
+    -- , nextMessageId = 0
+    -- , nextTimerId = 0
+    -- , nextVarId = 0
     }
 
 data Some f = forall a. Some (f a)
@@ -59,15 +59,20 @@ data Effect output x
 ------------------------------------------------------------------------
 
 eventLoop_ ::
-  forall m input output node nodeState.
+  forall m input output node nodeContext nodeState.
   (Monad m) =>
   (input -> node ())
-  -> (node () -> nodeState -> (nodeState, [Effect output (node ())]))
+  -> ( node ()
+       -> nodeContext
+       -> nodeState
+       -> (nodeState, [Effect output (node ())])
+     )
+  -> (Maybe Message -> nodeContext)
   -> nodeState
   -> ValidateMarshal input output
   -> Runtime m
   -> m ()
-eventLoop_ node runNode initialNodeState validateMarshal runtime =
+eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
   loop (initialEventLoopState initialNodeState)
   where
     loop :: EventLoopState node nodeState output -> m ()
@@ -83,15 +88,19 @@ eventLoop_ node runNode initialNodeState validateMarshal runtime =
               micros = round (nanos * 1_000_000)
           runtime.timeout micros runtime.receive >>= \case
             Nothing -> do
+              -- The next timer triggered, which means we should run the
+              -- effects associated with that timer. Futhermore, if
+              -- there's a messageId associated with the timer, it means
+              -- that an RPC call timed out and we should remove the
+              -- successful continuation from from eventLoopState.rpcs.
               effects ()
               case mMessageId of
                 Nothing -> loop eventLoopState
-                -- The next timer triggered
-                -- check if this timer has a messageId associated with it, if so
-                -- an RPC timed out and we should remove it from
-                -- eventLoopState.rpcs.
                 Just messageId ->
-                  loop eventLoopState {rpcs = Map.delete messageId eventLoopState.rpcs}
+                  loop
+                    eventLoopState
+                      { rpcs = Map.delete messageId eventLoopState.rpcs
+                      }
             Just messages -> do
               eventLoopState' <- handleMessages messages eventLoopState
               loop eventLoopState'
@@ -104,29 +113,40 @@ eventLoop_ node runNode initialNodeState validateMarshal runtime =
     handleMessages (message : messages) eventLoopState =
       case message.body.inReplyTo of
         Nothing -> case runParser validateMarshal.validateInput message of
-          Nothing -> undefined
+          Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
           Just input -> do
-            let (nodeState', effects) = runNode (node input) eventLoopState.nodeState
+            let (nodeState', effects) =
+                  runNode
+                    (node input)
+                    (nodeContext (Just message))
+                    eventLoopState.nodeState
             eventLoopState' <-
               handleEffects effects eventLoopState {nodeState = nodeState'}
             handleMessages messages eventLoopState'
-        Just inReplyToMessageId -> case runParser validateMarshal.validateOutput message of
-          Nothing -> undefined
-          Just output -> case lookupDelete inReplyToMessageId eventLoopState.rpcs of
-            Nothing -> do
-              -- Failure timer has triggered, and this rpc was removed from
-              -- expected to be received.
-              -- XXX: collect stats?
-              return eventLoopState
-            Just (success, rpcs') -> do
-              let (nodeState', effects) = runNode (success output) eventLoopState.nodeState
-              eventLoopState' <-
-                handleEffects
-                  effects
-                  eventLoopState {nodeState = nodeState', rpcs = rpcs'}
-              -- XXX: Remove timers associated with this message id
-              -- deleteTimerByMessageId inReplyToMessageId
-              return eventLoopState'
+        Just inReplyToMessageId ->
+          case runParser validateMarshal.validateOutput message of
+            Nothing ->
+              error ("eventLoop, failed to parse output: " ++ show message)
+            Just output ->
+              case lookupDelete inReplyToMessageId eventLoopState.rpcs of
+                Nothing -> do
+                  -- We couldn't find the success continuation of the
+                  -- RPC. This happens when the failure timer is
+                  -- triggered, and the RPC is removed.
+                  -- XXX: Collect stats / log?
+                  return eventLoopState
+                Just (success, rpcs') -> do
+                  let (nodeState', effects) =
+                        runNode
+                          (success output)
+                          (nodeContext (Just message))
+                          eventLoopState.nodeState
+                  eventLoopState' <-
+                    handleEffects
+                      effects
+                      eventLoopState {nodeState = nodeState', rpcs = rpcs'}
+                  runtime.removeTimerByMessageId inReplyToMessageId
+                  return eventLoopState'
 
     handleEffects ::
       [Effect output (node ())]

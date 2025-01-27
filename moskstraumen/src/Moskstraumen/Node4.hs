@@ -31,7 +31,9 @@ data NodeF state input output x
   deriving (Functor)
 
 data NodeContext input output = NodeContext
-  {validateMarshal :: ValidateMarshal input output}
+  { incoming :: Maybe Message
+  , validateMarshal :: ValidateMarshal input output
+  }
 
 data NodeState state = NodeState
   { self :: NodeId
@@ -102,6 +104,32 @@ runNode (Node node0) = iterM aux return node0
             )
         ]
       ih
+    aux (Reply output ih) = do
+      nodeContext <- ask
+      nodeState <- get
+      case nodeContext.incoming of
+        Nothing ->
+          error
+            "reply cannot be used in a context where there's \
+            \ nothing to reply to, e.g. timers."
+        Just message -> do
+          let (kind_, fields_) = nodeContext.validateMarshal.marshalOutput output
+          tell
+            [ SEND
+                ( Message
+                    { src = nodeState.self
+                    , dest = message.src
+                    , body =
+                        Payload
+                          { kind = kind_
+                          , msgId = message.body.msgId
+                          , inReplyTo = message.body.msgId
+                          , fields = Map.fromList fields_
+                          }
+                    }
+                )
+            ]
+          ih
     aux (After micros node ih) = do
       nodeContext_ <- ask
       nodeState_ <- get
@@ -155,7 +183,15 @@ eventLoop ::
 eventLoop node initialState validateMarshal runtime =
   eventLoop_
     node
-    (flip execNode' (NodeContext validateMarshal))
+    execNode'
+    ( \mMessage ->
+        NodeContext
+          { incoming = mMessage
+          , validateMarshal = validateMarshal
+          }
+    )
     (initialNodeState initialState)
+    -- XXX: dup, already in node context... Maybe all uses of validateMarshal
+    -- should be moved to event loop?
     validateMarshal
     runtime

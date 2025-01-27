@@ -44,6 +44,7 @@ library
     Moskstraumen.Runtime2
     Moskstraumen.Simulate
     Moskstraumen.TimerWheel
+    Moskstraumen.TimerWheel2
 
   default-extensions:
     DeriveAnyClass
