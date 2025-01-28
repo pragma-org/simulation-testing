@@ -4,15 +4,15 @@ Had a meeting with Arnaud about connecting my simulation testing work
 with his consensus work. Here's a diagram of the main components of the
 simulation testing:
 
-  https://excalidraw.com/#room=7b2a8ed11b568e50603a,YmrFWAZQCKBIiTee5KkhGg
+  * https://excalidraw.com/#room=7b2a8ed11b568e50603a,YmrFWAZQCKBIiTee5KkhGg
 
 We also looked at Arnaud's "naive block selection" PR:
 
-  https://github.com/pragma-org/amaru/pull/75
+  * https://github.com/pragma-org/amaru/pull/75
 
 As well as my code so far:
 
-  https://github.com/pragma-org/simulation-testing/tree/main/moskstraumen/src/Moskstraumen
+  * https://github.com/pragma-org/simulation-testing/tree/main/moskstraumen/src/Moskstraumen
 
 Here are some of my post-meeting thoughts (where you = Arnaud):
 
@@ -40,7 +40,7 @@ a language, but I'd like to stress that the Maelstrom language is
 small and has already been ported to many different languages
 (including Rust, Go and JavaScript):
 
-  https://github.com/jepsen-io/maelstrom/tree/main/demo
+  * https://github.com/jepsen-io/maelstrom/tree/main/demo
 
 We can't just use those implementations though, because they are not
 necessarily deterministic. But still I'd say it's fairly conservative
@@ -62,8 +62,8 @@ doesn't rely on determinism, so it's fine.
 Btw I've thought and written on the topic of deterministic pipelining
 (or an event loop that uses parallelism) over here:
 
-  https://stevana.github.io/parallel_stream_processing_with_zero-copy_fan-out_and_sharding.html
-  https://stevana.github.io/scheduling_threads_like_thomas_jefferson.html
+  * https://stevana.github.io/parallel_stream_processing_with_zero-copy_fan-out_and_sharding.html
+  * https://stevana.github.io/scheduling_threads_like_thomas_jefferson.html
 
 Both posts mentions SEDA (which gasket is based upon).
 
