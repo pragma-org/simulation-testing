@@ -1,4 +1,4 @@
-## 18-30th Jan 2025
+## 24-30th Jan 2025
 
 Had a meeting with Arnaud about connecting my simulation testing work
 with his consensus work. Here's a diagram of the main components of the
