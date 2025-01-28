@@ -12,6 +12,7 @@ import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.TimerWheel2
+import qualified Moskstraumen.TimerWheel2 as TimerWheel
 
 ------------------------------------------------------------------------
 
@@ -23,32 +24,38 @@ data Runtime m = Runtime
   , log :: Text -> m ()
   , timeout :: Microseconds -> m [Message] -> m (Maybe [Message])
   , setTimer :: Microseconds -> Maybe MessageId -> (() -> m ()) -> m ()
-  , popTimer :: m (Maybe (UTCTime, (Maybe MessageId, () -> m ())))
+  , peekTimer :: m (Maybe (UTCTime, (Maybe MessageId, () -> m ())))
+  , popTimer :: m ()
   , removeTimerByMessageId :: MessageId -> m ()
   , getCurrentTime :: m UTCTime
   }
 
 consoleRuntime :: Codec -> IO (Runtime IO)
 consoleRuntime codec = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
   timerWheelRef <- newIORef newTimerWheel
   return
     Runtime
       { receive = consoleReceive
       , send = consoleSend
-      , log = \text -> Text.hPutStrLn stderr text >> hFlush stderr
+      , log = \text -> Text.hPutStrLn stderr text
       , -- NOTE: `timeout 0` times out immediately while negative values
         -- don't, hence the `max 0`.
         timeout = \micros -> System.Timeout.timeout (max 0 micros)
-      , getCurrentTime = Data.Time.getCurrentTime
       , setTimer = setTimer_ timerWheelRef
-      , popTimer = undefined
-      , removeTimerByMessageId = undefined
+      , peekTimer = peekTimer_ timerWheelRef
+      , popTimer = popTimer_ timerWheelRef
+      , removeTimerByMessageId = removeTimer_ timerWheelRef
+      , getCurrentTime = Data.Time.getCurrentTime
       }
   where
     consoleReceive :: IO [Message]
     consoleReceive = do
       -- XXX: Batch and read several lines?
       line <- BS8.hGetLine stdin
+      BS8.hPutStrLn stderr ("recieve: " <> line)
       case codec.decode line of
         Right message -> return [message]
         Left err ->
@@ -59,9 +66,8 @@ consoleRuntime codec = do
 
     consoleSend :: Message -> IO ()
     consoleSend message = do
-      BS8.hPutStr stdout (codec.encode message)
-      BS8.hPutStr stdout "\n"
-      hFlush stdout
+      BS8.hPutStrLn stderr ("send: " <> codec.encode message)
+      BS8.hPutStrLn stdout (codec.encode message)
 
     setTimer_ ::
       IORef (TimerWheel UTCTime (Maybe MessageId, (() -> IO ())))
@@ -72,6 +78,40 @@ consoleRuntime codec = do
     setTimer_ timerWheelRef micros mMessageId effects = do
       now <- Data.Time.getCurrentTime
       let later = addUTCTime (realToFrac (fromIntegral micros / 1_000_000)) now
+      -- hPutStrLn
+      --   stderr
+      --   ("setTimer, now: " <> show now <> ", later: " <> show later)
       modifyIORef'
         timerWheelRef
         (insertTimer later (mMessageId, effects))
+
+    peekTimer_ timerWheelRef = do
+      timerWheel <- readIORef timerWheelRef
+      case TimerWheel.popTimer timerWheel of
+        Nothing -> return Nothing
+        Just (entry, timerWheel'@(TimerWheel agenda)) -> do
+          -- hPutStrLn
+          --   stderr
+          --   ( "peekTimer, time: "
+          --       <> show (fst entry)
+          --       <> ", agenda times: "
+          --       <> show (map fst agenda)
+          --   )
+          return (Just entry)
+
+    popTimer_ timerWheelRef = do
+      timerWheel <- readIORef timerWheelRef
+      case TimerWheel.popTimer timerWheel of
+        Nothing -> return ()
+        Just (_entry, timerWheel'@(TimerWheel agenda)) -> do
+          -- hPutStrLn
+          --   stderr
+          --   ( "popTimer, time: "
+          --       <> show (fst _entry)
+          --       <> ", agenda times: "
+          --       <> show (map fst agenda)
+          --   )
+          writeIORef timerWheelRef timerWheel'
+
+    removeTimer_ timerWheelRef messageId =
+      modifyIORef timerWheelRef (filterTimer ((== Just messageId) . fst))

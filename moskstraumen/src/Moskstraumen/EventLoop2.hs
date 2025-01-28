@@ -3,23 +3,30 @@ module Moskstraumen.EventLoop2 (module Moskstraumen.EventLoop2) where
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time
+import Debug.Trace
 
+import Moskstraumen.Codec
 import Moskstraumen.Message
+import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Pretty
 import Moskstraumen.Runtime2
-import Moskstraumen.TimerWheel (TimerId)
+
+------------------------------------------------------------------------
+
+rPC_TIMEOUT_MICROS :: Int
+rPC_TIMEOUT_MICROS = 1_000_000 -- 1 second.
 
 ------------------------------------------------------------------------
 
 data EventLoopState node nodeState output = EventLoopState
   { rpcs :: Map MessageId (output -> node ())
   , nodeState :: nodeState
+  , nextMessageId :: MessageId
   -- { timers :: Map TimerId (node ())
   -- , vars :: Map VarId output
   -- , awaits :: Map VarId (output -> Some node)
-  -- , nextMessageId :: MessageId
   -- , nextTimerId :: TimerId
   -- , nextVarId :: VarId
   }
@@ -30,10 +37,10 @@ initialEventLoopState initialNodeState =
   EventLoopState
     { rpcs = Map.empty
     , nodeState = initialNodeState
+    , nextMessageId = 0
     -- , vars = Map.empty
     -- , awaits = Map.empty
-    -- { timers = Map.empty
-    -- , nextMessageId = 0
+    -- , timers = Map.empty
     -- , nextTimerId = 0
     -- , nextVarId = 0
     }
@@ -50,11 +57,14 @@ data ValidateMarshal input output = ValidateMarshal
 newtype VarId = VarId Word64
   deriving newtype (Eq, Ord, Num, Show)
 
-data Effect output x
-  = SEND Message
+-- Defunctionalise?
+-- https://www.pathsensitive.com/2019/07/the-best-refactoring-youve-never-heard.html
+data Effect input output x
+  = SEND NodeId NodeId input
+  | REPLY NodeId NodeId (Maybe MessageId) output
   | LOG Text
-  | SET_TIMER Microseconds (Maybe MessageId) [Effect output x]
-  | DO_RPC MessageId (output -> x)
+  | SET_TIMER Microseconds (Maybe MessageId) [Effect input output x]
+  | DO_RPC NodeId NodeId input [Effect input output x] (output -> x)
 
 ------------------------------------------------------------------------
 
@@ -65,7 +75,7 @@ eventLoop_ ::
   -> ( node ()
        -> nodeContext
        -> nodeState
-       -> (nodeState, [Effect output (node ())])
+       -> (nodeState, [Effect input output (node ())])
      )
   -> (Maybe Message -> nodeContext)
   -> nodeState
@@ -77,7 +87,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
   where
     loop :: EventLoopState node nodeState output -> m ()
     loop eventLoopState = do
-      runtime.popTimer >>= \case
+      runtime.peekTimer >>= \case
         Nothing -> do
           messages <- runtime.receive
           eventLoopState' <- handleMessages messages eventLoopState
@@ -86,6 +96,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
           now <- runtime.getCurrentTime
           let nanos = realToFrac (diffUTCTime time now)
               micros = round (nanos * 1_000_000)
+          -- traceM ("timer will trigger in: " <> show micros <> " µs")
           runtime.timeout micros runtime.receive >>= \case
             Nothing -> do
               -- The next timer triggered, which means we should run the
@@ -93,7 +104,9 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
               -- there's a messageId associated with the timer, it means
               -- that an RPC call timed out and we should remove the
               -- successful continuation from from eventLoopState.rpcs.
-              effects ()
+              -- traceM ("timer triggered")
+              runtime.popTimer
+              () <- effects ()
               case mMessageId of
                 Nothing -> loop eventLoopState
                 Just messageId ->
@@ -133,7 +146,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                   -- We couldn't find the success continuation of the
                   -- RPC. This happens when the failure timer is
                   -- triggered, and the RPC is removed.
-                  -- XXX: Collect stats / log?
+                  -- XXX: Collect metrics / log?
                   return eventLoopState
                 Just (success, rpcs') -> do
                   let (nodeState', effects) =
@@ -149,13 +162,42 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                   return eventLoopState'
 
     handleEffects ::
-      [Effect output (node ())]
+      [Effect input output (node ())]
       -> EventLoopState node nodeState output
       -> m (EventLoopState node nodeState output)
     handleEffects [] eventLoopState = return eventLoopState
     handleEffects (effect : effects) eventLoopState = do
       case effect of
-        SEND message -> do
+        SEND srcNodeId destNodeId input -> do
+          let (kind_, fields_) = validateMarshal.marshalInput input
+          let message =
+                Message
+                  { src = srcNodeId
+                  , dest = destNodeId
+                  , body =
+                      Payload
+                        { kind = kind_
+                        , msgId = Nothing
+                        , inReplyTo = Nothing
+                        , fields = Map.fromList fields_
+                        }
+                  }
+          runtime.send message
+          handleEffects effects eventLoopState
+        REPLY srcNodeId destNodeId mMessageId output -> do
+          let (kind_, fields_) = validateMarshal.marshalOutput output
+          let message =
+                Message
+                  { src = srcNodeId
+                  , dest = destNodeId
+                  , body =
+                      Payload
+                        { kind = kind_
+                        , msgId = mMessageId
+                        , inReplyTo = mMessageId
+                        , fields = Map.fromList fields_
+                        }
+                  }
           runtime.send message
           handleEffects effects eventLoopState
         SET_TIMER micros mMessageId timeoutEffects -> do
@@ -168,9 +210,50 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
         LOG text -> do
           runtime.log text
           handleEffects effects eventLoopState
-        DO_RPC messageId success -> do
+        DO_RPC srcNodeId destNodeId input failure success -> do
+          traceM "DO_RPC"
+          let messageId = eventLoopState.nextMessageId
+          let (kind_, fields_) = validateMarshal.marshalInput input
+          let message =
+                Message
+                  { src = srcNodeId
+                  , dest = destNodeId
+                  , body =
+                      Payload
+                        { kind = kind_
+                        , msgId = Just messageId
+                        , inReplyTo = Nothing
+                        , fields = Map.fromList fields_
+                        }
+                  }
+          runtime.send message
+          runtime.setTimer
+            rPC_TIMEOUT_MICROS
+            (Just messageId)
+            -- NOTE: Thunk this, so that the effects don't happen yet.
+            ( \() ->
+                traceM "Triggering effects!"
+                  >> handleEffects failure eventLoopState
+                  >> return ()
+            )
           handleEffects
             effects
             eventLoopState
               { rpcs = Map.insert messageId success eventLoopState.rpcs
+              , nextMessageId = messageId + 1
               }
+
+consoleEventLoop_ ::
+  (input -> node ())
+  -> ( node ()
+       -> nodeContext
+       -> nodeState
+       -> (nodeState, [Effect input output (node ())])
+     )
+  -> (Maybe Message -> nodeContext)
+  -> nodeState
+  -> ValidateMarshal input output
+  -> IO ()
+consoleEventLoop_ node runNode nodeContext nodeState validateMarshal = do
+  runtime <- consoleRuntime jsonCodec
+  eventLoop_ node runNode nodeContext nodeState validateMarshal runtime

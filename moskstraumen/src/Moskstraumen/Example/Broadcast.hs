@@ -7,8 +7,9 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 
+import Moskstraumen.EventLoop2
 import Moskstraumen.Message
-import Moskstraumen.Node2
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -36,11 +37,14 @@ broadcast ::
   BroadcastInput -> Node BroadcastState BroadcastInput BroadcastOutput
 broadcast (Init self nodeIds) = do
   info ("Initialising: " <> unNodeId self)
+  setNodeId self
   setPeers nodeIds
   reply InitOk
 broadcast (Topology nodeIds) = do
   NodeId self <- getNodeId
-  setPeers (nodeIds Map.! self)
+  let newNeighbours = nodeIds Map.! self
+  info ("New neighbours: " <> fromString (show newNeighbours))
+  setPeers newNeighbours
   reply TopologyOk
 broadcast (Broadcast msg) = do
   reply BroadcastOk
@@ -63,16 +67,8 @@ broadcast (Broadcast msg) = do
         _otherwise -> error "broadcast: unexpected response"
 broadcast Read = do
   seenMessages <- getState
+  info ("Read, seen: " <> fromString (show seenMessages))
   reply (ReadOk (Set.toList seenMessages))
-
-rpcRetryForever ::
-  NodeId
-  -> input
-  -> (output -> Node state input output)
-  -> Node state input output
-rpcRetryForever nodeId input success = do
-  info "RPC timeout, retrying..."
-  rpc nodeId input (rpcRetryForever nodeId input success) success
 
 ------------------------------------------------------------------------
 

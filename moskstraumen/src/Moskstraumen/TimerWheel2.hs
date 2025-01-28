@@ -8,7 +8,8 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 
 -- XXX: Use a heap instead.
-data TimerWheel time a = TimerWheel [(time, a)]
+newtype TimerWheel time a = TimerWheel [(time, a)]
+  deriving (Show)
 
 newTimerWheel :: TimerWheel time a
 newTimerWheel = TimerWheel []

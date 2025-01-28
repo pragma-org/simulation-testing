@@ -61,7 +61,8 @@ library
     OverloadedRecordDot
     OverloadedStrings
     ScopedTypeVariables
-    StrictData
+
+  -- StrictData
 
   -- NOTE: GHC 9.2 is needed for OverloadedRecordDot and
   -- OverloadedRecordUpdate, and that version uses base 4.16.

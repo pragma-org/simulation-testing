@@ -17,6 +17,12 @@ iterM ::
 iterM _f p (Pure x) = p x
 iterM f p (Free op) = f (fmap (iterM f p) op)
 
+liftF :: (Functor f) => f x -> Free f x
+liftF = Free . fmap Pure
+
+inn :: (Functor f) => f (Free f x) -> Free f x
+inn = Free
+
 ------------------------------------------------------------------------
 
 instance (Functor f) => Functor (Free f) where
