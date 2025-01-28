@@ -1,3 +1,88 @@
+## 18-30th Jan 2025
+
+Had a meeting with Arnaud about connecting my simulation testing work
+with his consensus work. Here's a diagram of the main components of the
+simulation testing:
+
+  https://excalidraw.com/#room=7b2a8ed11b568e50603a,YmrFWAZQCKBIiTee5KkhGg
+
+We also looked at Arnaud's "naive block selection" PR:
+
+  https://github.com/pragma-org/amaru/pull/75
+
+As well as my code so far:
+
+  https://github.com/pragma-org/simulation-testing/tree/main/moskstraumen/src/Moskstraumen
+
+Here are some of my post-meeting thoughts (where you = Arnaud):
+
+I thought a bit about a, and I think an argument against something like
+madsim is: if you rely on it, then something equivalent must exist
+in other SUT languages, i.e. Go, TypeScript, etc. You could argue
+that Haskell has io-sim, but I'm sure it works quite differently to
+madsim, so now you have an integration problem between "async runtime"
+(e.g. tokio + madsim) and the simulation testing (request generation,
+state machine model checking, LTL liveness checking, etc). What I
+mean is that connecting this "async runtime" with the simulation
+testing will look slightly different for each programming language
+(assuming that there exists something madsim-like to begin with).
+
+Furthermore, if we use different "madsim"s in different languages,
+it's going to be a pita to understand those libraries and extend them
+to our needs. io-sim is a good example of this problem.
+
+That's why I propose to create a simple deterministic event loop
+(i.e. "async runtime"), which by construction integrates well with
+the simulation and make that easily portable to whatever SUT language
+using whatever concurrency primitives are available there. That way
+we own this core part. I know you're worried about having to maintain
+a language, but I'd like to stress that the Maelstrom language is
+small and has already been ported to many different languages
+(including Rust, Go and JavaScript):
+
+  https://github.com/jepsen-io/maelstrom/tree/main/demo
+
+We can't just use those implementations though, because they are not
+necessarily deterministic. But still I'd say it's fairly conservative
+in terms of effort. Also like I said, if we can leverage the examples
+that Maelstrom already has, but simulation test them instead Jepsen's
+black box tests, and show that we can get a massive speed up in terms
+of test execution due to simulated time, then we've are in a good spot
+(both in terms of testing consensus, but also to explain the benefit
+vs the industry standard aka Jepsen).
+
+How to make this event loop performant is a separate issue. I think
+the key is Disruptor pipelining, rather than SEDA/gasket, because the
+former is deterministic while the latter isn't. Medium term SEDA can
+be run with worker pool size of 1, to avoid non-determinism. Longer
+term, we probably want to make gasket use Disruptors instead. Immediate
+term, like I said, none of this matters because Jepsen/Maelstrom
+doesn't rely on determinism, so it's fine.
+
+Btw I've thought and written on the topic of deterministic pipelining
+(or an event loop that uses parallelism) over here:
+
+  https://stevana.github.io/parallel_stream_processing_with_zero-copy_fan-out_and_sharding.html
+  https://stevana.github.io/scheduling_threads_like_thomas_jefferson.html
+
+Both posts mentions SEDA (which gasket is based upon).
+
+Anyhow it seemed like you are only artificially using gasket
+stages currently, and the four stages can be combined using function
+composition into one stage. My current event loop can be thought of
+as a one stage pipeline, so that part should be fine for now as well
+(until we figure out how extend the event loop with Disruptors and
+properly parallelise the stages).
+
+Regarding your comment about parallelising the whole simulation
+itself. A while ago I asked one of the guys from Antithesis how they
+do it, and he said they simply generate N seeds and run N simulations in
+parallel completely independent from each other, because of randomness,
+they'll likely not test the same paths so much. One could try to be
+more fancy and remember which seeds have been tested with already
+and avoid those, e.g. using a shared bloom filter across the N
+simulations, but this something we can think about later.
+
 ## 17-23rd Jan 2025
 
 The main highlight this week is that I finished the simulation testing
