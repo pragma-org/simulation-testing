@@ -12,6 +12,7 @@ import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -129,6 +130,7 @@ t = do
         [ Message
             { src = "c1"
             , dest = "n1"
+            , arrivalTime = Just epoch
             , body =
                 Payload
                   { kind = "echo"
@@ -168,6 +170,7 @@ s seed = do
         [ Message
             { src = "c1"
             , dest = "n1"
+            , arrivalTime = Just epoch
             , body =
                 Payload
                   { kind = "echo"

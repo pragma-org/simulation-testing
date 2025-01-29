@@ -283,6 +283,7 @@ runNode' (Node (Free (Send toNodeId input rest))) = do
         ( Message
             { src = nodeState.self
             , dest = toNodeId
+            , arrivalTime = Nothing
             , body =
                 Payload
                   { kind = kind_
@@ -304,6 +305,7 @@ runNode' (Node (Free (Reply output rest))) = do
         ( Message
             { src = nodeState.self
             , dest = nodeContext.request.src
+            , arrivalTime = Nothing
             , body =
                 Payload
                   { kind = kind_
@@ -326,6 +328,7 @@ runNode' (Node (Free (RPC toNodeId input failure success rest))) = do
         ( Message
             { src = nodeState.self
             , dest = toNodeId
+            , arrivalTime = Nothing
             , body =
                 Payload
                   { kind = kind_
@@ -461,6 +464,7 @@ eventLoop node initialState validateMarshal runtime =
                       Message
                         { src = "dummy"
                         , dest = "dummy"
+                        , arrivalTime = Nothing
                         , body =
                             Payload
                               { kind = "reply cannot be used in timers"
@@ -601,6 +605,7 @@ unit_example2 = do
     [ Message
         { src = "c1"
         , dest = "n1"
+        , arrivalTime = Nothing
         , body =
             Payload
               { kind = "init"

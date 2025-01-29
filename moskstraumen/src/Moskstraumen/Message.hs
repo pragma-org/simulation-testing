@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as Map
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Time (UTCTime)
 import qualified Data.Vector as Vector
 import Data.Word
 
@@ -30,6 +31,7 @@ import Moskstraumen.Prelude
 data Message = Message
   { src :: NodeId
   , dest :: NodeId
+  , arrivalTime :: Maybe UTCTime
   , body :: Payload
   }
   deriving stock (Eq, Show)
@@ -83,6 +85,7 @@ instance FromJSON Message where
       .: "src"
       <*> v
       .: "dest"
+      <*> pure Nothing
       <*> v
       .: "body"
 
@@ -143,6 +146,7 @@ unit_encodeMessage =
     ( Message
         { src = "n1"
         , dest = "n2"
+        , arrivalTime = Nothing
         , body =
             Payload
               { kind = "echo"
@@ -160,6 +164,7 @@ unit_decodeMessage =
       ( Message
           { src = "c1"
           , dest = "n1"
+          , arrivalTime = Nothing
           , body =
               Payload
                 { kind = "echo"

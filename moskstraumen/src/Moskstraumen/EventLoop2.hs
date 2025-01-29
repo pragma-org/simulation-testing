@@ -10,7 +10,6 @@ import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
-import Moskstraumen.Pretty
 import Moskstraumen.Runtime2
 import Moskstraumen.TimerWheel2
 
@@ -182,6 +181,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
+                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_
@@ -198,6 +198,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
+                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_
@@ -230,6 +231,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
+                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_

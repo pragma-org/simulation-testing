@@ -42,6 +42,7 @@ library
     Moskstraumen.Runtime
     Moskstraumen.Runtime2
     Moskstraumen.Simulate
+    Moskstraumen.Time
     Moskstraumen.TimerWheel
     Moskstraumen.TimerWheel2
 

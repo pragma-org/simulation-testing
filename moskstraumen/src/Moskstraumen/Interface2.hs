@@ -15,6 +15,7 @@ import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime2
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -27,6 +28,7 @@ simulationRuntime :: IO (Interface IO, Runtime IO)
 simulationRuntime = do
   inputMVar <- newEmptyMVar
   outputQueue <- newTBQueueIO 65536
+  fakeTime <- newFakeTime
   let
     handle_ :: Message -> IO [Message]
     handle_ input = do
@@ -53,8 +55,22 @@ simulationRuntime = do
         { receive = recieve_
         , send = send_
         , log = Text.hPutStrLn stderr
-        , timeout = System.Timeout.timeout
-        , getCurrentTime = Data.Time.getCurrentTime
+        , timeout = \micros receive -> do
+            now <- getFakeTime fakeTime
+            messages <- receive
+            case messages of
+              [] -> error "simulationRuntime: impossible"
+              [message] -> do
+                case message.arrivalTime of
+                  Nothing -> error "simulationRuntime: messages must have arrival times"
+                  Just arrivalTime_ ->
+                    if arrivalTime_ < addTimeMicros micros now
+                      then do
+                        setFakeTime fakeTime arrivalTime_
+                        return (Just [message])
+                      else return Nothing
+              _ -> error "simulationRuntime: impossible"
+        , getCurrentTime = getFakeTime fakeTime
         }
     )
 
@@ -68,6 +84,7 @@ simulationSpawn node initialState validateMarshal = do
   tid <- forkIO (eventLoop node initialState validateMarshal runtime)
   return interface {close = killThread tid}
 
+{-
 pureSpawn ::
   (input -> Node state input output)
   -> state
@@ -76,7 +93,6 @@ pureSpawn ::
 pureSpawn node initialState validateMarshal = do
   undefined
 
-{-
 nodeStateRef <- newIORef (initialNodeState initialState)
 return
   Interface
