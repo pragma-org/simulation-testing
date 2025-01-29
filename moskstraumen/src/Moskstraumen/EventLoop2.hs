@@ -167,8 +167,14 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                     handleEffects
                       effects
                       eventLoopState {nodeState = nodeState', rpcs = rpcs'}
-                  runtime.removeTimerByMessageId inReplyToMessageId
-                  return eventLoopState'
+
+                  return
+                    eventLoopState'
+                      { timerWheel =
+                          filterTimer
+                            ((/= (Just inReplyToMessageId)) . fst)
+                            eventLoopState.timerWheel
+                      }
 
     handleEffects ::
       [Effect node input output]
@@ -225,7 +231,6 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
           runtime.log text
           handleEffects effects eventLoopState
         DO_RPC srcNodeId destNodeId input failure success -> do
-          traceM ("DO_RPC: " <> show srcNodeId <> " " <> show destNodeId)
           let messageId = eventLoopState.nextMessageId
           let (kind_, fields_) = validateMarshal.marshalInput input
           let message =

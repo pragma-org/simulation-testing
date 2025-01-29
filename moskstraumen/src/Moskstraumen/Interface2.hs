@@ -42,9 +42,6 @@ simulationRuntime = do
         , send = send_
         , log = undefined
         , timeout = undefined
-        , setTimer = undefined
-        , peekTimer = undefined
-        , removeTimerByMessageId = undefined
         , getCurrentTime = undefined
         }
     )
