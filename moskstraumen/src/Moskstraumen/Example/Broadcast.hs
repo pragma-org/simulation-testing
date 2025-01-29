@@ -1,6 +1,6 @@
 module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) where
 
-import Data.List ((\\))
+import Data.List (delete, (\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -28,10 +28,13 @@ data BroadcastOutput
   | BroadcastOk
   | ReadOk {messages :: [Value]}
 
-type BroadcastState = Set Value
+data BroadcastState = BroadcastState
+  { seen :: Set Value
+  , unAcked :: Map Value [NodeId]
+  }
 
 initialState :: BroadcastState
-initialState = Set.empty
+initialState = BroadcastState Set.empty Map.empty
 
 broadcast ::
   BroadcastInput -> Node BroadcastState BroadcastInput BroadcastOutput
@@ -47,26 +50,47 @@ broadcast (Topology nodeIds) = do
   setPeers newNeighbours
   reply TopologyOk
 broadcast (Broadcast msg) = do
+  -- Acknowledge the request.
   reply BroadcastOk
-  seenMessages <- getState
+  seenMessages <- seen <$> getState
   when (msg `Set.notMember` seenMessages) $ do
-    modifyState (Set.insert msg)
+    modifyState (\s -> s {seen = Set.insert msg s.seen})
     neighbours <- getPeers
     sender <- getSender
-    let unAcked = neighbours \\ [sender]
-    info
-      ( "Need to replicate \""
-          <> Text.pack (show msg)
-          <> "\" to "
-          <> Text.pack (show unAcked)
-      )
-    forM_ unAcked $ \nodeId -> rpcRetryForever nodeId (Broadcast msg) $ \resp ->
-      case resp of
-        BroadcastOk -> do
-          info ("Got ack from: " <> unNodeId nodeId)
-        _otherwise -> error "broadcast: unexpected response"
+    modifyState
+      (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
+    let go = do
+          unAckedNodes <- (Map.! msg) . unAcked <$> getState
+          if null unAckedNodes
+            then info ("Done with message: " <> fromString (show msg))
+            else do
+              info
+                ( "Need to replicate \""
+                    <> Text.pack (show msg)
+                    <> "\" to "
+                    <> Text.pack (show unAckedNodes)
+                )
+              forM_ unAckedNodes $ \nodeId -> rpc
+                nodeId
+                (Broadcast msg)
+                ( info
+                    ( "Failed to deliver "
+                        <> fromString (show msg)
+                        <> " to "
+                        <> unNodeId nodeId
+                    )
+                )
+                $ \resp ->
+                  case resp of
+                    BroadcastOk -> do
+                      info ("Got ack from: " <> unNodeId nodeId)
+                      modifyState
+                        (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
+                    _otherwise -> error "broadcast: unexpected response"
+              sleep 1_000_000 go
+    go
 broadcast Read = do
-  seenMessages <- getState
+  seenMessages <- seen <$> getState
   info ("Read, seen: " <> fromString (show seenMessages))
   reply (ReadOk (Set.toList seenMessages))
 

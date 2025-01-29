@@ -209,16 +209,18 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                   }
           runtime.send message
           handleEffects effects eventLoopState
-        SET_TIMER micros mMessageId timeoutEffects -> do
-          runtime.setTimer
-            micros
-            mMessageId
-            -- NOTE: Thunk this, so that the effects don't happen yet.
-            ( \() -> do
-                -- XXX: handleEffects timeoutEffects eventLoopState
-                return ()
-            )
-          handleEffects effects eventLoopState
+        SET_TIMER micros mMessageId timeoutNode -> do
+          now <- runtime.getCurrentTime
+          let later =
+                addUTCTime
+                  (realToFrac (fromIntegral micros / 1_000_000))
+                  now
+          let timerWheel' =
+                insertTimer
+                  later
+                  (Nothing, timeoutNode)
+                  eventLoopState.timerWheel
+          handleEffects effects eventLoopState {timerWheel = timerWheel'}
         LOG text -> do
           runtime.log text
           handleEffects effects eventLoopState

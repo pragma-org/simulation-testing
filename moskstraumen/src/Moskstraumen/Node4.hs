@@ -39,6 +39,7 @@ data NodeF state input output x
   | GetPeers ([NodeId] -> x)
   | SetPeers [NodeId] x
   | GetSender (NodeId -> x)
+  | Sleep Int ~(Node state input output)
   deriving (Functor)
 
 data NodeContext input output = NodeContext
@@ -113,6 +114,9 @@ setPeers = generic_ . SetPeers
 
 getNodeId = generic GetNodeId
 setNodeId = generic_ . SetNodeId
+
+sleep :: Int -> Node state input output -> Node state input output
+sleep micros node = Node (Free (Sleep micros node))
 
 ------------------------------------------------------------------------
 
@@ -209,6 +213,7 @@ runNode (Node node0) = iterM aux return node0
     aux (Log text ih) = do
       tell [LOG text]
       ih
+    aux (Sleep micros node) = tell [SET_TIMER micros Nothing node]
 
 eventLoop ::
   (Monad m) =>
