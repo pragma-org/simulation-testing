@@ -5,7 +5,9 @@ import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 
 import Moskstraumen.Message
+import Moskstraumen.Parse
 import Moskstraumen.Prelude
+import Moskstraumen.Pretty
 
 ------------------------------------------------------------------------
 
@@ -20,3 +22,10 @@ jsonCodec =
     { decode = Json.eitherDecode . BS8.fromStrict
     , encode = BS8.toStrict . Json.encode
     }
+
+data ValidateMarshal input output = ValidateMarshal
+  { validateInput :: Parser input
+  , validateOutput :: Parser output
+  , marshalInput :: Pretty input
+  , marshalOutput :: Pretty output
+  }

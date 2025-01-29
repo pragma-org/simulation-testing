@@ -2,8 +2,9 @@ module Moskstraumen.Example.Echo (module Moskstraumen.Example.Echo) where
 
 import Control.Applicative
 
+import Moskstraumen.Codec
 import Moskstraumen.Message
-import Moskstraumen.Node2
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude

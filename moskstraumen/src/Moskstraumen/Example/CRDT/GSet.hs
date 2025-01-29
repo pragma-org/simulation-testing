@@ -4,8 +4,9 @@ import Control.Monad.State
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Moskstraumen.Codec
 import Moskstraumen.Message
-import Moskstraumen.Node2
+import Moskstraumen.Node3
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude

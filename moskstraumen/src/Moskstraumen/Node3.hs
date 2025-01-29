@@ -410,13 +410,6 @@ runNode' (Node (Free (Fail errorMessage))) = do
 
 ------------------------------------------------------------------------
 
-data ValidateMarshal input output = ValidateMarshal
-  { validateInput :: Parser input
-  , validateOutput :: Parser output
-  , marshalInput :: Pretty input
-  , marshalOutput :: Pretty output
-  }
-
 eventLoop ::
   forall m state input output.
   (Monad m) =>

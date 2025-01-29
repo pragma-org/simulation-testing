@@ -7,9 +7,9 @@ import qualified Data.Text as Text
 import System.Random
 
 import Moskstraumen.Example.Echo
-import Moskstraumen.Interface
+import Moskstraumen.Interface2
 import Moskstraumen.Message
-import Moskstraumen.Node2
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 
@@ -154,12 +154,13 @@ echoPipeDeployment =
 
 ------------------------------------------------------------------------
 
-echoPureDeployment :: Deployment IO
+echoPureDeployment :: IO (Deployment IO)
 echoPureDeployment =
-  Deployment
-    { nodeCount = 1
-    , spawn = pureSpawn echo () echoValidateMarshal
-    }
+  return
+    Deployment
+      { nodeCount = 1
+      , spawn = simulationSpawn echo () echoValidateMarshal
+      }
 
 s :: Seed -> IO ()
 s seed = do
@@ -176,7 +177,8 @@ s seed = do
                   }
             }
         ]
-  result <- t' echoPureDeployment initialMessages seed numberOfTests
+  deployment <- echoPureDeployment
+  result <- t' deployment initialMessages seed numberOfTests
   print result
   where
     numberOfTests = 100

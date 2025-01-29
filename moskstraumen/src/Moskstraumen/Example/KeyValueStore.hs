@@ -9,6 +9,7 @@ import Data.Maybe
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 
+import Moskstraumen.Codec
 import Moskstraumen.Message
 import Moskstraumen.Node3
 import Moskstraumen.NodeId

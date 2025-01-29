@@ -50,13 +50,6 @@ initialEventLoopState initialNodeState =
 
 data Some f = forall a. Some (f a)
 
-data ValidateMarshal input output = ValidateMarshal
-  { validateInput :: Parser input
-  , validateOutput :: Parser output
-  , marshalInput :: Pretty input
-  , marshalOutput :: Pretty output
-  }
-
 newtype VarId = VarId Word64
   deriving newtype (Eq, Ord, Num, Show)
 
