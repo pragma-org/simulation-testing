@@ -25,7 +25,9 @@ data NodeF state input output x
   | RPC
       NodeId
       input
-      (Node state input output)
+      -- NOTE: This needs to be lazy, or `rpcRetryForever` will loop with
+      -- `StrictData`.
+      ~(Node state input output)
       (output -> Node state input output)
       x
   | Log Text x
@@ -118,7 +120,7 @@ execNode' ::
   Node state input output
   -> NodeContext input output
   -> NodeState state
-  -> (NodeState state, [Effect input output (Node state input output)])
+  -> (NodeState state, [Effect (Node' state input output) input output])
 execNode' node nodeContext nodeState =
   execRWS (runNode node) nodeContext nodeState
 
@@ -126,7 +128,7 @@ runNode ::
   Node state input output
   -> RWS
       (NodeContext input output)
-      [Effect input output (Node state input output)]
+      [Effect (Node' state input output) input output]
       (NodeState state)
       ()
 runNode (Node node0) = iterM aux return node0
@@ -138,13 +140,13 @@ runNode (Node node0) = iterM aux return node0
         output
         ( RWS
             (NodeContext input output)
-            [Effect input output (Node state input output)]
+            [Effect (Node' state input output) input output]
             (NodeState state)
             ()
         )
       -> RWS
           (NodeContext input output)
-          [Effect input output (Node state input output)]
+          [Effect (Node' state input output) input output]
           (NodeState state)
           ()
     aux (Send toNodeId input ih) = do
@@ -166,9 +168,7 @@ runNode (Node node0) = iterM aux return node0
     aux (After micros node ih) = do
       nodeContext_ <- ask
       nodeState_ <- get
-      tell
-        [ SET_TIMER micros Nothing (snd (execNode' node nodeContext_ nodeState_))
-        ]
+      tell [SET_TIMER micros Nothing node]
       ih
     aux (RPC destNodeId input failure success ih) = do
       nodeContext <- ask
@@ -178,7 +178,7 @@ runNode (Node node0) = iterM aux return node0
             nodeState.self
             destNodeId
             input
-            (snd (execNode' failure nodeContext nodeState))
+            failure
             success
         ]
       ih

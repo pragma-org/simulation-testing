@@ -25,8 +25,8 @@ data Runtime m = Runtime
   , timeout :: Microseconds -> m [Message] -> m (Maybe [Message])
   , setTimer :: Microseconds -> Maybe MessageId -> (() -> m ()) -> m ()
   , peekTimer :: m (Maybe (UTCTime, (Maybe MessageId, () -> m ())))
-  , popTimer :: m ()
-  , removeTimerByMessageId :: MessageId -> m ()
+  , -- , popTimer :: m ()
+    removeTimerByMessageId :: MessageId -> m ()
   , getCurrentTime :: m UTCTime
   }
 
@@ -35,7 +35,7 @@ consoleRuntime codec = do
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  timerWheelRef <- newIORef newTimerWheel
+  timerWheelRef <- newIORef emptyTimerWheel
   return
     Runtime
       { receive = consoleReceive
@@ -46,8 +46,8 @@ consoleRuntime codec = do
         timeout = \micros -> System.Timeout.timeout (max 0 micros)
       , setTimer = setTimer_ timerWheelRef
       , peekTimer = peekTimer_ timerWheelRef
-      , popTimer = popTimer_ timerWheelRef
-      , removeTimerByMessageId = removeTimer_ timerWheelRef
+      , --      , popTimer = popTimer_ timerWheelRef
+        removeTimerByMessageId = removeTimer_ timerWheelRef
       , getCurrentTime = Data.Time.getCurrentTime
       }
   where
@@ -55,14 +55,19 @@ consoleRuntime codec = do
     consoleReceive = do
       -- XXX: Batch and read several lines?
       line <- BS8.hGetLine stdin
-      BS8.hPutStrLn stderr ("recieve: " <> line)
-      case codec.decode line of
-        Right message -> return [message]
-        Left err ->
-          -- XXX: Log and keep stats instead of error.
-          error
-            $ "consoleReceive: failed to decode message: "
-            ++ show err
+      if BS8.null line
+        then return []
+        else do
+          BS8.hPutStrLn stderr ("recieve: " <> line)
+          case codec.decode line of
+            Right message -> return [message]
+            Left err ->
+              -- XXX: Log and keep stats instead of error.
+              error
+                $ "consoleReceive: failed to decode message: "
+                ++ show err
+                ++ "\nline: "
+                ++ show line
 
     consoleSend :: Message -> IO ()
     consoleSend message = do

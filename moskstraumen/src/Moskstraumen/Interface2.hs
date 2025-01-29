@@ -43,7 +43,7 @@ simulationRuntime = do
         , log = undefined
         , timeout = undefined
         , setTimer = undefined
-        , popTimer = undefined
+        , peekTimer = undefined
         , removeTimerByMessageId = undefined
         , getCurrentTime = undefined
         }

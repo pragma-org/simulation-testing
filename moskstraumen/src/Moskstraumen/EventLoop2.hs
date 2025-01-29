@@ -12,6 +12,7 @@ import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Pretty
 import Moskstraumen.Runtime2
+import Moskstraumen.TimerWheel2
 
 ------------------------------------------------------------------------
 
@@ -24,6 +25,7 @@ data EventLoopState node nodeState output = EventLoopState
   { rpcs :: Map MessageId (output -> node ())
   , nodeState :: nodeState
   , nextMessageId :: MessageId
+  , timerWheel :: TimerWheel UTCTime (Maybe MessageId, node ())
   -- { timers :: Map TimerId (node ())
   -- , vars :: Map VarId output
   -- , awaits :: Map VarId (output -> Some node)
@@ -38,6 +40,7 @@ initialEventLoopState initialNodeState =
     { rpcs = Map.empty
     , nodeState = initialNodeState
     , nextMessageId = 0
+    , timerWheel = emptyTimerWheel
     -- , vars = Map.empty
     -- , awaits = Map.empty
     -- , timers = Map.empty
@@ -59,12 +62,12 @@ newtype VarId = VarId Word64
 
 -- Defunctionalise?
 -- https://www.pathsensitive.com/2019/07/the-best-refactoring-youve-never-heard.html
-data Effect input output x
+data Effect node input output
   = SEND NodeId NodeId input
   | REPLY NodeId NodeId (Maybe MessageId) output
   | LOG Text
-  | SET_TIMER Microseconds (Maybe MessageId) [Effect input output x]
-  | DO_RPC NodeId NodeId input [Effect input output x] (output -> x)
+  | SET_TIMER Microseconds (Maybe MessageId) (node ())
+  | DO_RPC NodeId NodeId input (node ()) (output -> node ())
 
 ------------------------------------------------------------------------
 
@@ -75,7 +78,7 @@ eventLoop_ ::
   -> ( node ()
        -> nodeContext
        -> nodeState
-       -> (nodeState, [Effect input output (node ())])
+       -> (nodeState, [Effect node input output])
      )
   -> (Maybe Message -> nodeContext)
   -> nodeState
@@ -87,12 +90,12 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
   where
     loop :: EventLoopState node nodeState output -> m ()
     loop eventLoopState = do
-      runtime.peekTimer >>= \case
+      case popTimer eventLoopState.timerWheel of
         Nothing -> do
           messages <- runtime.receive
           eventLoopState' <- handleMessages messages eventLoopState
           loop eventLoopState'
-        Just (time, (mMessageId, effects)) -> do
+        Just ((time, (mMessageId, timeoutNode)), timerWheel') -> do
           now <- runtime.getCurrentTime
           let nanos = realToFrac (diffUTCTime time now)
               micros = round (nanos * 1_000_000)
@@ -105,13 +108,19 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
               -- that an RPC call timed out and we should remove the
               -- successful continuation from from eventLoopState.rpcs.
               -- traceM ("timer triggered")
-              runtime.popTimer
-              () <- effects ()
+              --
+              let (nodeState', effects) =
+                    runNode
+                      timeoutNode
+                      (nodeContext Nothing)
+                      eventLoopState.nodeState
+              let eventLoopState' = eventLoopState {nodeState = nodeState', timerWheel = timerWheel'}
+              eventLoopState'' <- handleEffects effects eventLoopState'
               case mMessageId of
-                Nothing -> loop eventLoopState
+                Nothing -> loop eventLoopState''
                 Just messageId ->
                   loop
-                    eventLoopState
+                    eventLoopState''
                       { rpcs = Map.delete messageId eventLoopState.rpcs
                       }
             Just messages -> do
@@ -162,7 +171,7 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                   return eventLoopState'
 
     handleEffects ::
-      [Effect input output (node ())]
+      [Effect node input output]
       -> EventLoopState node nodeState output
       -> m (EventLoopState node nodeState output)
     handleEffects [] eventLoopState = return eventLoopState
@@ -205,13 +214,16 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
             micros
             mMessageId
             -- NOTE: Thunk this, so that the effects don't happen yet.
-            (\() -> handleEffects timeoutEffects eventLoopState >> return ())
+            ( \() -> do
+                -- XXX: handleEffects timeoutEffects eventLoopState
+                return ()
+            )
           handleEffects effects eventLoopState
         LOG text -> do
           runtime.log text
           handleEffects effects eventLoopState
         DO_RPC srcNodeId destNodeId input failure success -> do
-          traceM "DO_RPC"
+          traceM ("DO_RPC: " <> show srcNodeId <> " " <> show destNodeId)
           let messageId = eventLoopState.nextMessageId
           let (kind_, fields_) = validateMarshal.marshalInput input
           let message =
@@ -227,20 +239,22 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                         }
                   }
           runtime.send message
-          runtime.setTimer
-            rPC_TIMEOUT_MICROS
-            (Just messageId)
-            -- NOTE: Thunk this, so that the effects don't happen yet.
-            ( \() ->
-                traceM "Triggering effects!"
-                  >> handleEffects failure eventLoopState
-                  >> return ()
-            )
+          now <- runtime.getCurrentTime
+          let later =
+                addUTCTime
+                  (realToFrac (fromIntegral rPC_TIMEOUT_MICROS / 1_000_000))
+                  now
+          let timerWheel' =
+                insertTimer
+                  later
+                  (Just messageId, failure)
+                  eventLoopState.timerWheel
           handleEffects
             effects
             eventLoopState
               { rpcs = Map.insert messageId success eventLoopState.rpcs
               , nextMessageId = messageId + 1
+              , timerWheel = timerWheel'
               }
 
 consoleEventLoop_ ::
@@ -248,7 +262,7 @@ consoleEventLoop_ ::
   -> ( node ()
        -> nodeContext
        -> nodeState
-       -> (nodeState, [Effect input output (node ())])
+       -> (nodeState, [Effect node input output])
      )
   -> (Maybe Message -> nodeContext)
   -> nodeState

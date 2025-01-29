@@ -11,8 +11,8 @@ import Moskstraumen.Prelude
 newtype TimerWheel time a = TimerWheel [(time, a)]
   deriving (Show)
 
-newTimerWheel :: TimerWheel time a
-newTimerWheel = TimerWheel []
+emptyTimerWheel :: TimerWheel time a
+emptyTimerWheel = TimerWheel []
 
 insertTimer ::
   (Ord time) => time -> a -> TimerWheel time a -> TimerWheel time a
