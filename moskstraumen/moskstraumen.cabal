@@ -31,7 +31,9 @@ library
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
     Moskstraumen.FreeMonad
+    Moskstraumen.Generate
     Moskstraumen.Interface2
+    Moskstraumen.LinearTemporalLogic
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node3
@@ -40,6 +42,7 @@ library
     Moskstraumen.Parse
     Moskstraumen.Prelude
     Moskstraumen.Pretty
+    Moskstraumen.Random
     Moskstraumen.Runtime
     Moskstraumen.Runtime2
     Moskstraumen.Simulate
@@ -70,6 +73,7 @@ library
     , base        >=4.16
     , bytestring
     , containers
+    , heaps
     , mtl
     , process
     , random

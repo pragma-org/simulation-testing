@@ -34,11 +34,11 @@ data Message = Message
   , arrivalTime :: Maybe UTCTime
   , body :: Payload
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 newtype MessageKind = MessageKind Text
   deriving stock (Generic)
-  deriving newtype (Eq, Show, Semigroup, Monoid, IsString)
+  deriving newtype (Eq, Ord, Show, Semigroup, Monoid, IsString)
   deriving anyclass (FromJSON, ToJSON)
 
 type MessageId = Word64
@@ -49,7 +49,7 @@ data Payload = Payload
   , inReplyTo :: Maybe MessageId
   , fields :: Map Field Value
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
 
 newtype Field = Field Text
   deriving stock (Generic, Show)
