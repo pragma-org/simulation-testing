@@ -12,5 +12,5 @@ data Effect node input output
   = SEND NodeId NodeId input
   | REPLY NodeId NodeId (Maybe MessageId) output
   | LOG Text
-  | SET_TIMER Int {- µs -} (Maybe MessageId) (node ())
-  | DO_RPC NodeId NodeId input (node ()) (output -> node ())
+  | SET_TIMER Int {- µs -} (Maybe MessageId) node
+  | DO_RPC NodeId NodeId input node (output -> node)

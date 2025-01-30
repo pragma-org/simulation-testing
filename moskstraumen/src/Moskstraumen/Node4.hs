@@ -119,19 +119,19 @@ sleep micros node = Node (Free (Sleep micros node))
 
 ------------------------------------------------------------------------
 
-execNode' ::
+execNode ::
   Node state input output
   -> NodeContext
   -> NodeState state
-  -> (NodeState state, [Effect (Node' state input output) input output])
-execNode' node nodeContext nodeState =
+  -> (NodeState state, [Effect (Node state input output) input output])
+execNode node nodeContext nodeState =
   execRWS (runNode node) nodeContext nodeState
 
 runNode ::
   Node state input output
   -> RWS
       NodeContext
-      [Effect (Node' state input output) input output]
+      [Effect (Node state input output) input output]
       (NodeState state)
       ()
 runNode (Node node0) = iterM aux return node0
@@ -143,13 +143,13 @@ runNode (Node node0) = iterM aux return node0
         output
         ( RWS
             NodeContext
-            [Effect (Node' state input output) input output]
+            [Effect (Node state input output) input output]
             (NodeState state)
             ()
         )
       -> RWS
           NodeContext
-          [Effect (Node' state input output) input output]
+          [Effect (Node state input output) input output]
           (NodeState state)
           ()
     aux (Send toNodeId input ih) = do

@@ -22,20 +22,21 @@ rPC_TIMEOUT_MICROS = 1_000_000 -- 1 second.
 
 ------------------------------------------------------------------------
 
-data EventLoopState node nodeState output = EventLoopState
-  { rpcs :: Map MessageId (output -> node ())
-  , nodeState :: nodeState
+data EventLoopState state input output = EventLoopState
+  { rpcs :: Map MessageId (output -> Node state input output)
+  , nodeState :: NodeState state
   , nextMessageId :: MessageId
-  , timerWheel :: TimerWheel UTCTime (Maybe MessageId, node ())
-  -- { timers :: Map TimerId (node ())
-  -- , vars :: Map VarId output
-  -- , awaits :: Map VarId (output -> Some node)
-  -- , nextTimerId :: TimerId
-  -- , nextVarId :: VarId
+  , timerWheel ::
+      TimerWheel UTCTime (Maybe MessageId, Node state input output)
+      -- { timers :: Map TimerId (node ())
+      -- , vars :: Map VarId output
+      -- , awaits :: Map VarId (output -> Some node)
+      -- , nextTimerId :: TimerId
+      -- , nextVarId :: VarId
   }
 
 initialEventLoopState ::
-  nodeState -> EventLoopState nodenode nodeState output
+  NodeState state -> EventLoopState state input output
 initialEventLoopState initialNodeState =
   EventLoopState
     { rpcs = Map.empty
@@ -56,24 +57,18 @@ newtype VarId = VarId Word64
 
 ------------------------------------------------------------------------
 
-eventLoop_ ::
-  forall m input output node nodeContext nodeState.
+eventLoop ::
+  forall m state input output.
   (Monad m) =>
-  (input -> node ())
-  -> ( node ()
-       -> nodeContext
-       -> nodeState
-       -> (nodeState, [Effect node input output])
-     )
-  -> (Maybe Message -> nodeContext)
-  -> nodeState
+  (input -> Node state input output)
+  -> state
   -> ValidateMarshal input output
   -> Runtime m
   -> m ()
-eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
-  loop (initialEventLoopState initialNodeState)
+eventLoop node initialState validateMarshal runtime =
+  loop (initialEventLoopState (initialNodeState initialState))
   where
-    loop :: EventLoopState node nodeState output -> m ()
+    loop :: EventLoopState state input output -> m ()
     loop eventLoopState = do
       case popTimer eventLoopState.timerWheel of
         Nothing -> do
@@ -95,9 +90,9 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
               -- traceM ("timer triggered")
               --
               let (nodeState', effects) =
-                    runNode
+                    execNode
                       timeoutNode
-                      (nodeContext Nothing)
+                      (NodeContext Nothing)
                       eventLoopState.nodeState
               let eventLoopState' = eventLoopState {nodeState = nodeState', timerWheel = timerWheel'}
               eventLoopState'' <- handleEffects effects eventLoopState'
@@ -114,8 +109,8 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
 
     handleMessages ::
       [Message]
-      -> EventLoopState node nodeState output
-      -> m (EventLoopState node nodeState output)
+      -> EventLoopState state input output
+      -> m (EventLoopState state input output)
     handleMessages [] eventLoopState = return eventLoopState
     handleMessages (message : messages) eventLoopState =
       case message.body.inReplyTo of
@@ -123,9 +118,9 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
           Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
           Just input -> do
             let (nodeState', effects) =
-                  runNode
+                  execNode
                     (node input)
-                    (nodeContext (Just message))
+                    (NodeContext (Just message))
                     eventLoopState.nodeState
             eventLoopState' <-
               handleEffects effects eventLoopState {nodeState = nodeState'}
@@ -144,9 +139,9 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                   return eventLoopState
                 Just (success, rpcs') -> do
                   let (nodeState', effects) =
-                        runNode
+                        execNode
                           (success output)
-                          (nodeContext (Just message))
+                          (NodeContext (Just message))
                           eventLoopState.nodeState
                   eventLoopState' <-
                     handleEffects
@@ -162,9 +157,9 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
                       }
 
     handleEffects ::
-      [Effect node input output]
-      -> EventLoopState node nodeState output
-      -> m (EventLoopState node nodeState output)
+      [Effect (Node state input output) input output]
+      -> EventLoopState state input output
+      -> m (EventLoopState state input output)
     handleEffects [] eventLoopState = return eventLoopState
     handleEffects (effect : effects) eventLoopState = do
       case effect of
@@ -251,39 +246,6 @@ eventLoop_ node runNode nodeContext initialNodeState validateMarshal runtime =
               , nextMessageId = messageId + 1
               , timerWheel = timerWheel'
               }
-
-consoleEventLoop_ ::
-  (input -> node ())
-  -> ( node ()
-       -> nodeContext
-       -> nodeState
-       -> (nodeState, [Effect node input output])
-     )
-  -> (Maybe Message -> nodeContext)
-  -> nodeState
-  -> ValidateMarshal input output
-  -> IO ()
-consoleEventLoop_ node runNode nodeContext nodeState validateMarshal = do
-  runtime <- consoleRuntime jsonCodec
-  eventLoop_ node runNode nodeContext nodeState validateMarshal runtime
-
-eventLoop ::
-  (Monad m) =>
-  (input -> Node state input output)
-  -> state
-  -> ValidateMarshal input output
-  -> Runtime m
-  -> m ()
-eventLoop node initialState validateMarshal runtime =
-  eventLoop_
-    node
-    execNode'
-    ( \mMessage ->
-        NodeContext {incoming = mMessage}
-    )
-    (initialNodeState initialState)
-    validateMarshal
-    runtime
 
 consoleEventLoop ::
   (input -> Node state input output)
