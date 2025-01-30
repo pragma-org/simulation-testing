@@ -42,9 +42,8 @@ data NodeF state input output x
   | Sleep Int ~(Node state input output)
   deriving (Functor)
 
-data NodeContext input output = NodeContext
+data NodeContext = NodeContext
   { incoming :: Maybe Message
-  , validateMarshal :: ValidateMarshal input output
   }
 
 data NodeState state = NodeState
@@ -122,7 +121,7 @@ sleep micros node = Node (Free (Sleep micros node))
 
 execNode' ::
   Node state input output
-  -> NodeContext input output
+  -> NodeContext
   -> NodeState state
   -> (NodeState state, [Effect (Node' state input output) input output])
 execNode' node nodeContext nodeState =
@@ -131,7 +130,7 @@ execNode' node nodeContext nodeState =
 runNode ::
   Node state input output
   -> RWS
-      (NodeContext input output)
+      NodeContext
       [Effect (Node' state input output) input output]
       (NodeState state)
       ()
@@ -143,13 +142,13 @@ runNode (Node node0) = iterM aux return node0
         input
         output
         ( RWS
-            (NodeContext input output)
+            NodeContext
             [Effect (Node' state input output) input output]
             (NodeState state)
             ()
         )
       -> RWS
-          (NodeContext input output)
+          NodeContext
           [Effect (Node' state input output) input output]
           (NodeState state)
           ()
@@ -227,14 +226,9 @@ eventLoop node initialState validateMarshal runtime =
     node
     execNode'
     ( \mMessage ->
-        NodeContext
-          { incoming = mMessage
-          , validateMarshal = validateMarshal
-          }
+        NodeContext {incoming = mMessage}
     )
     (initialNodeState initialState)
-    -- XXX: dup, already in node context... Maybe all uses of validateMarshal
-    -- should be moved to event loop?
     validateMarshal
     runtime
 
