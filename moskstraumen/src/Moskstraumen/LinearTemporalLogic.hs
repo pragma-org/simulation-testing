@@ -5,7 +5,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Time
 
-import Moskstraumen.Message hiding (Field, Int, String, Value)
+import Moskstraumen.Message
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
@@ -34,20 +34,19 @@ data Form a
   | Term :== Term
   | FreezeQuantifier Var (Form a)
 
-type Name = String
-type Percentile = Double
+type Name = Text
 
 data Term
   = Var Var
-  | Int Int
-  | String String
+  | IntTerm Int
+  | StringTerm Text
   | (:-) Term Term
   | (:+) Term Term
-  | (:.) Term Field
+  | (:.) Term MessageField
 
-type Var = String
+type Var = Text
 
-data Field = Kind | ArrivalTime | MsgId | InReplyTo
+data MessageField = Kind | ArrivalTime | MsgId | InReplyTo
 
 ------------------------------------------------------------------------
 
@@ -70,9 +69,27 @@ example =
                       :- Var "request"
                       :. ArrivalTime
                   )
-                    :<= Int 100
+                    :<= IntTerm 100
                 )
       )
+
+liveness :: Text -> Form Message
+liveness req =
+  Always
+    $ FreezeQuantifier req
+    $ Prop (\msg -> msg.body.kind == MessageKind req)
+    :==> Eventually
+      ( FreezeQuantifier
+          resp
+          ( Prop (\msg -> msg.body.kind == MessageKind resp)
+              `And` Var resp
+              :. InReplyTo
+              :== Var req
+              :. MsgId
+          )
+      )
+  where
+    resp = req <> "_ok"
 
 ------------------------------------------------------------------------
 
@@ -103,10 +120,10 @@ sat (t1 :== t2) _w env = eval t1 env == eval t2 env
 sat (FreezeQuantifier x p) w env =
   sat p w env {variables = Map.insert x (w !! 0) env.variables}
 
-eval :: Term -> Env Message -> Value
+eval :: Term -> Env Message -> LTLValue
 eval (Var x) env = MessageValue (env.variables Map.! x)
-eval (Int i) _env = IntValue i
-eval (String s) _env = StringValue s
+eval (IntTerm i) _env = IntValue i
+eval (StringTerm s) _env = StringValue s
 eval (t1 :+ t2) env = case (eval t1 env, eval t2 env) of
   (IntValue i1, IntValue i2) -> IntValue (i1 + i2)
   _otherwise -> error "addition of non-integers"
@@ -121,9 +138,9 @@ eval (t :. field) env = case eval t env of
     ArrivalTime -> MaybeTimeValue msg.arrivalTime
   _otherwise -> error "field access on non-message"
 
-data Value
+data LTLValue
   = MessageValue Message
-  | StringValue String
+  | StringValue Text
   | IntValue Int
   | MaybeMessageIdValue (Maybe MessageId)
   | KindValue MessageKind

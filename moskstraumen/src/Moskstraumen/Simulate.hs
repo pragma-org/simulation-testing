@@ -7,11 +7,14 @@ import qualified Data.Text as Text
 import System.Random
 
 import Moskstraumen.Example.Echo
+import qualified Moskstraumen.Generate as Gen
 import Moskstraumen.Interface2
+import Moskstraumen.LinearTemporalLogic
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Random
 import Moskstraumen.Time
 
 ------------------------------------------------------------------------
@@ -19,7 +22,7 @@ import Moskstraumen.Time
 data World m = World
   { nodes :: Map NodeId (Interface m)
   , messages :: [Message] -- XXX: should be a heap
-  , prng :: StdGen
+  , prng :: Prng
   , trace :: Trace
   }
 
@@ -34,7 +37,7 @@ stepWorld world = case world.messages of
     Nothing -> error ("stepWorld: unknown destination node: " ++ show msg.dest)
     Just node -> do
       -- XXX: will be used later when we assign arrival times for replies
-      let (prng', prng'') = split world.prng
+      let (prng', prng'') = splitPrng world.prng
       msgs' <- node.handle msg
       let (clientReplies, nodeMessages) =
             partition (\msg0 -> "c" `Text.isPrefixOf` unNodeId msg0.dest) msgs'
@@ -65,7 +68,7 @@ data Deployment m = Deployment
 type Seed = Int
 
 newWorld ::
-  (Monad m) => Deployment m -> [Message] -> StdGen -> m (World m)
+  (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
 newWorld deployment initialMessages prng = do
   let nodeNames =
         map
@@ -81,7 +84,7 @@ newWorld deployment initialMessages prng = do
       , trace = []
       }
 
-test :: (Monad m) => Deployment m -> [Message] -> StdGen -> m Bool
+test :: (Monad m) => Deployment m -> [Message] -> Prng -> m Bool
 test deployment initialMessages prng = do
   world <-
     newWorld
@@ -90,33 +93,17 @@ test deployment initialMessages prng = do
       prng
   resultingTrace <- runWorld world
   traverse_ (.close) world.nodes
-  -- XXX: assert something about trace, e.g.:
-
-  -- if sat
-  --   ( always
-  --       ( Prop (\e -> e.from == Client && e.content == Write)
-  --           ==> eventually
-  --             ( Prop (\e -> e.to == Client && (e.content == Ack || e.content == Abort))
-  --             )
-  --       )
-  --   )
-  --   trace
-  --   then return True
-  --   else do
-  --     putStrLn $ "Failure, seed: " ++ show seed
-  --     mapM_ (putStrLn . prettyEnvelope) (runSim sim)
-  --     return False
-  return True
+  return (sat (liveness "echo") resultingTrace emptyEnv)
 
 data Result = Success | Failure
   deriving (Show)
 
-t' :: (Monad m) => Deployment m -> [Message] -> Seed -> Int -> m Result
-t' deployment initialMessages seed = go (mkStdGen seed)
+t' :: (Monad m) => Deployment m -> [Message] -> Prng -> Int -> m Result
+t' deployment initialMessages prng = go prng
   where
     go _prng 0 = return Success
     go prng n = do
-      let (prng', prng'') = split prng
+      let (prng', prng'') = splitPrng prng
       passed <- test deployment initialMessages prng'
       if passed
         then go prng'' (n - 1)
@@ -125,6 +112,8 @@ t' deployment initialMessages seed = go (mkStdGen seed)
 t :: IO ()
 t = do
   seed <- randomIO
+
+  let prng = mkPrng seed
 
   let initialMessages =
         [ Message
@@ -140,7 +129,7 @@ t = do
                   }
             }
         ]
-  result <- t' echoPipeDeployment initialMessages seed numberOfTests
+  result <- t' echoPipeDeployment initialMessages prng numberOfTests
   print result
   where
     numberOfTests = 100
@@ -166,22 +155,32 @@ echoPureDeployment =
 
 s :: Seed -> IO ()
 s seed = do
-  let initialMessages =
-        [ Message
-            { src = "c1"
-            , dest = "n1"
-            , arrivalTime = Just epoch
-            , body =
-                Payload
-                  { kind = "echo"
-                  , msgId = Just 0
-                  , inReplyTo = Nothing
-                  , fields = Map.fromList [("echo", String "hi")]
-                  }
-            }
-        ]
+  let mkMessage ix n =
+        Message
+          { src = "c1"
+          , dest = "n1"
+          , arrivalTime = Just epoch
+          , body =
+              Payload
+                { kind = "echo"
+                , msgId = Just ix
+                , inReplyTo = Nothing
+                , fields =
+                    Map.fromList
+                      [
+                        ( "echo"
+                        , String ("Please echo: " <> fromString (show n))
+                        )
+                      ]
+                }
+          }
+  let prng = mkPrng seed
+  let size = 100
+  let (prng', randomNumbers) = Gen.runGen (Gen.listOf Gen.word8) prng size
+  print (length randomNumbers)
+  let messages = zipWith mkMessage [0 ..] randomNumbers
   deployment <- echoPureDeployment
-  result <- t' deployment initialMessages seed numberOfTests
+  result <- t' deployment messages prng' numberOfTests
   print result
   where
-    numberOfTests = 100
+    numberOfTests = 1

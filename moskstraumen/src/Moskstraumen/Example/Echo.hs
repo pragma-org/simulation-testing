@@ -26,7 +26,7 @@ echo (Init myNodeId myNeighbours) = do
   reply InitOk
 echo (Echo text) = do
   info ("Got: " <> text)
-  reply (EchoOk text)
+  reply (EchoOk (text <> "1"))
 
 ------------------------------------------------------------------------
 

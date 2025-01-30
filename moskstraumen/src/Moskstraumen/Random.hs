@@ -1,20 +1,28 @@
 module Moskstraumen.Random (module Moskstraumen.Random) where
 
-import System.Random
+import qualified System.Random as Random
 
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
-newtype Prng = Prng StdGen
+newtype Prng = Prng Random.StdGen
 
 ------------------------------------------------------------------------
 
 newPrng :: Maybe Int -> IO (Prng, Int)
 newPrng Nothing = do
-  seed <- randomIO
-  return (Prng (mkStdGen seed), seed)
-newPrng (Just seed) = return (Prng (mkStdGen seed), seed)
+  seed <- Random.randomIO
+  return (Prng (Random.mkStdGen seed), seed)
+newPrng (Just seed) = return (Prng (Random.mkStdGen seed), seed)
 
 mkPrng :: Int -> Prng
-mkPrng seed = Prng (mkStdGen seed)
+mkPrng seed = Prng (Random.mkStdGen seed)
+
+splitPrng :: Prng -> (Prng, Prng)
+splitPrng (Prng stdGen) =
+  let (stdGen', stdGen'') = Random.split stdGen
+  in  (Prng stdGen', Prng stdGen'')
+
+randomR :: (Random.Random a) => (a, a) -> Prng -> (a, Prng)
+randomR (lo, hi) (Prng stdGen) = Prng <$> Random.randomR (lo, hi) stdGen
