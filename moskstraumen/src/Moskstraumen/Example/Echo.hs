@@ -26,7 +26,9 @@ echo (Init myNodeId myNeighbours) = do
   reply InitOk
 echo (Echo text) = do
   info ("Got: " <> text)
-  reply (EchoOk (text <> "1"))
+  if text == "Please echo: 42"
+    then reply (EchoOk "bug")
+    else reply (EchoOk text)
 
 ------------------------------------------------------------------------
 

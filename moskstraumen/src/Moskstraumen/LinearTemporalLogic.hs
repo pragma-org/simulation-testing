@@ -46,7 +46,7 @@ data Term
 
 type Var = Text
 
-data MessageField = Kind | ArrivalTime | MsgId | InReplyTo
+data MessageField = Kind | ArrivalTime | MsgId | InReplyTo | Project Field
 
 ------------------------------------------------------------------------
 
@@ -72,24 +72,6 @@ example =
                     :<= IntTerm 100
                 )
       )
-
-liveness :: Text -> Form Message
-liveness req =
-  Always
-    $ FreezeQuantifier req
-    $ Prop (\msg -> msg.body.kind == MessageKind req)
-    :==> Eventually
-      ( FreezeQuantifier
-          resp
-          ( Prop (\msg -> msg.body.kind == MessageKind resp)
-              `And` Var resp
-              :. InReplyTo
-              :== Var req
-              :. MsgId
-          )
-      )
-  where
-    resp = req <> "_ok"
 
 ------------------------------------------------------------------------
 
@@ -136,6 +118,7 @@ eval (t :. field) env = case eval t env of
     MsgId -> MaybeMessageIdValue msg.body.msgId
     InReplyTo -> MaybeMessageIdValue msg.body.inReplyTo
     ArrivalTime -> MaybeTimeValue msg.arrivalTime
+    Project field' -> ValueValue (msg.body.fields Map.! field')
   _otherwise -> error "field access on non-message"
 
 data LTLValue
@@ -145,6 +128,7 @@ data LTLValue
   | MaybeMessageIdValue (Maybe MessageId)
   | KindValue MessageKind
   | MaybeTimeValue (Maybe UTCTime)
+  | ValueValue Value
   deriving (Eq, Ord, Show)
 
 ------------------------------------------------------------------------

@@ -94,6 +94,28 @@ test deployment initialMessages prng = do
   resultingTrace <- runWorld world
   traverse_ (.close) world.nodes
   return (sat (liveness "echo") resultingTrace emptyEnv)
+  where
+    liveness :: Text -> Form Message
+    liveness req =
+      Always
+        $ FreezeQuantifier req
+        $ Prop (\msg -> msg.body.kind == MessageKind req)
+        :==> Eventually
+          ( FreezeQuantifier
+              resp
+              ( Prop (\msg -> msg.body.kind == MessageKind resp)
+                  `And` Var resp
+                  :. InReplyTo
+                  :== Var req
+                  :. MsgId
+                  `And` Var resp
+                  :. Project "echo"
+                  :== Var req
+                  :. Project "echo"
+              )
+          )
+      where
+        resp = req <> "_ok"
 
 data Result = Success | Failure
   deriving (Show)
