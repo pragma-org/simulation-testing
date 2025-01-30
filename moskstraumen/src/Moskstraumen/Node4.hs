@@ -5,7 +5,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 import Moskstraumen.Codec
-import Moskstraumen.EventLoop2
+import Moskstraumen.Effect
 import Moskstraumen.FreeMonad
 import Moskstraumen.Message
 import Moskstraumen.NodeId
@@ -213,30 +213,3 @@ runNode (Node node0) = iterM aux return node0
       tell [LOG text]
       ih
     aux (Sleep micros node) = tell [SET_TIMER micros Nothing node]
-
-eventLoop ::
-  (Monad m) =>
-  (input -> Node state input output)
-  -> state
-  -> ValidateMarshal input output
-  -> Runtime m
-  -> m ()
-eventLoop node initialState validateMarshal runtime =
-  eventLoop_
-    node
-    execNode'
-    ( \mMessage ->
-        NodeContext {incoming = mMessage}
-    )
-    (initialNodeState initialState)
-    validateMarshal
-    runtime
-
-consoleEventLoop ::
-  (input -> Node state input output)
-  -> state
-  -> ValidateMarshal input output
-  -> IO ()
-consoleEventLoop node initialState validateMarshal = do
-  runtime <- consoleRuntime jsonCodec
-  eventLoop node initialState validateMarshal runtime

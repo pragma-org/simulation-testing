@@ -23,6 +23,7 @@ library
   import:             warnings
   exposed-modules:
     Moskstraumen.Codec
+    Moskstraumen.Effect
     Moskstraumen.EventLoop
     Moskstraumen.EventLoop2
     Moskstraumen.Example.Broadcast

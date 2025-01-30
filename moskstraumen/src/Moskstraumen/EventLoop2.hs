@@ -6,7 +6,9 @@ import Data.Time
 import Debug.Trace
 
 import Moskstraumen.Codec
+import Moskstraumen.Effect
 import Moskstraumen.Message
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -51,15 +53,6 @@ data Some f = forall a. Some (f a)
 
 newtype VarId = VarId Word64
   deriving newtype (Eq, Ord, Num, Show)
-
--- Defunctionalise?
--- https://www.pathsensitive.com/2019/07/the-best-refactoring-youve-never-heard.html
-data Effect node input output
-  = SEND NodeId NodeId input
-  | REPLY NodeId NodeId (Maybe MessageId) output
-  | LOG Text
-  | SET_TIMER Microseconds (Maybe MessageId) (node ())
-  | DO_RPC NodeId NodeId input (node ()) (output -> node ())
 
 ------------------------------------------------------------------------
 
@@ -273,3 +266,30 @@ consoleEventLoop_ ::
 consoleEventLoop_ node runNode nodeContext nodeState validateMarshal = do
   runtime <- consoleRuntime jsonCodec
   eventLoop_ node runNode nodeContext nodeState validateMarshal runtime
+
+eventLoop ::
+  (Monad m) =>
+  (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> Runtime m
+  -> m ()
+eventLoop node initialState validateMarshal runtime =
+  eventLoop_
+    node
+    execNode'
+    ( \mMessage ->
+        NodeContext {incoming = mMessage}
+    )
+    (initialNodeState initialState)
+    validateMarshal
+    runtime
+
+consoleEventLoop ::
+  (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> IO ()
+consoleEventLoop node initialState validateMarshal = do
+  runtime <- consoleRuntime jsonCodec
+  eventLoop node initialState validateMarshal runtime

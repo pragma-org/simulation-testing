@@ -3,6 +3,7 @@ module Moskstraumen.Example.Echo (module Moskstraumen.Example.Echo) where
 import Control.Applicative
 
 import Moskstraumen.Codec
+import Moskstraumen.EventLoop2
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.NodeId

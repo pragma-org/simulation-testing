@@ -11,6 +11,7 @@ import System.Process
 import System.Timeout
 
 import Moskstraumen.Codec
+import Moskstraumen.EventLoop2
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.Prelude
