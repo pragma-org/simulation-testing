@@ -83,6 +83,53 @@ more fancy and remember which seeds have been tested with already
 and avoid those, e.g. using a shared bloom filter across the N
 simulations, but this something we can think about later.
 
+After this meeting with Arnaud, he organised another one with Santiago
+also (who maintains gasket), here are some post-meeting thoughts of
+mine:
+
+I think the idea of organising processing in stages, where a stage can
+be e.g. read a message from socket, parse, validate, apply business
+logic, serialise, write to socket, and the stages run in parallel and
+are connected with queues is the "right way" to exploit parallelism
+on a single node.
+
+This isn't gasket specific. One of the earliest proponents, that I
+know of, of this idea was Jim Gray. If you listen to his Turing
+award interview, he says that this is how they built and scaled
+databases (using parallelism without losing determinism).
+
+The SEDA paper, which gasket is based upon, by Brewer et al (of CAP
+theorem fame) is based on the same idea, however they sacrifice
+determinism (perhaps because one key part of the paper is that they can
+elastically scale stages which is easier with a thread pool per stage).
+
+Martin Thompson et al's Disruptor "fixes" SEDA by restoring determinism,
+but otherwise again crucially depends on stages to achieve pipelining
+parallelism. It seems to me that the Disruptor is fine-tuned and
+over-provisioned for a specific workload, thus making elastic scaling
+less important (if needed they could probably rescale it during
+downtime at night).
+
+And now with Clojure's
+[async.flow](https://clojure.github.io/core.async/flow.html), we can add
+Rich Hickey to the list of proponents of the general idea, although
+determinism is lost again. I like async.flow though, because how simple
+their stages are. It's literally a function: `input -> state -> (state,
+output)`, and a "flow" is merely a directed graph connecting the in and
+outputs of said stages together with a source and a sink.
+
+Disruptor's more low-level and imperative, but I think one
+can build a higher-level abstraction on top of it that looks
+more like async.flow. I've written a bit about this over
+[here](https://stevana.github.io/parallel_stream_processing_with_zero-copy_fan-out_and_sharding.html).
+
+If needed, I also think SEDA elastic scaling can be recovered, although
+afaik this would require a bit of novel work.  (It could be that Martin
+et al have solved this in [Aeron](https://github.com/aeron-io/aeron),
+but I find Aeron difficult to understand.) I've written
+a bit about this problem and done some experiments
+[here](https://stevana.github.io/scheduling_threads_like_thomas_jefferson.html).
+
 ## 17-23rd Jan 2025
 
 The main highlight this week is that I finished the simulation testing
