@@ -14,3 +14,6 @@ newtype NodeId = NodeId Text
 
 unNodeId :: NodeId -> Text
 unNodeId (NodeId text) = text
+
+makeNodeId :: Int -> NodeId
+makeNodeId i = NodeId ("n" <> fromString (show i))

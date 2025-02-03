@@ -16,6 +16,7 @@ import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Time
+import Moskstraumen.Workload
 
 ------------------------------------------------------------------------
 
@@ -167,6 +168,100 @@ echoPipeDeployment =
 
 ------------------------------------------------------------------------
 
+type NumberOfTests = Int
+
+simulationTest ::
+  forall m.
+  (Monad m) =>
+  Workload
+  -> Deployment m
+  -> NumberOfTests
+  -> Seed
+  -> m Bool
+simulationTest workload deployment numberOfTests seed =
+  loop numberOfTests (mkPrng seed)
+  where
+    loop :: NumberOfTests -> Prng -> m Bool
+    loop 0 _prng = return True
+    loop n prng = do
+      let size = 100 -- XXX: vary over time
+      let initMessages =
+            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
+            | i <- [1 .. deployment.nodeCount]
+            , let js = [j | j <- [1 .. deployment.nodeCount], j /= i]
+            ]
+      let (prng', initialMessages) =
+            Gen.runGen (Gen.listOf workload.generateMessage) prng size
+      let initialMessages' =
+            zipWith
+              ( \message index -> message {body = message.body {msgId = Just index}}
+              )
+              initialMessages
+              [0 ..]
+      let (prng'', prng''') = splitPrng prng'
+      passed <-
+        test2 workload deployment (initMessages <> initialMessages') prng''
+      if passed
+        then loop (n - 1) prng'''
+        else return False
+
+test2 ::
+  (Monad m) => Workload -> Deployment m -> [Message] -> Prng -> m Bool
+test2 workload deployment initialMessages prng = do
+  world <-
+    newWorld
+      deployment
+      initialMessages
+      prng
+  resultingTrace <- runWorld world
+  traverse_ (.close) world.nodes
+  return (sat workload.property resultingTrace emptyEnv)
+
+echoWorkload :: Workload
+echoWorkload =
+  Workload
+    { name = "echo"
+    , generateMessage = do
+        let makeMessage n =
+              Message
+                { src = "c1"
+                , dest = "n1"
+                , arrivalTime = Just epoch
+                , body =
+                    Payload
+                      { kind = "echo"
+                      , msgId = Nothing
+                      , inReplyTo = Nothing
+                      , fields =
+                          Map.fromList
+                            [
+                              ( "echo"
+                              , String ("Please echo: " <> fromString (show n))
+                              )
+                            ]
+                      }
+                }
+        makeMessage <$> Gen.chooseInt (0, 127)
+    , property =
+        Always
+          $ FreezeQuantifier "echo"
+          $ Prop (\msg -> msg.body.kind == "echo")
+          :==> Eventually
+            ( FreezeQuantifier
+                "echo_ok"
+                ( Prop (\msg -> msg.body.kind == "echo_ok")
+                    `And` Var "echo_ok"
+                    :. InReplyTo
+                    :== Var "echo"
+                    :. MsgId
+                    `And` Var "echo_ok"
+                    :. Project "echo"
+                    :== Var "echo"
+                    :. Project "echo"
+                )
+            )
+    }
+
 echoPureDeployment :: IO (Deployment IO)
 echoPureDeployment =
   return
@@ -175,34 +270,15 @@ echoPureDeployment =
       , spawn = simulationSpawn echo () echoValidateMarshal
       }
 
-s :: Seed -> IO ()
-s seed = do
-  let mkMessage ix n =
-        Message
-          { src = "c1"
-          , dest = "n1"
-          , arrivalTime = Just epoch
-          , body =
-              Payload
-                { kind = "echo"
-                , msgId = Just ix
-                , inReplyTo = Nothing
-                , fields =
-                    Map.fromList
-                      [
-                        ( "echo"
-                        , String ("Please echo: " <> fromString (show n))
-                        )
-                      ]
-                }
-          }
-  let prng = mkPrng seed
-  let size = 100
-  let (prng', randomNumbers) = Gen.runGen (Gen.listOf Gen.word8) prng size
-  print (length randomNumbers)
-  let messages = zipWith mkMessage [0 ..] randomNumbers
+unit_echoWithSeed :: Seed -> IO ()
+unit_echoWithSeed seed = do
   deployment <- echoPureDeployment
-  result <- t' deployment messages prng' numberOfTests
+  let numberOfTests = 1
+  result <- simulationTest echoWorkload deployment numberOfTests seed
+  print seed
   print result
-  where
-    numberOfTests = 1
+
+unit_echo :: IO ()
+unit_echo = do
+  seed <- randomIO
+  unit_echoWithSeed seed

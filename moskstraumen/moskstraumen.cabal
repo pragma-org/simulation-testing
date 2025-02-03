@@ -49,6 +49,7 @@ library
     Moskstraumen.Time
     Moskstraumen.TimerWheel
     Moskstraumen.TimerWheel2
+    Moskstraumen.Workload
 
   default-extensions:
     DeriveAnyClass

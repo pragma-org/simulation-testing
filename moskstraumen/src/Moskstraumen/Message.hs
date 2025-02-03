@@ -141,6 +141,30 @@ instance FromJSON Value where
 
 ------------------------------------------------------------------------
 
+makeInitMessage :: NodeId -> [NodeId] -> Message
+makeInitMessage myNodeId myNeighbours =
+  Message
+    { src = "c0"
+    , dest = myNodeId
+    , arrivalTime = Nothing
+    , body =
+        Payload
+          { kind = "init"
+          , msgId = Nothing
+          , inReplyTo = Nothing
+          , fields =
+              Map.fromList
+                [
+                  ( "node_id"
+                  , String (unNodeId myNodeId)
+                  )
+                , ("node_ids", List (map (String . unNodeId) myNeighbours))
+                ]
+          }
+    }
+
+------------------------------------------------------------------------
+
 unit_encodeMessage =
   Json.encode
     ( Message
