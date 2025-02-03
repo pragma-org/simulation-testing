@@ -4,8 +4,10 @@ import Data.List (partition)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
+import System.Process (readProcess)
 import System.Random
 
+import Moskstraumen.Codec
 import Moskstraumen.Example.Echo
 import qualified Moskstraumen.Generate as Gen
 import Moskstraumen.Interface2
@@ -28,6 +30,29 @@ data World m = World
   }
 
 type Trace = [Message]
+
+data Deployment m = Deployment
+  { nodeCount :: Int
+  , spawn :: m (Interface m)
+  }
+
+type Seed = Int
+
+type NumberOfTests = Int
+
+data TestConfig = TestConfig
+  { numberOfTests :: Int
+  , numberOfNodes :: Int
+  , replaySeed :: Maybe Int
+  }
+
+defaultTestConfig :: TestConfig
+defaultTestConfig =
+  TestConfig
+    { numberOfTests = 100
+    , numberOfNodes = 5
+    , replaySeed = Nothing
+    }
 
 ------------------------------------------------------------------------
 
@@ -59,15 +84,6 @@ runWorld world =
     Left world' -> runWorld world'
 {-# SPECIALIZE runWorld :: World IO -> IO Trace #-}
 
-------------------------------------------------------------------------
-
-data Deployment m = Deployment
-  { nodeCount :: Int
-  , spawn :: m (Interface m)
-  }
-
-type Seed = Int
-
 newWorld ::
   (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
 newWorld deployment initialMessages prng = do
@@ -85,8 +101,11 @@ newWorld deployment initialMessages prng = do
       , trace = []
       }
 
-test :: (Monad m) => Deployment m -> [Message] -> Prng -> m Bool
-test deployment initialMessages prng = do
+------------------------------------------------------------------------
+
+runTest ::
+  (Monad m) => Deployment m -> Workload -> [Message] -> Prng -> m Bool
+runTest deployment workload initialMessages prng = do
   world <-
     newWorld
       deployment
@@ -94,92 +113,18 @@ test deployment initialMessages prng = do
       prng
   resultingTrace <- runWorld world
   traverse_ (.close) world.nodes
-  return (sat (liveness "echo") resultingTrace emptyEnv)
-  where
-    liveness :: Text -> Form Message
-    liveness req =
-      Always
-        $ FreezeQuantifier req
-        $ Prop (\msg -> msg.body.kind == MessageKind req)
-        :==> Eventually
-          ( FreezeQuantifier
-              resp
-              ( Prop (\msg -> msg.body.kind == MessageKind resp)
-                  `And` Var resp
-                  :. InReplyTo
-                  :== Var req
-                  :. MsgId
-                  `And` Var resp
-                  :. Project "echo"
-                  :== Var req
-                  :. Project "echo"
-              )
-          )
-      where
-        resp = req <> "_ok"
+  return (sat workload.property resultingTrace emptyEnv)
 
-data Result = Success | Failure
-  deriving (Show)
-
-t' :: (Monad m) => Deployment m -> [Message] -> Prng -> Int -> m Result
-t' deployment initialMessages prng = go prng
-  where
-    go _prng 0 = return Success
-    go prng n = do
-      let (prng', prng'') = splitPrng prng
-      passed <- test deployment initialMessages prng'
-      if passed
-        then go prng'' (n - 1)
-        else return Failure
-
-t :: IO ()
-t = do
-  seed <- randomIO
-
-  let prng = mkPrng seed
-
-  let initialMessages =
-        [ Message
-            { src = "c1"
-            , dest = "n1"
-            , arrivalTime = Just epoch
-            , body =
-                Payload
-                  { kind = "echo"
-                  , msgId = Just 0
-                  , inReplyTo = Nothing
-                  , fields = Map.fromList [("echo", String "hi")]
-                  }
-            }
-        ]
-  result <- t' echoPipeDeployment initialMessages prng numberOfTests
-  print result
-  where
-    numberOfTests = 100
-
-echoPipeDeployment :: Deployment IO
-echoPipeDeployment =
-  Deployment
-    { nodeCount = 1
-    , spawn =
-        pipeSpawn
-          "/home/stevan/src/simulation-testing/moskstraumen/dist-newstyle/build/x86_64-linux/ghc-9.10.1/moskstraumen-0.0.0/x/echo/build/echo/echo"
-    }
-
-------------------------------------------------------------------------
-
-type NumberOfTests = Int
-
-simulationTest ::
+runTests ::
   forall m.
   (Monad m) =>
-  Workload
-  -> Deployment m
+  Deployment m
+  -> Workload
   -> NumberOfTests
   -> Seed
   -> m Bool
-simulationTest workload deployment numberOfTests seed =
-  loop numberOfTests (mkPrng seed)
+runTests deployment workload numberOfTests0 seed =
+  loop numberOfTests0 (mkPrng seed)
   where
     loop :: NumberOfTests -> Prng -> m Bool
     loop 0 _prng = return True
@@ -200,22 +145,59 @@ simulationTest workload deployment numberOfTests seed =
               [0 ..]
       let (prng'', prng''') = splitPrng prng'
       passed <-
-        test2 workload deployment (initMessages <> initialMessages') prng''
+        runTest deployment workload (initMessages <> initialMessages') prng''
       if passed
         then loop (n - 1) prng'''
         else return False
 
-test2 ::
-  (Monad m) => Workload -> Deployment m -> [Message] -> Prng -> m Bool
-test2 workload deployment initialMessages prng = do
-  world <-
-    newWorld
-      deployment
-      initialMessages
-      prng
-  resultingTrace <- runWorld world
-  traverse_ (.close) world.nodes
-  return (sat workload.property resultingTrace emptyEnv)
+------------------------------------------------------------------------
+
+blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO ()
+blackboxTestWith testConfig binaryFilePath workload = do
+  seed <- case testConfig.replaySeed of
+    Nothing -> randomIO
+    Just seed -> return seed
+  let deployment =
+        Deployment
+          { nodeCount = testConfig.numberOfNodes
+          , spawn = pipeSpawn binaryFilePath
+          }
+  result <- runTests deployment workload testConfig.numberOfTests seed
+  putStrLn ("Seed: " <> show seed)
+  print result
+
+blackboxTest :: FilePath -> Workload -> IO ()
+blackboxTest = blackboxTestWith defaultTestConfig
+
+simulationTestWith ::
+  TestConfig
+  -> (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> Workload
+  -> IO ()
+simulationTestWith testConfig node initialState validateMarshal workload = do
+  seed <- case testConfig.replaySeed of
+    Nothing -> randomIO
+    Just seed -> return seed
+  let deployment =
+        Deployment
+          { nodeCount = testConfig.numberOfNodes
+          , spawn = simulationSpawn node initialState validateMarshal
+          }
+  result <- runTests deployment workload testConfig.numberOfTests seed
+  putStrLn ("Seed: " <> show seed)
+  print result
+
+simulationTest ::
+  (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> Workload
+  -> IO ()
+simulationTest = simulationTestWith defaultTestConfig
+
+------------------------------------------------------------------------
 
 echoWorkload :: Workload
 echoWorkload =
@@ -262,23 +244,14 @@ echoWorkload =
             )
     }
 
-echoPureDeployment :: IO (Deployment IO)
-echoPureDeployment =
-  return
-    Deployment
-      { nodeCount = 1
-      , spawn = simulationSpawn echo () echoValidateMarshal
-      }
+------------------------------------------------------------------------
 
-unit_echoWithSeed :: Seed -> IO ()
-unit_echoWithSeed seed = do
-  deployment <- echoPureDeployment
-  let numberOfTests = 1
-  result <- simulationTest echoWorkload deployment numberOfTests seed
-  print seed
-  print result
+unit_blackboxTestEcho :: IO ()
+unit_blackboxTestEcho = do
+  binaryFilePath <-
+    filter (/= '\n') <$> readProcess "cabal" ["list-bin", "echo"] ""
+  blackboxTest binaryFilePath echoWorkload
 
-unit_echo :: IO ()
-unit_echo = do
-  seed <- randomIO
-  unit_echoWithSeed seed
+unit_simulationTestEcho :: IO ()
+unit_simulationTestEcho =
+  simulationTest echo () echoValidateMarshal echoWorkload
