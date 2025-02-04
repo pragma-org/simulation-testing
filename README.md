@@ -54,9 +54,12 @@ See the following
 git clone https://github.com/pragma-org/simulation-testing.git
 cd simulation-testing/moskstraumen
 cabal build
-
 export OUR_ECHO_BINARY=$(cabal list-bin echo)
+```
 
+### Test our version of echo using Maelstrom
+
+```bash
 cd $MAELSTROM_DIRECTORY # Change as appropriate
 ./maelstrom test -w echo --bin $OUR_ECHO_BINARY --time-limit 5 --log-stderr --rate 10 --nodes n1
 ```
