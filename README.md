@@ -61,10 +61,19 @@ export OUR_ECHO_BINARY=$(cabal list-bin echo)
 
 ```bash
 cd $MAELSTROM_DIRECTORY # Change as appropriate
-./maelstrom test -w echo --bin $OUR_ECHO_BINARY --time-limit 5 --log-stderr --rate 10 --nodes n1
+time ./maelstrom test -w echo --bin $OUR_ECHO_BINARY --time-limit 5 --log-stderr --rate 10 --nodes n1
+[...]
+Everything looks good! ヽ(‘ー`)ノ
+
+real    0m11.671s
+user    0m12.301s
+sys     0m0.565s
 ```
 
-### Deterministically blackbox and simulation test our echo with Moskstraumen
+### Blackbox test our echo with Moskstraumen
+
+The same binary that we Maelstrom tested can also be blackbox tested via
+stdio using Moskstraumen as follows:
 
 ```bash
 cd $MOSKSTRAUMEN_DIRECTORY
@@ -72,7 +81,25 @@ cabal repl
 ```
 
 ```
-import Moskstraumen.Simulate
-unit_blackboxTestEcho
+> import Moskstraumen.Simulate
+> :set +s
+> unit_blackboxTestEcho
+[...]
+(0.38 secs, 7,995,552 bytes)
+```
+
+Do node that these tests are currently not as elaborate as the Maelstrom
+ones (no fault-injection in particular). Unlike in the Maelstrom case,
+these tests are deterministic.
+
+## Simulation test our echo example with Moskstraumen
+
+If the SUT is written in the same language as Moskstraumen (Haskell
+currently, but can hopefully easily be ported to other languages), we
+can also avoid the overhead of passing messages via stdio as follows:
+
+```
 unit_simulationTestEcho
+[...]
+(0.04 secs, 8,233,240 bytes)
 ```
