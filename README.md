@@ -37,7 +37,7 @@ EOF
 nix-shell
 ```
 
-##### Without nix
+##### Without Nix
 
 See the following
 [instructions](https://github.com/jepsen-io/maelstrom/blob/main/doc/01-getting-ready/index.md#prerequisites).
@@ -59,4 +59,17 @@ export OUR_ECHO_BINARY=$(cabal list-bin echo)
 
 cd $MAELSTROM_DIRECTORY # Change as appropriate
 ./maelstrom test -w echo --bin $OUR_ECHO_BINARY --time-limit 5 --log-stderr --rate 10 --nodes n1
+```
+
+### Deterministically blackbox and simulation test our echo with Moskstraumen
+
+```bash
+cd $MOSKSTRAUMEN_DIRECTORY
+cabal repl
+```
+
+```
+import Moskstraumen.Simulate
+unit_blackboxTestEcho
+unit_simulationTestEcho
 ```
