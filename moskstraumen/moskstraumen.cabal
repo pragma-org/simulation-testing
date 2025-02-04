@@ -45,6 +45,7 @@ library
     Moskstraumen.Simulate
     Moskstraumen.Time
     Moskstraumen.TimerWheel2
+    Moskstraumen.VarId
     Moskstraumen.Workload
 
   default-extensions:

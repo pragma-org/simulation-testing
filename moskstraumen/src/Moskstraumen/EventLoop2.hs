@@ -14,6 +14,7 @@ import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime2
 import Moskstraumen.TimerWheel2
+import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
 
@@ -28,11 +29,8 @@ data EventLoopState state input output = EventLoopState
   , nextMessageId :: MessageId
   , timerWheel ::
       TimerWheel UTCTime (Maybe MessageId, Node state input output)
-      -- { timers :: Map TimerId (node ())
-      -- , vars :: Map VarId output
-      -- , awaits :: Map VarId (output -> Some node)
-      -- , nextTimerId :: TimerId
-      -- , nextVarId :: VarId
+  , vars :: Map VarId output
+  , awaits :: Map VarId (NodeContext, output -> Node state input output)
   }
 
 initialEventLoopState ::
@@ -43,17 +41,9 @@ initialEventLoopState initialNodeState =
     , nodeState = initialNodeState
     , nextMessageId = 0
     , timerWheel = emptyTimerWheel
-    -- , vars = Map.empty
-    -- , awaits = Map.empty
-    -- , timers = Map.empty
-    -- , nextTimerId = 0
-    -- , nextVarId = 0
+    , vars = Map.empty
+    , awaits = Map.empty
     }
-
-data Some f = forall a. Some (f a)
-
-newtype VarId = VarId Word64
-  deriving newtype (Eq, Ord, Num, Show)
 
 ------------------------------------------------------------------------
 
@@ -123,7 +113,9 @@ eventLoop node initialState validateMarshal runtime =
                     (NodeContext (Just message))
                     eventLoopState.nodeState
             eventLoopState' <-
-              handleEffects effects eventLoopState {nodeState = nodeState'}
+              handleEffects
+                effects
+                eventLoopState {nodeState = nodeState'}
             handleMessages messages eventLoopState'
         Just inReplyToMessageId ->
           case runParser validateMarshal.validateOutput message of
@@ -157,7 +149,7 @@ eventLoop node initialState validateMarshal runtime =
                       }
 
     handleEffects ::
-      [Effect (Node state input output) input output]
+      [Effect (Node' state input output) input output]
       -> EventLoopState state input output
       -> m (EventLoopState state input output)
     handleEffects [] eventLoopState = return eventLoopState
@@ -246,6 +238,62 @@ eventLoop node initialState validateMarshal runtime =
               , nextMessageId = messageId + 1
               , timerWheel = timerWheel'
               }
+        DELIVER_VAR varId output -> do
+          traceM ("DELIVER_VAR: " <> show varId)
+          (eventLoopState', effects') <- case lookupDelete varId eventLoopState.awaits of
+            Nothing ->
+              return
+                ( eventLoopState {vars = Map.insert varId output eventLoopState.vars}
+                , []
+                )
+            Just ((nodeContext, continuation), awaits') -> do
+              traceM "DELIVER_VAR: found await"
+              let (nodeState', effects') =
+                    execNode
+                      (continuation output)
+                      nodeContext
+                      eventLoopState.nodeState
+              traceM "DELIVER_VAR: ran continuation"
+              return
+                ( eventLoopState
+                    { awaits = awaits'
+                    , nodeState = nodeState'
+                    }
+                , effects'
+                )
+          traceM "DELIVER_VAR: ran effects'"
+          handleEffects
+            (effects <> effects') -- XXX: order?
+            eventLoopState'
+        AWAIT_VAR varId mMessage continuation -> do
+          traceM ("AWAIT_VAR: " <> show varId)
+          eventLoopState' <-
+            case lookupDelete varId eventLoopState.vars of
+              -- Sometimes a var could be delivered before we await for it.
+              Just (output, vars') -> do
+                let (nodeState', effects') =
+                      execNode
+                        (continuation output)
+                        (NodeContext mMessage)
+                        eventLoopState.nodeState
+                handleEffects
+                  effects'
+                  eventLoopState
+                    { vars = vars'
+                    , nodeState = nodeState'
+                    }
+              Nothing ->
+                return
+                  eventLoopState
+                    { awaits =
+                        Map.insert
+                          varId
+                          (NodeContext mMessage, continuation)
+                          eventLoopState.awaits
+                    }
+          handleEffects
+            effects
+            eventLoopState'
 
 consoleEventLoop ::
   (input -> Node state input output)

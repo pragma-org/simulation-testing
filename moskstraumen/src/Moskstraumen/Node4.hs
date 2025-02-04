@@ -11,6 +11,7 @@ import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime2
+import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
 
@@ -41,6 +42,9 @@ data NodeF state input output x
   | SetPeers [NodeId] x
   | GetSender (NodeId -> x)
   | Sleep Int ~(Node state input output)
+  | NewVar (VarId -> x)
+  | DeliverVar VarId output x
+  | AwaitVar VarId (output -> x)
   deriving (Functor)
 
 data NodeContext = NodeContext
@@ -51,6 +55,7 @@ data NodeState state = NodeState
   { self :: NodeId
   , neighbours :: [NodeId]
   , state :: state
+  , nextVarId :: VarId
   }
 
 initialNodeState :: state -> NodeState state
@@ -59,6 +64,7 @@ initialNodeState initialState =
     { self = "uninitialised"
     , neighbours = []
     , state = initialState
+    , nextVarId = 0
     }
 
 ------------------------------------------------------------------------
@@ -93,41 +99,6 @@ rpcRetryForever nodeId input success = do
     )
     success
 
-syncRpc ::
-  NodeId
-  -> input
-  -> Node state input output
-  -> Node' state input output output
-syncRpc toNodeId input failure = do
-  undefined
-
-{-
-var <- newVar
-rpc toNodeId input failure $ \output -> do
-  deliverVar var output
-awaitVar var
- -}
-
-syncRpcRetry :: NodeId -> input -> Node' state input output output
-syncRpcRetry toNodeId input = do
-  undefined
-
-{-
-info "syncRpcRetry: start"
-var <- newVar
-rpcRetryForever toNodeId input $ \output -> do
-  info "syncRpcRetry: success, deliever"
-  deliverVar var output
--- let success = \output -> info "syncRpcRetry: deliever" >> deliverVar var output
--- rpc
---  toNodeId
---  input
---  (info "syncRpc: failed...")
---  success
-info "syncRpcRetry: await..."
-awaitVar var
- -}
-
 info :: Text -> Node state input output
 info text = generic_ (Log text)
 
@@ -159,13 +130,53 @@ after micros task = Node (Free (After micros task (Pure ())))
 every :: Int -> Node state input output -> Node state input output
 every micros task = after micros (task >> every micros task)
 
+newVar :: Node' state input output VarId
+newVar = generic NewVar
+
+deliverVar :: VarId -> a -> Node state input a
+deliverVar varId output = generic_ (DeliverVar varId output)
+
+awaitVar :: VarId -> Node' state input output output
+awaitVar varId = generic (AwaitVar varId)
+
+syncRpc ::
+  NodeId
+  -> input
+  -> Node state input output
+  -> Node' state input output output
+syncRpc toNodeId input failure = do
+  var <- newVar
+  rpc toNodeId input failure $ \output -> do
+    deliverVar var output
+  awaitVar var
+
+syncRpcRetry :: NodeId -> input -> Node' state input output output
+syncRpcRetry toNodeId input = do
+  undefined
+
+{-
+info "syncRpcRetry: start"
+var <- newVar
+rpcRetryForever toNodeId input $ \output -> do
+  info "syncRpcRetry: success, deliever"
+  deliverVar var output
+-- let success = \output -> info "syncRpcRetry: deliever" >> deliverVar var output
+-- rpc
+--  toNodeId
+--  input
+--  (info "syncRpc: failed...")
+--  success
+info "syncRpcRetry: await..."
+awaitVar var
+ -}
+
 ------------------------------------------------------------------------
 
 execNode ::
   Node state input output
   -> NodeContext
   -> NodeState state
-  -> (NodeState state, [Effect (Node state input output) input output])
+  -> (NodeState state, [Effect (Node' state input output) input output])
 execNode node nodeContext nodeState =
   execRWS (runNode node) nodeContext nodeState
 
@@ -173,32 +184,33 @@ runNode ::
   Node state input output
   -> RWS
       NodeContext
-      [Effect (Node state input output) input output]
+      [Effect (Node' state input output) input output]
       (NodeState state)
       ()
-runNode (Node node0) = iterM aux return node0
+runNode (Node node0) = paraM aux return node0
   where
     aux ::
       NodeF
         state
         input
         output
-        ( RWS
+        ( Free (NodeF state input output) ()
+        , RWS
             NodeContext
-            [Effect (Node state input output) input output]
+            [Effect (Node' state input output) input output]
             (NodeState state)
             ()
         )
       -> RWS
           NodeContext
-          [Effect (Node state input output) input output]
+          [Effect (Node' state input output) input output]
           (NodeState state)
           ()
     aux (Send toNodeId input ih) = do
       nodeContext <- ask
       nodeState <- get
       tell [SEND nodeState.self toNodeId input]
-      ih
+      snd ih
     aux (Reply output ih) = do
       nodeContext <- ask
       nodeState <- get
@@ -209,12 +221,12 @@ runNode (Node node0) = iterM aux return node0
             \ nothing to reply to, e.g. timers."
         Just message -> do
           tell [REPLY nodeState.self message.src message.body.msgId output]
-          ih
+          snd ih
     aux (After micros node ih) = do
       nodeContext_ <- ask
       nodeState_ <- get
       tell [SET_TIMER micros Nothing node]
-      ih
+      snd ih
     aux (RPC destNodeId input failure success ih) = do
       nodeContext <- ask
       nodeState <- get
@@ -226,32 +238,43 @@ runNode (Node node0) = iterM aux return node0
             failure
             success
         ]
-      ih
+      snd ih
     aux (SetNodeId self_ ih) = do
       modify
         (\nodeState -> nodeState {self = self_})
-      ih
+      snd ih
     aux (GetNodeId ih) = do
       nodeState <- get
-      ih nodeState.self
+      snd (ih nodeState.self)
     aux (GetSender ih) = do
       nodeContext <- ask
       case nodeContext.incoming of
         Nothing -> error "getSender: used in context where there isn't one"
-        Just message -> ih message.src
+        Just message -> snd (ih message.src)
     aux (GetPeers ih) = do
       nodeState <- get
-      ih nodeState.neighbours
+      snd (ih nodeState.neighbours)
     aux (SetPeers peers' ih) = do
       modify (\nodeState -> nodeState {neighbours = peers'})
-      ih
+      snd ih
     aux (GetState ih) = do
       nodeState <- get
-      ih nodeState.state
+      snd (ih nodeState.state)
     aux (PutState state' ih) = do
       modify (\nodeState -> nodeState {state = state'})
-      ih
+      snd ih
     aux (Log text ih) = do
       tell [LOG text]
-      ih
+      snd ih
     aux (Sleep micros node) = tell [SET_TIMER micros Nothing node]
+    aux (NewVar ih) = do
+      nodeState <- get
+      let varId = nodeState.nextVarId
+      put nodeState {nextVarId = varId + 1}
+      snd (ih varId)
+    aux (DeliverVar varId output ih) = do
+      tell [DELIVER_VAR varId output]
+      snd ih
+    aux (AwaitVar varId ih) = do
+      nodeContext <- ask
+      tell [AWAIT_VAR varId nodeContext.incoming (Node . fst . ih)]

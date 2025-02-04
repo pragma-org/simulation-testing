@@ -17,11 +17,17 @@ iterM ::
 iterM _f p (Pure x) = p x
 iterM f p (Free op) = f (fmap (iterM f p) op)
 
+paraM ::
+  (Monad m, Functor f) =>
+  (f (Free f x, m a) -> m a)
+  -> (x -> m a)
+  -> Free f x
+  -> m a
+paraM _f p (Pure x) = p x
+paraM f p (Free op) = f (fmap (\x -> (x, paraM f p x)) op)
+
 liftF :: (Functor f) => f x -> Free f x
 liftF = Free . fmap Pure
-
-inn :: (Functor f) => f (Free f x) -> Free f x
-inn = Free
 
 ------------------------------------------------------------------------
 

@@ -20,7 +20,7 @@ type EchoState = ()
 
 echo :: EchoInput -> Node EchoState EchoInput EchoOutput
 echo (Init myNodeId myNeighbours) = do
-  info ("Initalising: " <> unNodeId myNodeId)
+  info ("Initialising: " <> unNodeId myNodeId)
   setNodeId myNodeId
   setPeers myNeighbours
   reply InitOk

@@ -50,9 +50,10 @@ initialState :: State
 initialState = IntMap.empty
 
 keyValueStore :: Input -> Node State Input Output
-keyValueStore (Init myNodeId nodeIds) = do
+keyValueStore (Init myNodeId myNeighbours) = do
   info ("Initialising: " <> unNodeId myNodeId)
-  setPeers nodeIds
+  setNodeId myNodeId
+  setPeers myNeighbours
   reply InitOk
 keyValueStore (Txn ops) = do
   store <- getState
@@ -81,9 +82,10 @@ kEY :: Text
 kEY = "root"
 
 keyValueStoreV2 :: Input -> Node () Input Output
-keyValueStoreV2 (Init myNodeId nodeIds) = do
+keyValueStoreV2 (Init myNodeId myNeighbours) = do
   info ("Initialising: " <> unNodeId myNodeId)
-  setPeers nodeIds
+  setNodeId myNodeId
+  setPeers myNeighbours
   reply InitOk
 keyValueStoreV2 (Txn ops) = do
   sender <- getSender
@@ -92,7 +94,8 @@ keyValueStoreV2 (Txn ops) = do
     <> unNodeId sender
     <> " "
     <> fromString (show ops)
-  readResponse <- syncRpcRetry "lin-kv" (Read kEY)
+  readResponse <- syncRpc "lin-kv" (Read kEY) (info "sync rpc failed...")
+  info "syncRpc: got response"
   store <- case readResponse of
     Error code text -> do
       info
@@ -104,9 +107,10 @@ keyValueStoreV2 (Txn ops) = do
   let (store', ops') = transact ops store
   info $ "attempting CAS " <> toJson store <> " " <> toJson store'
   casResponse <-
-    syncRpcRetry
+    syncRpc
       "lin-kv"
       (Cas kEY (toJson store) (toJson store') True)
+      (info "sync rpc failed...")
   case casResponse of
     Error code text ->
       info
