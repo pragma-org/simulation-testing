@@ -16,7 +16,8 @@ import Moskstraumen.Runtime2
 
 type Node state input output = Node' state input output ()
 
-newtype Node' state input output a = Node (Free (NodeF state input output) a)
+newtype Node' state input output a
+  = Node (Free (NodeF state input output) a)
   deriving newtype (Functor, Applicative, Monad)
 
 data NodeF state input output x
@@ -31,7 +32,7 @@ data NodeF state input output x
       (output -> Node state input output)
       x
   | Log Text x
-  | After Int (Node state input output) x
+  | After Int ~(Node state input output) x
   | GetState (state -> x)
   | PutState state x
   | SetNodeId NodeId x
@@ -116,6 +117,12 @@ setNodeId = generic_ . SetNodeId
 
 sleep :: Int -> Node state input output -> Node state input output
 sleep micros node = Node (Free (Sleep micros node))
+
+after :: Int -> Node state input output -> Node state input output
+after micros task = Node (Free (After micros task (Pure ())))
+
+every :: Int -> Node state input output -> Node state input output
+every micros task = after micros (task >> every micros task)
 
 ------------------------------------------------------------------------
 

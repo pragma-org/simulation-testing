@@ -5,8 +5,9 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Moskstraumen.Codec
+import Moskstraumen.EventLoop2
 import Moskstraumen.Message
-import Moskstraumen.Node3
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -31,15 +32,15 @@ initialState = Set.empty
 
 gset ::
   GSetInput -> Node GSetState GSetInput GSetOutput
-gset (Init self nodeIds) = do
-  info ("Initialising: " <> unNodeId self)
-  setPeers nodeIds
+gset (Init myNodeId myNeighbours) = do
+  info ("Initialising: " <> unNodeId myNodeId)
+  setNodeId myNodeId
+  setPeers myNeighbours
   every 5_000_000 $ do
     values <- getState
-    myNeighbours <- getPeers
-    forM_ myNeighbours $ \nodeId ->
-      unless (nodeId == self)
-        $ send nodeId (Replicate values)
+    forM_ myNeighbours $ \neighbour ->
+      unless (neighbour == myNodeId)
+        $ send neighbour (Replicate values)
   reply InitOk
 gset (Add value) = do
   modifyState (Set.insert value)
