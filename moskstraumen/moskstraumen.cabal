@@ -24,7 +24,6 @@ library
   exposed-modules:
     Moskstraumen.Codec
     Moskstraumen.Effect
-    Moskstraumen.EventLoop
     Moskstraumen.EventLoop2
     Moskstraumen.Example.Broadcast
     Moskstraumen.Example.CRDT.GSet
@@ -36,18 +35,15 @@ library
     Moskstraumen.LinearTemporalLogic
     Moskstraumen.Marshal
     Moskstraumen.Message
-    Moskstraumen.Node3
     Moskstraumen.Node4
     Moskstraumen.NodeId
     Moskstraumen.Parse
     Moskstraumen.Prelude
     Moskstraumen.Pretty
     Moskstraumen.Random
-    Moskstraumen.Runtime
     Moskstraumen.Runtime2
     Moskstraumen.Simulate
     Moskstraumen.Time
-    Moskstraumen.TimerWheel
     Moskstraumen.TimerWheel2
     Moskstraumen.Workload
 

@@ -10,8 +10,9 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 
 import Moskstraumen.Codec
+import Moskstraumen.EventLoop2
 import Moskstraumen.Message
-import Moskstraumen.Node3
+import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
@@ -75,6 +76,7 @@ transact = go []
           (Append key value : acc)
           ops'
           (IntMap.insertWith (\new old -> old <> new) key [value] store)
+
 kEY :: Text
 kEY = "root"
 

@@ -93,6 +93,41 @@ rpcRetryForever nodeId input success = do
     )
     success
 
+syncRpc ::
+  NodeId
+  -> input
+  -> Node state input output
+  -> Node' state input output output
+syncRpc toNodeId input failure = do
+  undefined
+
+{-
+var <- newVar
+rpc toNodeId input failure $ \output -> do
+  deliverVar var output
+awaitVar var
+ -}
+
+syncRpcRetry :: NodeId -> input -> Node' state input output output
+syncRpcRetry toNodeId input = do
+  undefined
+
+{-
+info "syncRpcRetry: start"
+var <- newVar
+rpcRetryForever toNodeId input $ \output -> do
+  info "syncRpcRetry: success, deliever"
+  deliverVar var output
+-- let success = \output -> info "syncRpcRetry: deliever" >> deliverVar var output
+-- rpc
+--  toNodeId
+--  input
+--  (info "syncRpc: failed...")
+--  success
+info "syncRpcRetry: await..."
+awaitVar var
+ -}
+
 info :: Text -> Node state input output
 info text = generic_ (Log text)
 
