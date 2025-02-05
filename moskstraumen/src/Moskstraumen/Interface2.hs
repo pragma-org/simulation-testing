@@ -72,6 +72,7 @@ simulationRuntime = do
                       else return Nothing
               _ -> error "simulationRuntime: impossible"
         , getCurrentTime = getFakeTime fakeTime
+        , shutdown = return ()
         }
     )
 

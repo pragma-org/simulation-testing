@@ -20,6 +20,7 @@ data Runtime m = Runtime
   , log :: Text -> m ()
   , timeout :: Microseconds -> m [Message] -> m (Maybe [Message])
   , getCurrentTime :: m UTCTime
+  , shutdown :: m ()
   }
 
 consoleRuntime :: Codec -> IO (Runtime IO)
@@ -36,6 +37,7 @@ consoleRuntime codec = do
         -- don't, hence the `max 0`.
         timeout = \micros -> System.Timeout.timeout (max 0 micros)
       , getCurrentTime = Data.Time.getCurrentTime
+      , shutdown = return ()
       }
   where
     consoleReceive :: IO [Message]

@@ -1,5 +1,6 @@
 module Moskstraumen.EventLoop2 (module Moskstraumen.EventLoop2) where
 
+import Control.Exception (finally)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time
@@ -12,6 +13,7 @@ import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
+import Moskstraumen.Runtime.TCP
 import Moskstraumen.Runtime2
 import Moskstraumen.TimerWheel2
 import Moskstraumen.VarId
@@ -292,3 +294,14 @@ consoleEventLoop ::
 consoleEventLoop node initialState validateMarshal = do
   runtime <- consoleRuntime jsonCodec
   eventLoop node initialState validateMarshal runtime
+
+tcpEventLoop ::
+  (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> Int
+  -> IO ()
+tcpEventLoop node initialState validateMarshal port = do
+  runtime <- tcpRuntime port jsonCodec
+  eventLoop node initialState validateMarshal runtime
+    `finally` runtime.shutdown

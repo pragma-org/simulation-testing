@@ -41,6 +41,7 @@ library
     Moskstraumen.Prelude
     Moskstraumen.Pretty
     Moskstraumen.Random
+    Moskstraumen.Runtime.TCP
     Moskstraumen.Runtime2
     Moskstraumen.Shrink
     Moskstraumen.Simulate
@@ -74,6 +75,7 @@ library
     , containers
     , heaps
     , mtl
+    , network
     , process
     , random
     , scientific
