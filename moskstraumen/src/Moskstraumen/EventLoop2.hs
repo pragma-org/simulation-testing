@@ -239,31 +239,21 @@ eventLoop node initialState validateMarshal runtime =
               , timerWheel = timerWheel'
               }
         DELIVER_VAR varId output -> do
-          traceM ("DELIVER_VAR: " <> show varId)
-          (eventLoopState', effects') <- case lookupDelete varId eventLoopState.awaits of
+          eventLoopState' <- case lookupDelete varId eventLoopState.awaits of
             Nothing ->
               return
-                ( eventLoopState {vars = Map.insert varId output eventLoopState.vars}
-                , []
-                )
+                eventLoopState {vars = Map.insert varId output eventLoopState.vars}
             Just ((nodeContext, continuation), awaits') -> do
-              traceM "DELIVER_VAR: found await"
               let (nodeState', effects') =
                     execNode
                       (continuation output)
                       nodeContext
                       eventLoopState.nodeState
-              traceM "DELIVER_VAR: ran continuation"
-              return
-                ( eventLoopState
-                    { awaits = awaits'
-                    , nodeState = nodeState'
-                    }
-                , effects'
-                )
-          traceM "DELIVER_VAR: ran effects'"
+              handleEffects
+                effects'
+                eventLoopState {nodeState = nodeState', awaits = awaits'}
           handleEffects
-            (effects <> effects') -- XXX: order?
+            effects
             eventLoopState'
         AWAIT_VAR varId mMessage continuation -> do
           traceM ("AWAIT_VAR: " <> show varId)
