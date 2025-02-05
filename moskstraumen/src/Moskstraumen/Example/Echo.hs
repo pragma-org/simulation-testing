@@ -12,6 +12,7 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
+-- start snippet echo
 data EchoInput = Init NodeId [NodeId] | Echo Text
 
 data EchoOutput = InitOk | EchoOk Text
@@ -29,6 +30,8 @@ echo (Echo text) = do
   if text == "Please echo: 42"
     then reply (EchoOk "bug")
     else reply (EchoOk text)
+
+-- end snippet echo
 
 ------------------------------------------------------------------------
 

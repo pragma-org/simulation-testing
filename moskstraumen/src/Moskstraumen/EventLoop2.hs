@@ -256,7 +256,6 @@ eventLoop node initialState validateMarshal runtime =
             effects
             eventLoopState'
         AWAIT_VAR varId mMessage continuation -> do
-          traceM ("AWAIT_VAR: " <> show varId)
           eventLoopState' <-
             case lookupDelete varId eventLoopState.vars of
               -- Sometimes a var could be delivered before we await for it.

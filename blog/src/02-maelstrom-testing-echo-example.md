@@ -5,29 +5,30 @@ date: 2025-01-20
 
 # Maelstrom testing echo example
 
-In this post we'll have a look at a very simple distributed system where the
-nodes simply echo back whatever message one sends them.
+In the [previous
+post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-introduction.md)
+we introduced simulation testing. 
+
+Before we start developing the pieces we need to do simulation testing, let's
+first have a look at how more "traditional" testing of distributed systems
+looks like.
+
+In order to do any testing we first need to have some system to test.
+
+## First example: echo
+
+The simplest po
+
+in this post we'll have a look at a very
+simple distributed system where the nodes simply echo back whatever message one
+sends them.
+
+## Functional core of SUT
 
 We'll separate the "business logic" from all the I/O involved in logging and
 sending messages.
 
-## Functional core of SUT
-
-```haskell
-data EchoInput = Init NodeId [NodeId] | Echo Text
-
-data EchoOutput = InitOk | EchoOk Text
-
-type EchoState = ()
-
-echo :: EchoInput -> Node EchoState EchoInput EchoOutput
-echo (Init myNodeId myNeighbours) = do
-  info ("Initalising: " <> unNodeId myNodeId)
-  setPeers myNeighbours
-  reply InitOk
-echo (Echo text) = do
-  info ("Got: " <> text)
-  reply (EchoOk text)
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Echo.hs snippet=echo}
 ```
 
 ## Imperative shell of SUT

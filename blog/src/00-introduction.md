@@ -243,7 +243,6 @@ a warm up for then later simulation testing the exact same example.
     >   * Consitent error propagation and mitigation (mini protocols to
     >     a peer live/die together) removing issues of resource lifetime
     >     management away from mini-protocol designers / implementors."
-    
+
     The simulation code is open source and can be found
     [here](https://github.com/input-output-hk/io-sim).
-    
