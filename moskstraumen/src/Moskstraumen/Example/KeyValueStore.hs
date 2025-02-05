@@ -95,7 +95,6 @@ keyValueStoreV2 (Txn ops) = do
     <> " "
     <> fromString (show ops)
   readResponse <- syncRpc "lin-kv" (Read kEY) (info "sync rpc failed...")
-  info "syncRpc: got response"
   store <- case readResponse of
     Error code text -> do
       info
@@ -112,9 +111,11 @@ keyValueStoreV2 (Txn ops) = do
       (Cas kEY (toJson store) (toJson store') True)
       (info "sync rpc failed...")
   case casResponse of
-    Error code text ->
+    Error code text -> do
       info
         ("CAS failed, code: " <> Text.pack (show code) <> ", text: " <> text)
+      reply
+        (Error code text)
     CasOk -> info "CAS successful!"
 
   sender <- getSender
@@ -160,6 +161,7 @@ marshalInput_ (Cas key old new create) =
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (TxnOk ops) = ("txn_ok", [("txn", List (map marshalMicroOp ops))])
+marshalOutput_ (Error code text) = ("error", [("code", Int code), ("text", String text)])
 
 marshalMicroOp :: MicroOp -> Value
 marshalMicroOp (R key values) = List [String "r", Int key, List (map Int values)]

@@ -1,6 +1,7 @@
 module Moskstraumen.Simulate (module Moskstraumen.Simulate) where
 
 import Data.List (partition)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
@@ -17,6 +18,7 @@ import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
+import Moskstraumen.Shrink
 import Moskstraumen.Time
 import Moskstraumen.Workload
 
@@ -103,9 +105,21 @@ newWorld deployment initialMessages prng = do
 
 ------------------------------------------------------------------------
 
+data TestResult = Success | Failure Trace
+  deriving stock (Eq, Show)
+
+testResultToMaybe :: TestResult -> Maybe Trace
+testResultToMaybe Success = Nothing
+testResultToMaybe (Failure trace) = Just trace
+
 runTest ::
-  (Monad m) => Deployment m -> Workload -> [Message] -> Prng -> m Bool
-runTest deployment workload initialMessages prng = do
+  (Monad m) =>
+  Deployment m
+  -> Workload
+  -> Prng
+  -> [Message]
+  -> m TestResult
+runTest deployment workload prng initialMessages = do
   world <-
     newWorld
       deployment
@@ -113,7 +127,9 @@ runTest deployment workload initialMessages prng = do
       prng
   resultingTrace <- runWorld world
   traverse_ (.close) world.nodes
-  return (sat workload.property resultingTrace emptyEnv)
+  if sat workload.property resultingTrace emptyEnv
+    then return Success
+    else return (Failure resultingTrace)
 
 runTests ::
   forall m.
@@ -122,12 +138,12 @@ runTests ::
   -> Workload
   -> NumberOfTests
   -> Seed
-  -> m Bool
+  -> m TestResult
 runTests deployment workload numberOfTests0 seed =
   loop numberOfTests0 (mkPrng seed)
   where
-    loop :: NumberOfTests -> Prng -> m Bool
-    loop 0 _prng = return True
+    loop :: NumberOfTests -> Prng -> m TestResult
+    loop 0 _prng = return Success
     loop n prng = do
       let size = 100 -- XXX: vary over time
       let initMessages =
@@ -137,18 +153,26 @@ runTests deployment workload numberOfTests0 seed =
             ]
       let (prng', initialMessages) =
             Gen.runGen (Gen.listOf workload.generateMessage) prng size
-      let initialMessages' =
+      let initialMessages' :: [Message]
+          initialMessages' =
             zipWith
               ( \message index -> message {body = message.body {msgId = Just index}}
               )
               initialMessages
               [0 ..]
       let (prng'', prng''') = splitPrng prng'
-      passed <-
-        runTest deployment workload (initMessages <> initialMessages') prng''
-      if passed
-        then loop (n - 1) prng'''
-        else return False
+      result <-
+        runTest deployment workload prng'' (initMessages <> initialMessages')
+      case result of
+        Success -> loop (n - 1) prng'''
+        Failure trace -> do
+          initialMessagesAndTrace <-
+            shrink
+              (fmap testResultToMaybe . runTest deployment workload prng)
+              (shrinkList (const []))
+              initialMessages'
+          let (_failingMessages, failingTrace) = NonEmpty.last initialMessagesAndTrace
+          return (Failure failingTrace)
 
 ------------------------------------------------------------------------
 

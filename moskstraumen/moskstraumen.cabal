@@ -42,6 +42,7 @@ library
     Moskstraumen.Pretty
     Moskstraumen.Random
     Moskstraumen.Runtime2
+    Moskstraumen.Shrink
     Moskstraumen.Simulate
     Moskstraumen.Time
     Moskstraumen.TimerWheel2
