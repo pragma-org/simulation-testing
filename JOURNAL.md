@@ -1,4 +1,29 @@
-## 24-30th Jan 2025
+## 2025-02-06
+
+The main highlight for this week is that I finished documenting how
+Maelstrom works:
+
+  https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md
+
+I've also added Maelstrom/FoundationDB style "workloads", which group
+generation of messages and the property to check into a separate
+construct.
+
+I also implemented shrinking, so we can display minimal counterexamples
+when an error is found.
+
+I also finish the slides for tomorrow's demo:
+  https://excalidraw.com/#room=5a22d1da02dd75fff478,aRtMV0TItYb5nqGFqnYnWg
+
+Finally I had two meetings with Arnaud about pipelining consensus. Which
+made me start thinking about:
+
+  1. Can we extract a toy example which has the same characteristics?
+  2. How can we introduce pipelining into the simulation without
+     breaking determinism, especially if speculative execution is
+     involved.
+
+## 2025-01-24
 
 Had a meeting with Arnaud about connecting my simulation testing work
 with his consensus work. Here's a diagram of the main components of the
@@ -130,7 +155,7 @@ but I find Aeron difficult to understand.) I've written
 a bit about this problem and done some experiments
 [here](https://stevana.github.io/scheduling_threads_like_thomas_jefferson.html).
 
-## 17-23rd Jan 2025
+## 2025-01-23
 
 The main highlight this week is that I finished the simulation testing
 [introduction](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-introduction.md),
@@ -161,7 +186,7 @@ performance baseline.
 Next I hope to document how these Maelstrom examples work and show how
 simulation testing can be 1000x faster.
 
-## 9-16th Jan 2025
+## 2025-01-16
 
 I started working on a simulation testing library/framework that can be used
 for testing the consensus nodes written in Haskell, Go, TypeScript and Rust (or
