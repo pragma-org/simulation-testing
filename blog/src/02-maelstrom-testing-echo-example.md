@@ -18,8 +18,8 @@ system to test.
 
 ## First example: echo
 
-In order to make it easy for ourselves, let's consider a simple distributed
-system: a node which echos back whatever message one sends to it.
+Let's consider a simple distributed system: a node which echos back whatever
+message one sends to it.
 
 In pseudo code we can define our echo node like this:
 
