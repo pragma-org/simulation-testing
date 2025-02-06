@@ -316,6 +316,12 @@ integer) is the same in the request and the response.
 In the test output at the end we can see `:workload {:valid? true, :errors
 ()}`, which is the result of running the above checker.
 
+As a final remark, it should be pointed out that generators and checkers are
+part of Jepsen and in fact Maelstrom is using Jepsen under the hood. In a sense
+Maelstrom can be seen as a platform for developing distributed systems which
+makes it particularly convenient to run Jepsen tests on the system being
+developed.
+
 ## Conclusion
 
 We've seen how to represent simple distributed programs and how to deploy them

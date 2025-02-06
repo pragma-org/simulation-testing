@@ -3,9 +3,10 @@ author: Stevan A
 date: 2025-01-20
 ---
 
-# Simulation testing echo example
+# Simulation testing the echo example
 
-Previously we saw how we can black-box test the echo example using Jepsen via
+[Previously](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
+we saw how we can black-box test the echo example using Jepsen via
 Maelstrom, now let's have a look how we can simulation test the exact same
 example without modifying it.
 
