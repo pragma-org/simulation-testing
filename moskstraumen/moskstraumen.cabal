@@ -29,6 +29,7 @@ library
     Moskstraumen.Example.CRDT.GSet
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
+    Moskstraumen.Example.Raft
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
     Moskstraumen.Interface2
@@ -59,6 +60,7 @@ library
     GADTs
     GeneralizedNewtypeDeriving
     LambdaCase
+    NamedFieldPuns
     NoImplicitPrelude
     NumericUnderscores
     OverloadedRecordDot
@@ -125,6 +127,16 @@ executable kvstore
     , moskstraumen
 
   hs-source-dirs:   app/kvstore
+  default-language: Haskell2010
+
+executable raft
+  import:           warnings
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , moskstraumen
+
+  hs-source-dirs:   app/raft
   default-language: Haskell2010
 
 test-suite test
