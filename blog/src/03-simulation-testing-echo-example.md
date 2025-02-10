@@ -1,14 +1,70 @@
 ---
 author: Stevan A
-date: 2025-01-20
+date: 2025-02-07
 ---
 
 # Simulation testing the echo example
 
+## Structure
+
+* In the last post we saw how to test a simple distributed system, a node that
+* echos back the requests it gets, using Jepsen via Maelstrom.
+
+* We concluded that post with a couple of pros and cons with that approach
+
+* This post: explain the sources of the cons and sketch a plan how to fix the
+  bad while keeping the good
+
+* Maelstrom the language
+* Non-deterministic runtimes
+
+```go
+                // Handle message in a separate goroutine.
+                n.wg.Add(1)
+                go func() {
+                        defer n.wg.Done()
+                        rand.Seed(time.Now().UnixNano())
+                        // 0 to 10 ms
+                        randomSleepTime := time.Duration(rand.Intn(11)) * time.Millisecond
+                        time.Sleep(randomSleepTime)
+                        n.handleMessage(h, msg)
+                }()
+```
+
+```bash
+ ~/go/bin/maelstrom-echo < <(echo '{"body":{"type":"echo", "echo": "hi_1"}}' & echo '{"body":{"type":"echo", "echo": "hi_2"}}')
+```
+
+```
+2025/02/07 12:20:03 Received {  {"type":"echo", "echo": "hi_2"}}
+2025/02/07 12:20:03 Received {  {"type":"echo", "echo": "hi_1"}}
+2025/02/07 12:20:03 Sent {"body":{"echo":"hi_1","in_reply_to":0,"type":"echo_ok"}}
+{"body":{"echo":"hi_1","in_reply_to":0,"type":"echo_ok"}}
+2025/02/07 12:20:03 Sent {"body":{"echo":"hi_2","in_reply_to":0,"type":"echo_ok"}}
+{"body":{"echo":"hi_2","in_reply_to":0,"type":"echo_ok"}
+
+2025/02/07 12:21:01 Received {  {"type":"echo", "echo": "hi_2"}}
+2025/02/07 12:21:01 Received {  {"type":"echo", "echo": "hi_1"}}
+2025/02/07 12:21:01 Sent {"body":{"echo":"hi_2","in_reply_to":0,"type":"echo_ok"}}
+{"body":{"echo":"hi_2","in_reply_to":0,"type":"echo_ok"}}
+2025/02/07 12:21:01 Sent {"body":{"echo":"hi_1","in_reply_to":0,"type":"echo_ok"}}
+{"body":{"echo":"hi_1","in_reply_to":0,"type":"echo_ok"}}
+```
+
+* Kyle Kingsbury suggests single threaded coroutine-based runtime as an alternative
+
+* imagine we got determinstic runtime
+
+* still need to fix non-determinism in Jepsen, e.g. randomness in how messages
+  are generated (we saw how echo uses rand-int), random delays, etc
+
+#### Old
+
 [Previously](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
-we saw how we can black-box test the echo example using Jepsen via
-Maelstrom, now let's have a look how we can simulation test the exact same
-example without modifying it.
+we saw how we can black-box test the echo example using Jepsen via Maelstrom,
+now let's have a look how we can simulation test the exact same example without
+modifying it.
+
 
 ## Using same stdin/stout as Maelstrom
 
