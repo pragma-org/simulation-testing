@@ -16,8 +16,8 @@ import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
-eLECTION_TIMEOUT :: Int
-eLECTION_TIMEOUT = 2_000_000 -- 2s.
+eLECTION_TIMEOUT_MICROS :: Int
+eLECTION_TIMEOUT_MICROS = 2_000_000 -- 2s.
 
 ------------------------------------------------------------------------
 
@@ -39,6 +39,7 @@ type Key = Int
 type RaftValue = Int
 
 data Role = Follower | Candidate | Leader
+  deriving (Eq)
 
 type Store = Map Key RaftValue
 
@@ -94,14 +95,42 @@ raft (Init myNodeId myNeighbours) = do
   now <- getTime
   modifyState (\raftState -> raftState {electionDeadline = now})
   every 1_000_000 $ do
-    info "Become candidate"
-    modifyState (\raftState -> raftState {role = Candidate})
+    raftState <- getState
+    when (raftState.electionDeadline < now) $ do
+      if raftState.role /= Leader
+        then becomeCandidate
+        else resetElectionDeadline
   reply InitOk
 raft input = do
   raftState <- getState
   let (store', output) = apply input raftState.store
   putState raftState {store = store'}
   reply output
+
+becomeCandidate :: Node RaftState input output
+becomeCandidate = do
+  info "Become canidate"
+  modifyState (\raftState -> raftState {role = Candidate})
+  resetElectionDeadline
+
+becomeFollower :: Node RaftState input output
+becomeFollower = do
+  info "Become follower"
+  modifyState (\raftState -> raftState {role = Follower})
+  resetElectionDeadline
+
+resetElectionDeadline :: Node RaftState input output
+resetElectionDeadline = do
+  raftState <- getState
+  now <- getTime
+  jitter <- random
+  putState
+    raftState
+      { electionDeadline =
+          addTimeMicros
+            (round (fromIntegral eLECTION_TIMEOUT_MICROS * (jitter + 1)))
+            now
+      }
 
 ------------------------------------------------------------------------
 
