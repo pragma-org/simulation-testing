@@ -1,6 +1,5 @@
 module Moskstraumen.Example.CRDT.GSet (module Moskstraumen.Example.CRDT.GSet) where
 
-import Control.Monad.State
 import Data.Set (Set)
 import qualified Data.Set as Set
 
@@ -95,7 +94,7 @@ gsetValidateOutput =
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain =
+libMain = do
   consoleEventLoop
     gset
     initialState

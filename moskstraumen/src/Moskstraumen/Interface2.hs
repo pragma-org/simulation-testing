@@ -16,6 +16,7 @@ import Moskstraumen.FakeTime
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.Prelude
+import Moskstraumen.Random
 import Moskstraumen.Runtime2
 import Moskstraumen.Time
 
@@ -80,11 +81,13 @@ simulationRuntime = do
 simulationSpawn ::
   (input -> Node state input output)
   -> state
+  -> Prng
   -> ValidateMarshal input output
   -> IO (Interface IO)
-simulationSpawn node initialState validateMarshal = do
+simulationSpawn node initialState initialPrng validateMarshal = do
   (interface, runtime) <- simulationRuntime
-  tid <- forkIO (eventLoop node initialState validateMarshal runtime)
+  tid <-
+    forkIO (eventLoop node initialState initialPrng validateMarshal runtime)
   return interface {close = killThread tid}
 
 {-
@@ -137,9 +140,9 @@ pipeInterface hin hout processHandle =
     , close = terminateProcess processHandle
     }
 
-pipeSpawn :: FilePath -> IO (Interface IO)
-pipeSpawn fp = do
+pipeSpawn :: FilePath -> Seed -> IO (Interface IO)
+pipeSpawn fp seed = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
-      (proc fp []) {std_in = CreatePipe, std_out = CreatePipe}
+      (proc fp [show seed]) {std_in = CreatePipe, std_out = CreatePipe}
   return (pipeInterface hin hout processHandle)

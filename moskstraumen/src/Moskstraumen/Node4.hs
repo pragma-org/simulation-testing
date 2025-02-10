@@ -7,6 +7,7 @@ import Moskstraumen.FreeMonad
 import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Random
 import Moskstraumen.Time
 import Moskstraumen.VarId
 
@@ -43,11 +44,13 @@ data NodeF state input output x
   | DeliverVar VarId output x
   | AwaitVar VarId (output -> x)
   | GetTime (Time -> x)
+  | Random (Double -> x)
   deriving (Functor)
 
 data NodeContext = NodeContext
   { incoming :: Maybe Message
   , time :: Time
+  , prng :: Prng
   }
 
 data NodeState state = NodeState
@@ -172,6 +175,9 @@ syncRpc toNodeId input failure = do
   rpc toNodeId input failure $ \output -> do
     deliverVar var output
   awaitVar var
+
+random :: Node' state input output Double
+random = generic Random
 
 syncRpcRetry :: NodeId -> input -> Node' state input output output
 syncRpcRetry _toNodeId _input = do
@@ -300,3 +306,7 @@ runNode (Node node0) = paraM aux return node0
     aux (GetTime ih) = do
       nodeContext <- ask
       snd (ih nodeContext.time)
+    aux (Random ih) = do
+      nodeContext <- ask
+      let (double, prng') = randomR (0, 1) nodeContext.prng
+      local (\nodeContext -> nodeContext {prng = prng'}) (snd (ih double))

@@ -8,9 +8,11 @@ import Moskstraumen.Prelude
 
 newtype Prng = Prng Random.StdGen
 
+type Seed = Int
+
 ------------------------------------------------------------------------
 
-newPrng :: Maybe Int -> IO (Prng, Int)
+newPrng :: Maybe Seed -> IO (Prng, Seed)
 newPrng Nothing = do
   seed <- Random.randomIO
   return (Prng (Random.mkStdGen seed), seed)

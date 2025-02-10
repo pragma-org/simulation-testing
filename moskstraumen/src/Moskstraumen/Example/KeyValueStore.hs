@@ -193,7 +193,7 @@ validateOutput_ =
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain =
+libMain = do
   consoleEventLoop
     keyValueStoreV2
     ()

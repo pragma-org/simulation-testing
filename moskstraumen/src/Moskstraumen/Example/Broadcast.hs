@@ -6,6 +6,8 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import System.Environment
+import Text.Read (readMaybe)
 
 import Moskstraumen.Codec
 import Moskstraumen.EventLoop2
@@ -144,7 +146,7 @@ broadcastValidateOutput =
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain =
+libMain = do
   consoleEventLoop
     broadcast
     initialState

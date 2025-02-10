@@ -6,7 +6,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import System.Process (readProcess)
-import System.Random
 
 import Moskstraumen.Codec
 import Moskstraumen.Example.Echo
@@ -37,8 +36,6 @@ data Deployment m = Deployment
   { nodeCount :: Int
   , spawn :: m (Interface m)
   }
-
-type Seed = Int
 
 type NumberOfTests = Int
 
@@ -137,10 +134,10 @@ runTests ::
   Deployment m
   -> Workload
   -> NumberOfTests
-  -> Seed
+  -> Prng
   -> m TestResult
-runTests deployment workload numberOfTests0 seed =
-  loop numberOfTests0 (mkPrng seed)
+runTests deployment workload numberOfTests0 initialPrng =
+  loop numberOfTests0 initialPrng
   where
     loop :: NumberOfTests -> Prng -> m TestResult
     loop 0 _prng = return Success
@@ -178,15 +175,14 @@ runTests deployment workload numberOfTests0 seed =
 
 blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO ()
 blackboxTestWith testConfig binaryFilePath workload = do
-  seed <- case testConfig.replaySeed of
-    Nothing -> randomIO
-    Just seed -> return seed
+  (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
         Deployment
           { nodeCount = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath
+          , spawn = pipeSpawn binaryFilePath seed
           }
-  result <- runTests deployment workload testConfig.numberOfTests seed
+  let (prng', _prng'') = splitPrng prng
+  result <- runTests deployment workload testConfig.numberOfTests prng'
   putStrLn ("Seed: " <> show seed)
   print result
 
@@ -201,15 +197,14 @@ simulationTestWith ::
   -> Workload
   -> IO ()
 simulationTestWith testConfig node initialState validateMarshal workload = do
-  seed <- case testConfig.replaySeed of
-    Nothing -> randomIO
-    Just seed -> return seed
+  (prng, seed) <- newPrng testConfig.replaySeed
+  let (prng', prng'') = splitPrng prng
   let deployment =
         Deployment
           { nodeCount = testConfig.numberOfNodes
-          , spawn = simulationSpawn node initialState validateMarshal
+          , spawn = simulationSpawn node initialState prng' validateMarshal
           }
-  result <- runTests deployment workload testConfig.numberOfTests seed
+  result <- runTests deployment workload testConfig.numberOfTests prng''
   putStrLn ("Seed: " <> show seed)
   print result
 

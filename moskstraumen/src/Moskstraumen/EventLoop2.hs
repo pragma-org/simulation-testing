@@ -4,6 +4,8 @@ import Control.Exception (finally)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Debug.Trace
+import System.Environment
+import Text.Read (readMaybe)
 
 import Moskstraumen.Codec
 import Moskstraumen.Effect
@@ -12,6 +14,7 @@ import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
+import Moskstraumen.Random
 import Moskstraumen.Runtime.TCP
 import Moskstraumen.Runtime2
 import Moskstraumen.Time
@@ -33,11 +36,12 @@ data EventLoopState state input output = EventLoopState
       TimerWheel Time (Maybe MessageId, Node state input output)
   , vars :: Map VarId output
   , awaits :: Map VarId (NodeContext, output -> Node state input output)
+  , prng :: Prng
   }
 
 initialEventLoopState ::
-  NodeState state -> EventLoopState state input output
-initialEventLoopState initialNodeState =
+  NodeState state -> Prng -> EventLoopState state input output
+initialEventLoopState initialNodeState initialPrng =
   EventLoopState
     { rpcs = Map.empty
     , nodeState = initialNodeState
@@ -45,6 +49,7 @@ initialEventLoopState initialNodeState =
     , timerWheel = emptyTimerWheel
     , vars = Map.empty
     , awaits = Map.empty
+    , prng = initialPrng
     }
 
 ------------------------------------------------------------------------
@@ -54,11 +59,13 @@ eventLoop ::
   (Monad m) =>
   (input -> Node state input output)
   -> state
+  -> Prng
   -> ValidateMarshal input output
   -> Runtime m
   -> m ()
-eventLoop node initialState validateMarshal runtime =
-  loop (initialEventLoopState (initialNodeState initialState))
+eventLoop node initialState initialPrng validateMarshal runtime =
+  loop
+    (initialEventLoopState (initialNodeState initialState) initialPrng)
   where
     loop :: EventLoopState state input output -> m ()
     loop eventLoopState = do
@@ -81,12 +88,18 @@ eventLoop node initialState validateMarshal runtime =
               -- traceM ("timer triggered")
               --
               now <- runtime.getCurrentTime
+              let (prng', prng'') = splitPrng eventLoopState.prng
               let (nodeState', effects) =
                     execNode
                       timeoutNode
-                      (NodeContext Nothing now)
+                      (NodeContext Nothing now prng')
                       eventLoopState.nodeState
-              let eventLoopState' = eventLoopState {nodeState = nodeState', timerWheel = timerWheel'}
+              let eventLoopState' =
+                    eventLoopState
+                      { nodeState = nodeState'
+                      , timerWheel = timerWheel'
+                      , prng = prng''
+                      }
               eventLoopState'' <- handleEffects effects eventLoopState'
               case mMessageId of
                 Nothing -> loop eventLoopState''
@@ -110,15 +123,16 @@ eventLoop node initialState validateMarshal runtime =
           Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
           Just input -> do
             now <- runtime.getCurrentTime
+            let (prng', prng'') = splitPrng eventLoopState.prng
             let (nodeState', effects) =
                   execNode
                     (node input)
-                    (NodeContext (Just message) now)
+                    (NodeContext (Just message) now prng')
                     eventLoopState.nodeState
             eventLoopState' <-
               handleEffects
                 effects
-                eventLoopState {nodeState = nodeState'}
+                eventLoopState {nodeState = nodeState', prng = prng''}
             handleMessages messages eventLoopState'
         Just inReplyToMessageId ->
           case runParser validateMarshal.validateOutput message of
@@ -134,15 +148,16 @@ eventLoop node initialState validateMarshal runtime =
                   return eventLoopState
                 Just (success, rpcs') -> do
                   now <- runtime.getCurrentTime
+                  let (prng', prng'') = splitPrng eventLoopState.prng
                   let (nodeState', effects) =
                         execNode
                           (success output)
-                          (NodeContext (Just message) now)
+                          (NodeContext (Just message) now prng')
                           eventLoopState.nodeState
                   eventLoopState' <-
                     handleEffects
                       effects
-                      eventLoopState {nodeState = nodeState', rpcs = rpcs'}
+                      eventLoopState {nodeState = nodeState', rpcs = rpcs', prng = prng''}
 
                   return
                     eventLoopState'
@@ -259,27 +274,31 @@ eventLoop node initialState validateMarshal runtime =
               -- Sometimes a var could be delivered before we await for it.
               Just (output, vars') -> do
                 now <- runtime.getCurrentTime
+                let (prng', prng'') = splitPrng eventLoopState.prng
                 let (nodeState', effects') =
                       execNode
                         (continuation output)
-                        (NodeContext mMessage now)
+                        (NodeContext mMessage now prng')
                         eventLoopState.nodeState
                 handleEffects
                   effects'
                   eventLoopState
                     { vars = vars'
                     , nodeState = nodeState'
+                    , prng = prng''
                     }
               Nothing -> do
                 -- XXX: Doesn't make sense to save the time here...
                 now <- runtime.getCurrentTime
+                let (prng', prng'') = splitPrng eventLoopState.prng
                 return
                   eventLoopState
                     { awaits =
                         Map.insert
                           varId
-                          (NodeContext mMessage now, continuation)
+                          (NodeContext mMessage now prng', continuation)
                           eventLoopState.awaits
+                    , prng = prng''
                     }
           handleEffects
             effects
@@ -291,16 +310,21 @@ consoleEventLoop ::
   -> ValidateMarshal input output
   -> IO ()
 consoleEventLoop node initialState validateMarshal = do
+  args <- getArgs
+  let seed = case readMaybe =<< safeHead args of
+        Nothing -> error "consoleEventLoop: seed needs to be passed as an argument"
+        Just seed -> seed
   runtime <- consoleRuntime jsonCodec
-  eventLoop node initialState validateMarshal runtime
+  eventLoop node initialState (mkPrng seed) validateMarshal runtime
 
 tcpEventLoop ::
   (input -> Node state input output)
   -> state
+  -> Seed
   -> ValidateMarshal input output
   -> Int
   -> IO ()
-tcpEventLoop node initialState validateMarshal port = do
+tcpEventLoop node initialState seed validateMarshal port = do
   runtime <- tcpRuntime port noNeighbours jsonCodec
-  eventLoop node initialState validateMarshal runtime
+  eventLoop node initialState (mkPrng seed) validateMarshal runtime
     `finally` runtime.shutdown

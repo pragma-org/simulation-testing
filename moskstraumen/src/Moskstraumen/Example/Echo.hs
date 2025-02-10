@@ -36,7 +36,7 @@ echo (Echo text) = do
 ------------------------------------------------------------------------
 
 libMain :: IO ()
-libMain =
+libMain = do
   consoleEventLoop
     echo
     ()

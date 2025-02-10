@@ -58,6 +58,24 @@ date: 2025-02-07
 * still need to fix non-determinism in Jepsen, e.g. randomness in how messages
   are generated (we saw how echo uses rand-int), random delays, etc
 
+* Rather than patching Jepsen, and introducing Clojure as a dependency, let's
+  just reimplement the test case generation and checking machinary from
+  scratch.
+
+* This might seem like a lot of work, but recall that property-based testing
+  essentially provides all we need, and I've written about how we can implement
+  this from scratch in the
+  [past](https://stevana.github.io/the_sad_state_of_property-based_testing_libraries.html).
+
+* QuickCheck style generators and shrinkers
+
+* Test loop
+  - console
+  - simulation
+  - tcp?
+
+* Next: ?
+
 #### Old
 
 [Previously](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
