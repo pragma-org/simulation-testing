@@ -2,13 +2,14 @@ module Moskstraumen.Runtime2 (module Moskstraumen.Runtime2) where
 
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Text.IO as Text
-import Data.Time
 import System.IO
 import System.Timeout (timeout)
 
 import Moskstraumen.Codec
 import Moskstraumen.Message
 import Moskstraumen.Prelude
+import Moskstraumen.Time
+import qualified Moskstraumen.Time as Time
 
 ------------------------------------------------------------------------
 
@@ -19,7 +20,7 @@ data Runtime m = Runtime
   , send :: Message -> m ()
   , log :: Text -> m ()
   , timeout :: Microseconds -> m [Message] -> m (Maybe [Message])
-  , getCurrentTime :: m UTCTime
+  , getCurrentTime :: m Time
   , shutdown :: m ()
   }
 
@@ -36,7 +37,7 @@ consoleRuntime codec = do
       , -- NOTE: `timeout 0` times out immediately while negative values
         -- don't, hence the `max 0`.
         timeout = \micros -> System.Timeout.timeout (max 0 micros)
-      , getCurrentTime = Data.Time.getCurrentTime
+      , getCurrentTime = Time.getCurrentTime
       , shutdown = return ()
       }
   where

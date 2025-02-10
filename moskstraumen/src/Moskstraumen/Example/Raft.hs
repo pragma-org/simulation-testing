@@ -2,6 +2,8 @@ module Moskstraumen.Example.Raft (module Moskstraumen.Example.Raft) where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 
 import Moskstraumen.Codec
 import Moskstraumen.EventLoop2
@@ -10,7 +12,12 @@ import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
-import Moskstraumen.Pretty
+import Moskstraumen.Time
+
+------------------------------------------------------------------------
+
+eLECTION_TIMEOUT :: Int
+eLECTION_TIMEOUT = 2_000_000 -- 2s.
 
 ------------------------------------------------------------------------
 
@@ -31,44 +38,70 @@ data Output
 type Key = Int
 type RaftValue = Int
 
-type RaftState = Map Key RaftValue
+data Role = Follower | Candidate | Leader
+
+type Store = Map Key RaftValue
+
+data RaftState = RaftState
+  { store :: Store
+  , role :: Role
+  , electionDeadline :: Time
+  , term :: Word64
+  , votedFor :: Set NodeId
+  }
 
 initialState :: RaftState
-initialState = Map.empty
+initialState =
+  RaftState
+    { store = Map.empty
+    , role = Follower
+    , term = 0
+    , votedFor = Set.empty
+    , electionDeadline = epoch
+    }
 
 ------------------------------------------------------------------------
+
+apply :: Input -> Store -> (Store, Output)
+apply (Read key) store =
+  case Map.lookup key store of
+    Nothing -> (store, KeyDoesntExist "not found")
+    Just value -> (store, ReadOk value)
+apply (Write key value) store =
+  (Map.insert key value store, WriteOk)
+apply (Cas key from to) store =
+  case Map.lookup key store of
+    Nothing -> (store, KeyDoesntExist "not found")
+    Just value
+      | value == from ->
+          (Map.insert key to store, CasOk)
+      | otherwise ->
+          ( store
+          , PreconditionFailed
+              ( "expected "
+                  <> fromString (show from)
+                  <> ", but had "
+                  <> fromString (show value)
+              )
+          )
+apply Init {} _store = error "impossible, already handled"
 
 raft :: Input -> Node RaftState Input Output
 raft (Init myNodeId myNeighbours) = do
   info ("Initialising: " <> unNodeId myNodeId)
   setNodeId myNodeId
   setPeers myNeighbours
+  now <- getTime
+  modifyState (\raftState -> raftState {electionDeadline = now})
+  every 1_000_000 $ do
+    info "Become candidate"
+    modifyState (\raftState -> raftState {role = Candidate})
   reply InitOk
-raft (Read key) = do
+raft input = do
   raftState <- getState
-  case Map.lookup key raftState of
-    Nothing -> reply (KeyDoesntExist "not found")
-    Just value -> reply (ReadOk value)
-raft (Write key value) = do
-  modifyState (Map.insert key value)
-  reply WriteOk
-raft (Cas key from to) = do
-  raftState <- getState
-  case Map.lookup key raftState of
-    Nothing -> reply (KeyDoesntExist "not found")
-    Just value
-      | value == from -> do
-          putState (Map.insert key to raftState)
-          reply CasOk
-      | otherwise ->
-          reply
-            ( PreconditionFailed
-                ( "expected "
-                    <> fromString (show from)
-                    <> ", but had "
-                    <> fromString (show value)
-                )
-            )
+  let (store', output) = apply input raftState.store
+  putState raftState {store = store'}
+  reply output
 
 ------------------------------------------------------------------------
 

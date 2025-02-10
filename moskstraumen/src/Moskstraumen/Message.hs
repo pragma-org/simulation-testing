@@ -25,13 +25,14 @@ import Data.Word
 
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
 data Message = Message
   { src :: NodeId
   , dest :: NodeId
-  , arrivalTime :: Maybe UTCTime
+  , arrivalTime :: Maybe Time
   , body :: Payload
   }
   deriving stock (Eq, Ord, Show)

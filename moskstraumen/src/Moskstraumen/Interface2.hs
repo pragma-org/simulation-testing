@@ -12,6 +12,7 @@ import System.Timeout
 
 import Moskstraumen.Codec
 import Moskstraumen.EventLoop2
+import Moskstraumen.FakeTime
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.Prelude

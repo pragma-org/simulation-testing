@@ -6,8 +6,9 @@ import qualified Control.Exception as E
 import Control.Monad (forever, unless, void)
 import qualified Data.ByteString as S
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text.IO as Text
-import Data.Time
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import System.IO
@@ -15,15 +16,22 @@ import System.Timeout
 
 import Moskstraumen.Codec
 import Moskstraumen.Message
+import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime2
+import qualified Moskstraumen.Time as Time
 
 ------------------------------------------------------------------------
 
+type Port = Int
+
+noNeighbours :: Map NodeId Port
+noNeighbours = Map.empty
+
 -- >>> tcpEventLoop echo () echoValidateMarshal 3000
 -- echo -n "{\"body\":{\"type\":\"echo\",\"echo\": \"hi\"}, \"src\": \"c1\", \"dest\":\"n1\"}" | nc 127.0.0.1 3000
-tcpRuntime :: Int -> Codec -> IO (Runtime IO)
-tcpRuntime port codec = do
+tcpRuntime :: Port -> Map NodeId Port -> Codec -> IO (Runtime IO)
+tcpRuntime port neighbours codec = do
   receiveQueue <- newTBQueueIO 1024
   sendQueue <- newTBQueueIO 1024
   tid <- forkIO (server port codec receiveQueue sendQueue)
@@ -35,7 +43,7 @@ tcpRuntime port codec = do
       , -- NOTE: `timeout 0` times out immediately while negative values
         -- don't, hence the `max 0`.
         timeout = \micros -> System.Timeout.timeout (max 0 micros)
-      , getCurrentTime = Data.Time.getCurrentTime
+      , getCurrentTime = Time.getCurrentTime
       , shutdown = killThread tid
       }
 
@@ -48,14 +56,17 @@ server port codec receiveQueue sendQueue = runTCPServer Nothing (show port) talk
         case codec.decode bytes of
           Left err -> hPutStrLn stderr err
           Right request -> do
+            -- XXX: assert request.dest == ourNodeId
             atomically (writeTBQueue receiveQueue [request])
             -- BUG: this isn't right, as some other thread can write to
             -- the sendQueue... Possible solutions:
             --   1. Merge send and receive? (Could simplify `Interface`
-            --      also?)
+            --      also?). I tried this, and couldn't see how it would
+            --      work...
             --   2. Some kind of map in shared memory which keys being
             --      sockets? Problem is: how do we know that all `send`s
             --      have been made and it's ok to return?
+            --   3. One channel pair per peer?
             response <- atomically (readTBQueue sendQueue)
             sendAll s (codec.encode response)
 

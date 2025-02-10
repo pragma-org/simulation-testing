@@ -3,7 +3,6 @@ module Moskstraumen.EventLoop2 (module Moskstraumen.EventLoop2) where
 import Control.Exception (finally)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Time
 import Debug.Trace
 
 import Moskstraumen.Codec
@@ -15,6 +14,7 @@ import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime.TCP
 import Moskstraumen.Runtime2
+import Moskstraumen.Time
 import Moskstraumen.TimerWheel2
 import Moskstraumen.VarId
 
@@ -30,7 +30,7 @@ data EventLoopState state input output = EventLoopState
   , nodeState :: NodeState state
   , nextMessageId :: MessageId
   , timerWheel ::
-      TimerWheel UTCTime (Maybe MessageId, Node state input output)
+      TimerWheel Time (Maybe MessageId, Node state input output)
   , vars :: Map VarId output
   , awaits :: Map VarId (NodeContext, output -> Node state input output)
   }
@@ -69,8 +69,7 @@ eventLoop node initialState validateMarshal runtime =
           loop eventLoopState'
         Just ((time, (mMessageId, timeoutNode)), timerWheel') -> do
           now <- runtime.getCurrentTime
-          let nanos = realToFrac (diffUTCTime time now)
-              micros = round (nanos * 1_000_000)
+          let micros = diffTimeMicros time now
           -- traceM ("timer will trigger in: " <> show micros <> " µs")
           runtime.timeout micros runtime.receive >>= \case
             Nothing -> do
@@ -81,10 +80,11 @@ eventLoop node initialState validateMarshal runtime =
               -- successful continuation from from eventLoopState.rpcs.
               -- traceM ("timer triggered")
               --
+              now <- runtime.getCurrentTime
               let (nodeState', effects) =
                     execNode
                       timeoutNode
-                      (NodeContext Nothing)
+                      (NodeContext Nothing now)
                       eventLoopState.nodeState
               let eventLoopState' = eventLoopState {nodeState = nodeState', timerWheel = timerWheel'}
               eventLoopState'' <- handleEffects effects eventLoopState'
@@ -109,10 +109,11 @@ eventLoop node initialState validateMarshal runtime =
         Nothing -> case runParser validateMarshal.validateInput message of
           Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
           Just input -> do
+            now <- runtime.getCurrentTime
             let (nodeState', effects) =
                   execNode
                     (node input)
-                    (NodeContext (Just message))
+                    (NodeContext (Just message) now)
                     eventLoopState.nodeState
             eventLoopState' <-
               handleEffects
@@ -132,10 +133,11 @@ eventLoop node initialState validateMarshal runtime =
                   -- XXX: Collect metrics / log?
                   return eventLoopState
                 Just (success, rpcs') -> do
+                  now <- runtime.getCurrentTime
                   let (nodeState', effects) =
                         execNode
                           (success output)
-                          (NodeContext (Just message))
+                          (NodeContext (Just message) now)
                           eventLoopState.nodeState
                   eventLoopState' <-
                     handleEffects
@@ -193,10 +195,7 @@ eventLoop node initialState validateMarshal runtime =
           handleEffects effects eventLoopState
         SET_TIMER micros mMessageId timeoutNode -> do
           now <- runtime.getCurrentTime
-          let later =
-                addUTCTime
-                  (realToFrac (fromIntegral micros / 1_000_000))
-                  now
+          let later = addTimeMicros micros now
           let timerWheel' =
                 insertTimer
                   later
@@ -224,10 +223,7 @@ eventLoop node initialState validateMarshal runtime =
                   }
           runtime.send message
           now <- runtime.getCurrentTime
-          let later =
-                addUTCTime
-                  (realToFrac (fromIntegral rPC_TIMEOUT_MICROS / 1_000_000))
-                  now
+          let later = addTimeMicros rPC_TIMEOUT_MICROS now
           let timerWheel' =
                 insertTimer
                   later
@@ -262,10 +258,11 @@ eventLoop node initialState validateMarshal runtime =
             case lookupDelete varId eventLoopState.vars of
               -- Sometimes a var could be delivered before we await for it.
               Just (output, vars') -> do
+                now <- runtime.getCurrentTime
                 let (nodeState', effects') =
                       execNode
                         (continuation output)
-                        (NodeContext mMessage)
+                        (NodeContext mMessage now)
                         eventLoopState.nodeState
                 handleEffects
                   effects'
@@ -273,13 +270,15 @@ eventLoop node initialState validateMarshal runtime =
                     { vars = vars'
                     , nodeState = nodeState'
                     }
-              Nothing ->
+              Nothing -> do
+                -- XXX: Doesn't make sense to save the time here...
+                now <- runtime.getCurrentTime
                 return
                   eventLoopState
                     { awaits =
                         Map.insert
                           varId
-                          (NodeContext mMessage, continuation)
+                          (NodeContext mMessage now, continuation)
                           eventLoopState.awaits
                     }
           handleEffects
@@ -302,6 +301,6 @@ tcpEventLoop ::
   -> Int
   -> IO ()
 tcpEventLoop node initialState validateMarshal port = do
-  runtime <- tcpRuntime port jsonCodec
+  runtime <- tcpRuntime port noNeighbours jsonCodec
   eventLoop node initialState validateMarshal runtime
     `finally` runtime.shutdown

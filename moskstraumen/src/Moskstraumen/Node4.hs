@@ -1,16 +1,13 @@
 module Moskstraumen.Node4 (module Moskstraumen.Node4) where
 
 import Control.Monad.RWS
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 
-import Moskstraumen.Codec
 import Moskstraumen.Effect
 import Moskstraumen.FreeMonad
 import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
-import Moskstraumen.Runtime2
+import Moskstraumen.Time
 import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
@@ -45,10 +42,12 @@ data NodeF state input output x
   | NewVar (VarId -> x)
   | DeliverVar VarId output x
   | AwaitVar VarId (output -> x)
+  | GetTime (Time -> x)
   deriving (Functor)
 
 data NodeContext = NodeContext
   { incoming :: Maybe Message
+  , time :: Time
   }
 
 data NodeState state = NodeState
@@ -69,11 +68,24 @@ initialNodeState initialState =
 
 ------------------------------------------------------------------------
 
+generic ::
+  ( (x -> Free f x)
+    -> NodeF state input output (Free (NodeF state input output) a)
+  )
+  -> Node' state input output a
 generic op = Node (Free (op Pure))
+
+generic_ ::
+  ( Free f ()
+    -> NodeF state input output (Free (NodeF state input output) a)
+  )
+  -> Node' state input output a
 generic_ op = Node (Free (op (Pure ())))
 
+send :: NodeId -> input -> Node state input output
 send destNodeId input = generic_ (Send destNodeId input)
 
+reply :: output -> Node state input output
 reply output = generic_ (Reply output)
 
 rpc ::
@@ -105,6 +117,7 @@ info text = generic_ (Log text)
 getState :: Node' state input output state
 getState = generic GetState
 
+putState :: state -> Node state input output
 putState = generic_ . PutState
 
 modifyState ::
@@ -113,12 +126,19 @@ modifyState f = do
   s <- getState
   putState (f s)
 
+getSender :: Node' state input output NodeId
 getSender = generic GetSender
 
+getPeers :: Node' state input output [NodeId]
 getPeers = generic GetPeers
+
+setPeers :: [NodeId] -> Node state input output
 setPeers = generic_ . SetPeers
 
+getNodeId :: Node' state input output NodeId
 getNodeId = generic GetNodeId
+
+setNodeId :: NodeId -> Node' state input output ()
 setNodeId = generic_ . SetNodeId
 
 sleep :: Int -> Node state input output -> Node state input output
@@ -139,6 +159,9 @@ deliverVar varId output = generic_ (DeliverVar varId output)
 awaitVar :: VarId -> Node' state input output output
 awaitVar varId = generic (AwaitVar varId)
 
+getTime :: Node' state input output Time
+getTime = generic GetTime
+
 syncRpc ::
   NodeId
   -> input
@@ -151,7 +174,7 @@ syncRpc toNodeId input failure = do
   awaitVar var
 
 syncRpcRetry :: NodeId -> input -> Node' state input output output
-syncRpcRetry toNodeId input = do
+syncRpcRetry _toNodeId _input = do
   undefined
 
 {-
@@ -207,7 +230,6 @@ runNode (Node node0) = paraM aux return node0
           (NodeState state)
           ()
     aux (Send toNodeId input ih) = do
-      nodeContext <- ask
       nodeState <- get
       tell [SEND nodeState.self toNodeId input]
       snd ih
@@ -223,12 +245,9 @@ runNode (Node node0) = paraM aux return node0
           tell [REPLY nodeState.self message.src message.body.msgId output]
           snd ih
     aux (After micros node ih) = do
-      nodeContext_ <- ask
-      nodeState_ <- get
       tell [SET_TIMER micros Nothing node]
       snd ih
     aux (RPC destNodeId input failure success ih) = do
-      nodeContext <- ask
       nodeState <- get
       tell
         [ DO_RPC
@@ -278,3 +297,6 @@ runNode (Node node0) = paraM aux return node0
     aux (AwaitVar varId ih) = do
       nodeContext <- ask
       tell [AWAIT_VAR varId nodeContext.incoming (Node . fst . ih)]
+    aux (GetTime ih) = do
+      nodeContext <- ask
+      snd (ih nodeContext.time)

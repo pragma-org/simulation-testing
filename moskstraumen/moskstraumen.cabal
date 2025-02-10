@@ -30,6 +30,7 @@ library
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
     Moskstraumen.Example.Raft
+    Moskstraumen.FakeTime
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
     Moskstraumen.Interface2

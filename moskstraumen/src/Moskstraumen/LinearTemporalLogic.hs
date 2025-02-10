@@ -3,10 +3,10 @@ module Moskstraumen.LinearTemporalLogic (module Moskstraumen.LinearTemporalLogic
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
-import Data.Time
 
 import Moskstraumen.Message
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -127,7 +127,7 @@ data LTLValue
   | IntValue Int
   | MaybeMessageIdValue (Maybe MessageId)
   | KindValue MessageKind
-  | MaybeTimeValue (Maybe UTCTime)
+  | MaybeTimeValue (Maybe Time)
   | ValueValue Value
   deriving (Eq, Ord, Show)
 
