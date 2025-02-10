@@ -1,5 +1,6 @@
 module Moskstraumen.Example.Raft (module Moskstraumen.Example.Raft) where
 
+import Control.Monad.State.Strict
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -93,9 +94,17 @@ raft (Init myNodeId myNeighbours) = do
   setNodeId myNodeId
   setPeers myNeighbours
   now <- getTime
+  info ("Leader election, setting deadline: " <> fromString (show now))
   modifyState (\raftState -> raftState {electionDeadline = now})
+  raftState <- getState
   every 1_000_000 $ do
-    raftState <- getState
+    now <- getTime
+    info
+      ( "Leader election, deadline: "
+          <> fromString (show raftState.electionDeadline)
+          <> ", now: "
+          <> fromString (show now)
+      )
     when (raftState.electionDeadline < now) $ do
       if raftState.role /= Leader
         then becomeCandidate
@@ -109,13 +118,16 @@ raft input = do
 
 becomeCandidate :: Node RaftState input output
 becomeCandidate = do
-  info "Become canidate"
   modifyState (\raftState -> raftState {role = Candidate})
+  term <- term <$> get
+  advanceTerm (term + 1)
   resetElectionDeadline
+  info ("Become canidate for term " <> fromString (show term))
 
 becomeFollower :: Node RaftState input output
 becomeFollower = do
-  info "Become follower"
+  term <- term <$> get
+  info ("Become follower for term " <> fromString (show term))
   modifyState (\raftState -> raftState {role = Follower})
   resetElectionDeadline
 
@@ -131,6 +143,13 @@ resetElectionDeadline = do
             (round (fromIntegral eLECTION_TIMEOUT_MICROS * (jitter + 1)))
             now
       }
+
+advanceTerm :: Word64 -> Node RaftState input output
+advanceTerm term' = do
+  raftState <- getState
+  -- Term can't go backwards.
+  assertM (raftState.term < term')
+  put raftState {term = term'}
 
 ------------------------------------------------------------------------
 

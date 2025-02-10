@@ -1,6 +1,9 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Moskstraumen.Node4 (module Moskstraumen.Node4) where
 
-import Control.Monad.RWS
+import Control.Monad.RWS.Strict
 
 import Moskstraumen.Effect
 import Moskstraumen.FreeMonad
@@ -116,6 +119,10 @@ rpcRetryForever nodeId input success = do
 
 info :: Text -> Node state input output
 info text = generic_ (Log text)
+
+instance MonadState state (Node' state input output) where
+  get = generic GetState
+  put = generic_ . PutState
 
 getState :: Node' state input output state
 getState = generic GetState

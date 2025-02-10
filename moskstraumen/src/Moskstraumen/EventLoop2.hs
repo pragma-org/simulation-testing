@@ -5,6 +5,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Debug.Trace
 import System.Environment
+import System.Random
 import Text.Read (readMaybe)
 
 import Moskstraumen.Codec
@@ -85,9 +86,8 @@ eventLoop node initialState initialPrng validateMarshal runtime =
               -- there's a messageId associated with the timer, it means
               -- that an RPC call timed out and we should remove the
               -- successful continuation from from eventLoopState.rpcs.
-              -- traceM ("timer triggered")
-              --
               now <- runtime.getCurrentTime
+              traceM ("timer triggered, now: " <> show now)
               let (prng', prng'') = splitPrng eventLoopState.prng
               let (nodeState', effects) =
                     execNode
@@ -123,6 +123,7 @@ eventLoop node initialState initialPrng validateMarshal runtime =
           Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
           Just input -> do
             now <- runtime.getCurrentTime
+            traceM ("handleMessages, now: " <> show now)
             let (prng', prng'') = splitPrng eventLoopState.prng
             let (nodeState', effects) =
                   execNode
@@ -311,9 +312,9 @@ consoleEventLoop ::
   -> IO ()
 consoleEventLoop node initialState validateMarshal = do
   args <- getArgs
-  let seed = case readMaybe =<< safeHead args of
-        Nothing -> error "consoleEventLoop: seed needs to be passed as an argument"
-        Just seed -> seed
+  seed <- case readMaybe =<< safeHead args of
+    Nothing -> randomIO
+    Just seed -> return seed
   runtime <- consoleRuntime jsonCodec
   eventLoop node initialState (mkPrng seed) validateMarshal runtime
 

@@ -1,5 +1,6 @@
 module Moskstraumen.Prelude (module X, Generic, Text, module Moskstraumen.Prelude, foldMapM) where
 
+import Control.Exception (assert)
 import Control.Monad as X
 import Data.Foldable as X
 import Data.Functor.Identity as X
@@ -31,3 +32,6 @@ lookupDelete :: (Ord k) => k -> Map k v -> Maybe (v, Map k v)
 lookupDelete k m = case Map.lookup k m of
   Nothing -> Nothing
   Just v -> Just (v, Map.delete k m)
+
+assertM :: (Monad m) => Bool -> m ()
+assertM bool = assert bool (return ())
