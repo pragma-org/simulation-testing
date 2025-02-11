@@ -38,6 +38,16 @@ hasField field fieldParser = do
 hasIntField :: Field -> Parser Int
 hasIntField field = hasField field isInt
 
+hasBoolField :: Field -> Parser Bool
+hasBoolField field = do
+  message <- ask
+  text <- lift (Map.lookup field message.body.fields)
+  lift (isBool text)
+
+isBool :: Value -> Maybe Bool
+isBool (Bool bool) = Just bool
+isBool _ = Nothing
+
 isText :: Value -> Maybe Text
 isText (String text) = Just text
 isText _ = Nothing

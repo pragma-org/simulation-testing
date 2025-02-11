@@ -33,7 +33,7 @@ data NodeF state input output x
       ~(Node state input output)
       (output -> Node state input output)
       x
-  | Log Text x
+  | Info Text x
   | After Int ~(Node state input output) x
   | GetState (state -> x)
   | PutState state x
@@ -103,6 +103,17 @@ rpc ::
 rpc destNodeId input failure success =
   generic_ (RPC destNodeId input failure success)
 
+brpc ::
+  input
+  -> Node state input output
+  -> (output -> Node state input output)
+  -> Node state input output
+brpc input failure success = do
+  self <- getNodeId
+  neighbours <- getPeers
+  forM_ (filter (/= self) neighbours) $ \destNodeId -> do
+    rpc destNodeId input failure success
+
 rpcRetryForever ::
   NodeId
   -> input
@@ -118,7 +129,7 @@ rpcRetryForever nodeId input success = do
     success
 
 info :: Text -> Node state input output
-info text = generic_ (Log text)
+info text = generic_ (Info text)
 
 instance MonadState state (Node' state input output) where
   get = generic GetState
@@ -295,7 +306,7 @@ runNode (Node node0) = paraM aux return node0
     aux (PutState state' ih) = do
       modify (\nodeState -> nodeState {state = state'})
       snd ih
-    aux (Log text ih) = do
+    aux (Info text ih) = do
       tell [LOG text]
       snd ih
     aux (Sleep micros node) = tell [SET_TIMER micros Nothing node]

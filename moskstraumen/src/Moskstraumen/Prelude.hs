@@ -8,9 +8,10 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.String as X
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Word as X
 import GHC.Generics (Generic)
-import Prelude as X
+import Prelude as X hiding (log)
 
 ------------------------------------------------------------------------
 
@@ -35,3 +36,6 @@ lookupDelete k m = case Map.lookup k m of
 
 assertM :: (Monad m) => Bool -> m ()
 assertM bool = assert bool (return ())
+
+textShow :: (Show a) => a -> Text
+textShow = Text.pack . show
