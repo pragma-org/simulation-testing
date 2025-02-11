@@ -58,6 +58,7 @@ data RaftState = RaftState
   { store :: Store
   , role :: Role
   , electionDeadline :: Time
+  , stepDownDeadline :: Time
   , term :: Term
   , votedFor :: Maybe NodeId
   , votes :: Set NodeId
@@ -73,6 +74,7 @@ initialState =
     , votedFor = Nothing
     , votes = Set.empty
     , electionDeadline = epoch
+    , stepDownDeadline = epoch
     , log = initialLog
     }
 
@@ -134,18 +136,26 @@ raft (Init myNodeId myNeighbours) = do
   info ("Leader election, setting deadline: " <> fromString (show now))
   modifyState (\raftState -> raftState {electionDeadline = now})
   raftState <- getState
-  every 1_000_000 $ do
-    now' <- getTime
-    info
-      ( "Leader election, deadline: "
-          <> fromString (show raftState.electionDeadline)
-          <> ", now: "
-          <> fromString (show now')
-      )
-    when (raftState.electionDeadline < now') $ do
-      if raftState.role /= Leader
-        then becomeCandidate
-        else resetElectionDeadline
+  every 1_000 $ do
+    jitter <- random
+    sleep (round (jitter * 1000)) $ do
+      now' <- getTime
+      info
+        ( "Leader election, deadline: "
+            <> fromString (show raftState.electionDeadline)
+            <> ", now: "
+            <> fromString (show now')
+        )
+      when (raftState.electionDeadline < now') $ do
+        if raftState.role /= Leader
+          then becomeCandidate
+          else resetElectionDeadline
+  every 1_000 $ do
+    raftState <- getState
+    now <- getTime
+    when (raftState.role == Leader && raftState.electionDeadline < now) $ do
+      info "Stepping down: haven't received any acks recently"
+      becomeFollower
   reply InitOk
 raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
   maybeStepDown remoteTerm
@@ -210,6 +220,7 @@ becomeCandidate = do
   term <- term <$> get
   advanceTerm (term + 1)
   resetElectionDeadline
+  resetStepDownDeadline
   info ("Become canidate for term " <> fromString (show term))
   requestVotes
 
@@ -277,11 +288,40 @@ requestVotes = do
               && voteGranted
           )
           $ do
+            resetStepDownDeadline
             remoteNodeId <- getSender
             raftState <- getState
             let votes' = Set.insert remoteNodeId raftState.votes
             put raftState {votes = votes'}
             info ("Have votes: " <> textShow votes')
+
+            myNeighbours <- getPeers
+            when (majority (length myNeighbours) <= Set.size votes')
+              $
+              -- We have a majority of votes for this term!
+              becomeLeader
+
+-- What number would constitute a majority of n nodes?
+majority :: Int -> Int
+majority n = floor (realToFrac n / 2.0) + 1
+
+becomeLeader :: Node RaftState Input Output
+becomeLeader = do
+  role <- role <$> getState
+  -- Should be a candidate.
+  assertM (role == Candidate)
+  modifyState (\raftState -> raftState {role = Leader})
+  resetStepDownDeadline
+  term <- term <$> getState
+  info ("Become leader for term " <> textShow term)
+
+resetStepDownDeadline :: Node RaftState Input Output
+resetStepDownDeadline = do
+  now <- getTime
+  modifyState
+    ( \nodeState ->
+        nodeState {stepDownDeadline = addTimeMicros eLECTION_TIMEOUT_MICROS now}
+    )
 
 ------------------------------------------------------------------------
 
