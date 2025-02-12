@@ -112,7 +112,11 @@ brpc input failure success = do
   self <- getNodeId
   neighbours <- getPeers
   forM_ (filter (/= self) neighbours) $ \destNodeId -> do
-    rpc destNodeId input failure success
+    rpc
+      destNodeId
+      input
+      (info ("brpc to " <> unNodeId destNodeId) >> failure)
+      success
 
 rpcRetryForever ::
   NodeId
@@ -129,7 +133,9 @@ rpcRetryForever nodeId input success = do
     success
 
 info :: Text -> Node state input output
-info text = generic_ (Info text)
+info text = do
+  now <- getTime
+  generic_ (Info (iso8601Format now <> " " <> text))
 
 instance MonadState state (Node' state input output) where
   get = generic GetState

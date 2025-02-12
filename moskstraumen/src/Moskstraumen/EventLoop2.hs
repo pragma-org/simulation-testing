@@ -87,7 +87,7 @@ eventLoop node initialState initialPrng validateMarshal runtime =
               -- that an RPC call timed out and we should remove the
               -- successful continuation from from eventLoopState.rpcs.
               now <- runtime.getCurrentTime
-              traceM ("timer triggered, now: " <> show now)
+              -- traceM ("timer triggered, now: " <> show now)
               let (prng', prng'') = splitPrng eventLoopState.prng
               let (nodeState', effects) =
                     execNode

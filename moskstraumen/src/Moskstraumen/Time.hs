@@ -1,9 +1,11 @@
 module Moskstraumen.Time (module Moskstraumen.Time) where
 
 import Data.IORef
+import qualified Data.Text as Text
 import Data.Time
 import qualified Data.Time as Time
 import Data.Time.Calendar.OrdinalDate (fromOrdinalDate)
+import Data.Time.Format.ISO8601 (iso8601Show)
 
 import Moskstraumen.Prelude
 
@@ -27,3 +29,6 @@ diffTimeMicros (Time t1) (Time t2) = micros
   where
     nanos = realToFrac (diffUTCTime t1 t2)
     micros = round (nanos * 1_000_000)
+
+iso8601Format :: Time -> Text
+iso8601Format (Time utcTime) = Text.pack (iso8601Show utcTime)
