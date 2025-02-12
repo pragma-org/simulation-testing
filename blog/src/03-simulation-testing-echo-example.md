@@ -103,7 +103,7 @@ func main() {
 As you can see, all interesting bits (`Handle`, `Reply`, and `Run`) all use
 `Node` which comes from the `maelstrom` library, this is what I've been calling
 the runtime. Also note that in this example, without digging into the
-implemention of the runtime, there's no non-determinism.
+implementation of the runtime, there's no non-determinism.
 
 So let's dig a layer deeper and have a look at how this node runtime is
 implemented.
@@ -148,7 +148,7 @@ func (n *Node) Handle(typ string, fn HandlerFunc) {
 ```
 
 Again, all still deterministic. It's only in the `Run` function where the
-non-determinism creaps in:
+non-determinism creeps in:
 
 ```go
 // Run executes the main event handling loop. It reads in messages from STDIN
@@ -211,7 +211,7 @@ with the garbage collection, etc):
 ```
 
 If we run the echo example with the above modification and send it two massages
-concurrently to stdin:
+concurrently to `stdin`:
 
 ```bash
  maelstrom-echo < <(echo '{"body":{"type":"echo", "echo": "hi_1"}}' & \
@@ -255,8 +255,8 @@ Kyle Kingsbury, the main author of Jepsen and Maelstrom, writes in the
 Maelstrom docs:
 
 > "We could write this as a single-threaded event loop, using fibers or
-> coroutines, or via threads, but for our purposes, threads will simplify a good
-> deal. Multithreaded access means we need a lock--preferably re-entrant--to
+> co-routines, or via threads, but for our purposes, threads will simplify a good
+> deal. Multi-threaded access means we need a lock--preferably re-entrant--to
 > protect our IO operations, assigning messages, and so on. We'll want one for
 > logging to STDERR too, so that our log messages don't get mixed up."
 
@@ -288,33 +288,38 @@ for the requests for the echo example:
 ```
 
 That `rand-int` will produce random integers every time it's run, thus breaking
-determinism. We could fix this by parametrising the pseudo-random number
-generator by a seed and thus get the same random integers given the same seed,
+determinism. We could fix this by making the seed for the pseudo-random number
+generator a parameter and thus get the same random integers given the same seed,
 but there are many more places Jepsen uses
 [non-determinism](https://github.com/jepsen-io/jepsen/issues/578).
 
 So rather than trying to patch Jepsen, and introducing Jepsen and Clojure as a
-dependencies, let's just reimplement the test case generation, message
-scheduling and checking machinary from scratch.
+dependencies, let's just re-implement the test case generation, message
+scheduling and checking machinery from scratch.
 
 This might seem like a lot of work, but recall that property-based testing
 essentially provides all we need, and I've written about how we can implement
-this from scratch in the
+property-based testing from scratch in the
 [past](https://stevana.github.io/the_sad_state_of_property-based_testing_libraries.html).
 
 By staying closer to property-based testing we get shrinking (minimised
 counterexamples) for cheap as well, thereby fixing all the cons we identified
-with the Maelstrom approach.
+with the Maelstrom approach. In fact good shrinking depends on determinism, so
+the two go are related.
 
 ## Conclusion and what's next
 
-* Next: ?
+We've located the sources of non-determinism in the Maelstrom tests from the
+last post and sketched how we can swap out these components for deterministic
+ones.
 
+Next we'll start on the actual implementation for the deterministic simulation
+testing.
 
 
 [^1]: Could be a blessing but more likely it's a curse.
 
 [^2]: For example, imagine we got some periodic tasks that need to be performed
     at some time interval, these need to be done concurrently and not be forced
-    to wait became the node is busy processing messages from stdin. We'll come back
-    to timers and other concurrent constructs in more detail later.
+    to wait became the node is busy processing messages from `stdin`. We'll
+    come back to timers and other concurrent constructs in more detail later.

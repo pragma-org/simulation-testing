@@ -163,9 +163,10 @@ simulation testing works in a way that is:
   couple of years).
 
 As far as I know no prior work has been done in this direction. Stay
-tuned for the next post where we'll start by Jepsen testing a simple
-echo node example as a warm up for then later simulation testing the
-exact same example.
+tuned for the [next
+post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
+where we'll start by Jepsen testing a simple echo node example as a warm
+up for then later simulation testing the exact same example.
 
 [^1]: Although there's an interesting reference in the (in)famous NATO
     software engineering
