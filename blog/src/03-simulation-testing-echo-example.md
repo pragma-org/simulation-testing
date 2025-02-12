@@ -3,19 +3,109 @@ author: Stevan A
 date: 2025-02-07
 ---
 
-# Simulation testing the echo example
+# Sketching how to simulation test distributed systems
 
-## Structure
+In the last post we saw how to test a simple distributed system, a node that
+echos back the requests it gets, using Jepsen via Maelstrom.
 
-* In the last post we saw how to test a simple distributed system, a node that
-* echos back the requests it gets, using Jepsen via Maelstrom.
+We concluded by listing the pros and cons with the Maelstrom approach: it's
+language agnostic which is good, but the tests are non-determinstic (rerunning
+might give different results) and there's no shrinking.
 
-* We concluded that post with a couple of pros and cons with that approach
+In this post we'll highlight the sources of the non-determinism in the
+Maelstrom approach, and then sketch how we can make it deterministic and thus
+closer to simulation testing proper.
 
-* This post: explain the sources of the cons and sketch a plan how to fix the
-  bad while keeping the good
+## Maelstrom the language
 
-* Maelstrom the language
+I'm a programming language person, so I like to see every problem through the
+lens of programming languages[^1].
+
+When I look at Maelstrom what I see is a programming language (or
+domain-specific language) for distributed systems. We've seen it already in our
+simple echo example:
+
+```
+node (Echo text) = reply (Echo_ok text)
+```
+
+This language hides the fact from where (what IP address, socket, etc) the
+messages are coming and where to send the reply back to. It doesn't specify how
+the messages are encoded on the wire (codec), not does it talk about what the
+wire is (what communication channel is used between nodes).
+
+It's good that the language hides all these details, because it lets us focus
+on the essence of the node we are writing, in this case an echo node.
+
+For more complicated distributed systems this language will need to be
+extended, as we shall see later in the series.
+
+However already this simple language is enough to illustrate the
+non-determinism in Maelstrom.
+
+## Maelstrom's non-deterministic runtimes
+
+The way Maelstrom achieves language agnosticism is by:
+
+  1. Making the Maelstrom language easy to implement in any other language, and;
+  2. By specifying a
+     [protocol](https://github.com/jepsen-io/maelstrom/blob/main/doc/protocol.md)
+     for what the format and codec for messages are.
+
+One source of non-determinism is the implementations of the Maelstrom language.
+
+Through the lens of programming languages, we can think of the Maelstrom
+language as a purely syntactic construct, while the implementations of the
+language as an interpreter or a runtime.
+
+At the time of writing there are
+[eight](https://github.com/jepsen-io/maelstrom/tree/main/demo) runtimes written
+in different languages.
+
+I've not looked at all of them in detail, but the Ruby one (which is used in
+the official Maelstrom documentation) and the Go one (which is used in Fly.io's
+popular [Gossip Glomers](https://fly.io/dist-sys/)) are both non-determinstic.
+
+To see where the non-determinism comes we need to have a look at how this node
+runtime is implemented. In the previous post we hinted at how the Ruby version
+worked, so let's switch to Go and have a look at how our echo example can be
+implemented:
+
+```go
+func main() {
+    n := maelstrom.NewNode()
+
+    // Register a handler for the "echo" message that responds with an "echo_ok".
+    n.Handle("echo", func(msg maelstrom.Message) error {
+        // Unmarshal the message body as an loosely-typed map.
+        var body map[string]any
+        if err := json.Unmarshal(msg.Body, &body); err != nil {
+            return err
+        }
+
+        // Update the message type.
+        body["type"] = "echo_ok"
+
+        // Echo the original message back with the updated message type.
+        return n.Reply(msg, body)
+    })
+
+    // Execute the node's message loop. This will run until STDIN is closed.
+    if err := n.Run(); err != nil {
+        log.Printf("ERROR: %s", err)
+        os.Exit(1)
+    }
+}
+```
+
+As you can see, all interesting bits (`Handle`, `Reply`, and `Run`) all use
+`Node` which comes from the `maelstrom` library, this is what I've been calling
+the runtime. Also note that in this example, without digging into the
+implemention of the runtime, there's no non-determinism.
+
+So let's dig a layer deeper...
+
+
 * Non-deterministic runtimes
 
 ```go
@@ -324,3 +414,5 @@ Success
 
 A lot of Jepsen's slowness is due to the JVM booting up, and `--time-limit` and
 `--rate` can probably be tweaked to produce more requests faster.
+
+[^1]: Could be a blessing but more likely it's a curse.
