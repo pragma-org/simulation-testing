@@ -42,7 +42,6 @@ data NodeF state input output x
   | GetPeers ([NodeId] -> x)
   | SetPeers [NodeId] x
   | GetSender (NodeId -> x)
-  | Sleep Int ~(Node state input output)
   | NewVar (VarId -> x)
   | DeliverVar VarId output x
   | AwaitVar VarId (output -> x)
@@ -169,7 +168,7 @@ setNodeId :: NodeId -> Node' state input output ()
 setNodeId = generic_ . SetNodeId
 
 sleep :: Int -> Node state input output -> Node state input output
-sleep micros node = Node (Free (Sleep micros node))
+sleep = after
 
 after :: Int -> Node state input output -> Node state input output
 after micros task = Node (Free (After micros task (Pure ())))
@@ -315,7 +314,6 @@ runNode (Node node0) = paraM aux return node0
     aux (Info text ih) = do
       tell [LOG text]
       snd ih
-    aux (Sleep micros node) = tell [SET_TIMER micros Nothing node]
     aux (NewVar ih) = do
       nodeState <- get
       let varId = nodeState.nextVarId
