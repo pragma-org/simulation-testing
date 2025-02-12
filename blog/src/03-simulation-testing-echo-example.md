@@ -5,7 +5,7 @@ date: 2025-02-12
 
 # Sketching how to simulation test distributed systems
 
-In the last
+In the [last
 post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
 we saw how to test a simple distributed system, a node that echos back the
 requests it gets, using Jepsen via Maelstrom.
