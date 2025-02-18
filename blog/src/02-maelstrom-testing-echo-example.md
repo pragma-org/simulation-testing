@@ -322,7 +322,7 @@ Maelstrom can be seen as a platform for developing distributed systems which
 makes it particularly convenient to run Jepsen tests on the system being
 developed.
 
-## Conclusion
+## Conclusion and what's next
 
 We've seen how to represent simple distributed programs and how to deploy them
 and do actual I/O, in particular how to do messaging via `stdin` and `stdout`,
