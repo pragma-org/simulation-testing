@@ -10,10 +10,10 @@ import System.Process (readProcess)
 import Moskstraumen.Codec
 import Moskstraumen.Example.Echo
 import qualified Moskstraumen.Generate as Gen
-import Moskstraumen.Interface2
 import Moskstraumen.LinearTemporalLogic
 import Moskstraumen.Message
 import Moskstraumen.Node4
+import Moskstraumen.NodeHandle
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
@@ -24,7 +24,7 @@ import Moskstraumen.Workload
 ------------------------------------------------------------------------
 
 data World m = World
-  { nodes :: Map NodeId (Interface m)
+  { nodes :: Map NodeId (NodeHandle m)
   , messages :: [Message] -- XXX: should be a heap
   , prng :: Prng
   , trace :: Trace
@@ -34,7 +34,7 @@ type Trace = [Message]
 
 data Deployment m = Deployment
   { nodeCount :: Int
-  , spawn :: m (Interface m)
+  , spawn :: m (NodeHandle m)
   }
 
 type NumberOfTests = Int

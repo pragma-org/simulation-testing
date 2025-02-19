@@ -1,4 +1,4 @@
-module Moskstraumen.Interface2 (module Moskstraumen.Interface2) where
+module Moskstraumen.NodeHandle (module Moskstraumen.NodeHandle) where
 
 import Control.Concurrent
 import Control.Concurrent.MVar
@@ -22,12 +22,12 @@ import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
-data Interface m = Interface
+data NodeHandle m = NodeHandle
   { handle :: Message -> m [Message]
   , close :: m ()
   }
 
-simulationRuntime :: IO (Interface IO, Runtime IO)
+simulationRuntime :: IO (NodeHandle IO, Runtime IO)
 simulationRuntime = do
   inputMVar <- newEmptyMVar
   outputQueue <- newTBQueueIO 65536
@@ -50,7 +50,7 @@ simulationRuntime = do
     send_ = atomically . writeTBQueue outputQueue
 
   return
-    ( Interface
+    ( NodeHandle
         { handle = handle_
         , close = return ()
         }
@@ -83,7 +83,7 @@ simulationSpawn ::
   -> state
   -> Prng
   -> ValidateMarshal input output
-  -> IO (Interface IO)
+  -> IO (NodeHandle IO)
 simulationSpawn node initialState initialPrng validateMarshal = do
   (interface, runtime) <- simulationRuntime
   tid <-
@@ -95,13 +95,13 @@ pureSpawn ::
   (input -> Node state input output)
   -> state
   -> ValidateMarshal input output
-  -> IO (Interface IO)
+  -> IO (NodeHandle IO)
 pureSpawn node initialState validateMarshal = do
   undefined
 
 nodeStateRef <- newIORef (initialNodeState initialState)
 return
-  Interface
+  NodeHandle
     { handle = \message -> case runParser validateMarshal.validateInput message of
         Nothing -> return []
         Just input -> do
@@ -126,9 +126,9 @@ return
     }
  -}
 
-pipeInterface :: Handle -> Handle -> ProcessHandle -> Interface IO
-pipeInterface hin hout processHandle =
-  Interface
+pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle IO
+pipeNodeHandle hin hout processHandle =
+  NodeHandle
     { handle = \msg -> do
         BS8.hPutStr hin (encode jsonCodec msg)
         BS8.hPutStr hin "\n"
@@ -140,9 +140,9 @@ pipeInterface hin hout processHandle =
     , close = terminateProcess processHandle
     }
 
-pipeSpawn :: FilePath -> Seed -> IO (Interface IO)
+pipeSpawn :: FilePath -> Seed -> IO (NodeHandle IO)
 pipeSpawn fp seed = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
       (proc fp [show seed]) {std_in = CreatePipe, std_out = CreatePipe}
-  return (pipeInterface hin hout processHandle)
+  return (pipeNodeHandle hin hout processHandle)

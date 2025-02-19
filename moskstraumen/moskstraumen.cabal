@@ -33,11 +33,11 @@ library
     Moskstraumen.FakeTime
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
-    Moskstraumen.Interface2
     Moskstraumen.LinearTemporalLogic
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node4
+    Moskstraumen.NodeHandle
     Moskstraumen.NodeId
     Moskstraumen.Parse
     Moskstraumen.Prelude
