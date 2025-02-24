@@ -345,12 +345,13 @@ For more on Maelstrom see the official
 [documentation](https://github.com/jepsen-io/maelstrom?tab=readme-ov-file#documentation)
 as well as [Fly.io's](https://fly.io/dist-sys/) distributed systems challenges.
 
-Next up in our series of posts we shall begin our journey towards simulation
-testing, by taking the Maelstrom protocol and implementing it in a completely
-deterministic way. We'll then re-implement the message generation part of
-workloads to be completely deterministic as well. Since execution of the tests
-will be deterministic, we can also implement shrinking and present small
-counterexamples.
+[Next up](03-simulation-testing-echo-example.md) in our series of posts we
+shall begin our journey towards simulation testing, by taking the Maelstrom
+protocol and implementing it in a completely deterministic way. We'll then
+re-implement the message generation part of workloads to be completely
+deterministic as well. Since execution of the tests will be deterministic, we
+can also implement shrinking and present small counterexamples.
+
 
 [^1]: It can still show small counterexamples using the [Elle
     checker](https://github.com/jepsen-io/elle). These are not counterexamples
