@@ -10,6 +10,8 @@ import System.Process (readProcess)
 import Moskstraumen.Codec
 import Moskstraumen.Example.Echo
 import qualified Moskstraumen.Generate as Gen
+import Moskstraumen.Heap (Heap)
+import qualified Moskstraumen.Heap as Heap
 import Moskstraumen.LinearTemporalLogic
 import Moskstraumen.Message
 import Moskstraumen.Node4
@@ -18,13 +20,14 @@ import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Shrink
+import Moskstraumen.Time
 import Moskstraumen.Workload
 
 ------------------------------------------------------------------------
 
 data World m = World
   { nodes :: Map NodeId (NodeHandle m)
-  , messages :: [Message] -- XXX: should be a heap
+  , messages :: Heap Time Message
   , prng :: Prng
   , trace :: Trace
   }
@@ -54,25 +57,40 @@ defaultTestConfig =
 
 ------------------------------------------------------------------------
 
+generateRandomArrivalTimes ::
+  Time -> Double -> [Message] -> Prng -> Heap Time Message
+generateRandomArrivalTimes now meanMicros = go []
+  where
+    go acc [] _prng = Heap.fromList acc
+    go acc (message : messages) prng =
+      let
+        (deltaMicros, prng') = exponential meanMicros prng
+        arrivalTime = addTimeMicros (round deltaMicros) now
+      in
+        go ((arrivalTime, message) : acc) messages prng'
+
 stepWorld :: (Monad m) => World m -> m (Either (World m) ())
-stepWorld world = case world.messages of
-  [] -> return (Right ())
-  (msg : msgs) -> case Map.lookup msg.dest world.nodes of
-    Nothing -> error ("stepWorld: unknown destination node: " ++ show msg.dest)
-    Just node -> do
-      -- XXX: will be used later when we assign arrival times for replies
-      let (prng', prng'') = splitPrng world.prng
-      msgs' <- node.handle msg
-      let (clientReplies, nodeMessages) =
-            partition (\msg0 -> "c" `Text.isPrefixOf` unNodeId msg0.dest) msgs'
-      return
-        $ Left
-          World
-            { nodes = world.nodes
-            , messages = msgs ++ nodeMessages
-            , prng = prng''
-            , trace = world.trace ++ msg : clientReplies
-            }
+stepWorld world = case Heap.pop world.messages of
+  Nothing -> return (Right ())
+  Just ((arrivalTime, message), messages') ->
+    case Map.lookup message.dest world.nodes of
+      Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
+      Just node -> do
+        -- XXX: will be used later when we assign arrival times for replies
+        let (prng', prng'') = splitPrng world.prng
+        msgs' <- node.handle arrivalTime message
+        let (clientReplies, nodeMessages) =
+              partition (\msg0 -> "c" `Text.isPrefixOf` unNodeId msg0.dest) msgs'
+            meanMicros = 20000 -- 20ms
+            nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
+        return
+          $ Left
+            World
+              { nodes = world.nodes
+              , messages = messages' <> nodeMessages'
+              , prng = prng''
+              , trace = world.trace ++ message : clientReplies
+              }
 {-# SPECIALIZE stepWorld :: World IO -> IO (Either (World IO) ()) #-}
 
 runWorld :: (Monad m) => World m -> m Trace
@@ -85,17 +103,20 @@ runWorld world =
 newWorld ::
   (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
 newWorld deployment initialMessages prng = do
-  let nodeNames =
+  let nodeIds =
         map
           (NodeId . ("n" <>) . Text.pack . show)
           [1 .. deployment.nodeCount]
-  interfaces <-
-    replicateM deployment.nodeCount (deployment.spawn)
+  nodeHandles <-
+    replicateM deployment.nodeCount deployment.spawn
+  let (prng', prng'') = splitPrng prng
+      meanMicros = 20000 -- 20ms
+      initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
   return
     World
-      { nodes = Map.fromList (zip nodeNames interfaces)
-      , messages = initialMessages
-      , prng = prng
+      { nodes = Map.fromList (zip nodeIds nodeHandles)
+      , messages = initialMessages'
+      , prng = prng''
       , trace = []
       }
 

@@ -1,6 +1,7 @@
 module Moskstraumen.Random (module Moskstraumen.Random) where
 
 import qualified System.Random as Random
+import qualified Prelude
 
 import Moskstraumen.Prelude
 
@@ -28,3 +29,10 @@ splitPrng (Prng stdGen) =
 
 randomR :: (Random.Random a) => (a, a) -> Prng -> (a, Prng)
 randomR (lo, hi) (Prng stdGen) = Prng <$> Random.randomR (lo, hi) stdGen
+
+exponential :: Double -> Prng -> (Double, Prng)
+exponential mean prng =
+  let
+    (u, prng') = randomR (0, 1) prng
+  in
+    ((-mean) * Prelude.log u, prng')

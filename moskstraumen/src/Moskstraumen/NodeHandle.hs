@@ -21,7 +21,7 @@ import Moskstraumen.Time
 
 -- start snippet NodeHandle
 data NodeHandle m = NodeHandle
-  { handle :: Message -> m [Message]
+  { handle :: Time -> Message -> m [Message]
   , close :: m ()
   }
 
@@ -33,9 +33,9 @@ simulationRuntime = do
   outputQueue <- newTBQueueIO 65536
   fakeTime <- newFakeTime
   let
-    handle_ :: Message -> IO [Message]
-    handle_ input = do
-      putMVar inputMVar input
+    handle_ :: Time -> Message -> IO [Message]
+    handle_ arrivalTime input = do
+      putMVar inputMVar (arrivalTime, input)
       atomically $ do
         len <- lengthTBQueue outputQueue
         guard (len /= 0)
@@ -43,9 +43,8 @@ simulationRuntime = do
 
     recieve_ :: IO [(Time, Message)]
     recieve_ = do
-      input <- takeMVar inputMVar
-      now <- getFakeTime fakeTime
-      return [(now, input)]
+      (arrivalTime, input) <- takeMVar inputMVar
+      return [(arrivalTime, input)]
 
     send_ :: Message -> IO ()
     send_ = atomically . writeTBQueue outputQueue
@@ -127,7 +126,7 @@ return
 pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle IO
 pipeNodeHandle hin hout processHandle =
   NodeHandle
-    { handle = \msg -> do
+    { handle = \_arrivalTime msg -> do
         BS8.hPutStr hin (encode jsonCodec msg)
         BS8.hPutStr hin "\n"
         hFlush hin

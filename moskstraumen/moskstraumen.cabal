@@ -33,6 +33,7 @@ library
     Moskstraumen.FakeTime
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
+    Moskstraumen.Heap
     Moskstraumen.LinearTemporalLogic
     Moskstraumen.Marshal
     Moskstraumen.Message
