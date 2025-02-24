@@ -25,6 +25,7 @@ import Moskstraumen.Workload
 
 ------------------------------------------------------------------------
 
+-- start snippet World
 data World m = World
   { nodes :: Map NodeId (NodeHandle m)
   , messages :: Heap Time Message
@@ -32,12 +33,20 @@ data World m = World
   , trace :: Trace
   }
 
+-- end snippet
+
+-- start snippet Trace
 type Trace = [Message]
 
+-- end snippet
+
+-- start snippet Deployment
 data Deployment m = Deployment
   { nodeCount :: Int
   , spawn :: m (NodeHandle m)
   }
+
+-- end snippet
 
 type NumberOfTests = Int
 
@@ -69,6 +78,7 @@ generateRandomArrivalTimes now meanMicros = go []
       in
         go ((arrivalTime, message) : acc) messages prng'
 
+-- start snippet stepWorld
 stepWorld :: (Monad m) => World m -> m (Either (World m) ())
 stepWorld world = case Heap.pop world.messages of
   Nothing -> return (Right ())
@@ -91,15 +101,19 @@ stepWorld world = case Heap.pop world.messages of
               , prng = prng''
               , trace = world.trace ++ message : clientReplies
               }
+-- end snippet
 {-# SPECIALIZE stepWorld :: World IO -> IO (Either (World IO) ()) #-}
 
+-- start snippet runWorld
 runWorld :: (Monad m) => World m -> m Trace
 runWorld world =
   stepWorld world >>= \case
     Right () -> return world.trace
     Left world' -> runWorld world'
+-- end snippet
 {-# SPECIALIZE runWorld :: World IO -> IO Trace #-}
 
+-- start snippet newWorld
 newWorld ::
   (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
 newWorld deployment initialMessages prng = do
@@ -120,8 +134,11 @@ newWorld deployment initialMessages prng = do
       , trace = []
       }
 
+-- end snippet
+
 ------------------------------------------------------------------------
 
+-- start snippet TestResult
 data TestResult = Success | Failure Trace
   deriving stock (Eq, Show)
 
@@ -129,6 +146,9 @@ testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace) = Just trace
 
+-- end snippet
+
+-- start snippet runTest
 runTest ::
   (Monad m) =>
   Deployment m
@@ -148,6 +168,9 @@ runTest deployment workload prng initialMessages = do
     then return Success
     else return (Failure resultingTrace)
 
+-- end snippet
+
+-- start snippet runTests
 runTests ::
   forall m.
   (Monad m) =>
@@ -191,8 +214,11 @@ runTests deployment workload numberOfTests0 initialPrng =
           let (_failingMessages, failingTrace) = NonEmpty.last initialMessagesAndTrace
           return (Failure failingTrace)
 
+-- end snippet
+
 ------------------------------------------------------------------------
 
+-- start snippet blackboxTest
 blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO ()
 blackboxTestWith testConfig binaryFilePath workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
@@ -208,6 +234,8 @@ blackboxTestWith testConfig binaryFilePath workload = do
 
 blackboxTest :: FilePath -> Workload -> IO ()
 blackboxTest = blackboxTestWith defaultTestConfig
+
+-- end snippet
 
 simulationTestWith ::
   TestConfig

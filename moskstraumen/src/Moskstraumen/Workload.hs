@@ -7,8 +7,11 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
+-- start snippet Workload
 data Workload = Workload
   { name :: Text
   , generateMessage :: Gen Message
   , property :: Form Message
   }
+
+-- end snippet

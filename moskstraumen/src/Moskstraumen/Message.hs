@@ -29,11 +29,13 @@ import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
+-- start snippet Message
 data Message = Message
   { src :: NodeId
   , dest :: NodeId
   , body :: Payload
   }
+  -- end snippet
   deriving stock (Eq, Ord, Show)
 
 newtype MessageKind = MessageKind Text
