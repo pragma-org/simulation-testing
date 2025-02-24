@@ -1,14 +1,11 @@
 module Moskstraumen.NodeHandle (module Moskstraumen.NodeHandle) where
 
 import Control.Concurrent
-import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Text.IO as Text
-import Data.Time
 import System.IO
 import System.Process
-import System.Timeout
 
 import Moskstraumen.Codec
 import Moskstraumen.EventLoop2
@@ -22,10 +19,13 @@ import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
+-- start snippet NodeHandle
 data NodeHandle m = NodeHandle
   { handle :: Message -> m [Message]
   , close :: m ()
   }
+
+-- end snippet
 
 simulationRuntime :: IO (NodeHandle IO, Runtime IO)
 simulationRuntime = do
@@ -41,10 +41,11 @@ simulationRuntime = do
         guard (len /= 0)
         replicateM (fromIntegral len) (readTBQueue outputQueue)
 
-    recieve_ :: IO [Message]
+    recieve_ :: IO [(Time, Message)]
     recieve_ = do
       input <- takeMVar inputMVar
-      return [input]
+      now <- getFakeTime fakeTime
+      return [(now, input)]
 
     send_ :: Message -> IO ()
     send_ = atomically . writeTBQueue outputQueue
@@ -63,15 +64,12 @@ simulationRuntime = do
             messages <- receive
             case messages of
               [] -> error "simulationRuntime: impossible"
-              [message] -> do
-                case message.arrivalTime of
-                  Nothing -> error "simulationRuntime: messages must have arrival times"
-                  Just arrivalTime_ ->
-                    if arrivalTime_ < addTimeMicros micros now
-                      then do
-                        setFakeTime fakeTime arrivalTime_
-                        return (Just [message])
-                      else return Nothing
+              [(arrivalTime, message)] -> do
+                if arrivalTime < addTimeMicros micros now
+                  then do
+                    setFakeTime fakeTime arrivalTime
+                    return (Just [(arrivalTime, message)])
+                  else return Nothing
               _ -> error "simulationRuntime: impossible"
         , getCurrentTime = getFakeTime fakeTime
         , shutdown = return ()

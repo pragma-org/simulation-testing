@@ -1,6 +1,5 @@
 module Moskstraumen.Time (module Moskstraumen.Time) where
 
-import Data.IORef
 import qualified Data.Text as Text
 import Data.Time
 import qualified Data.Time as Time

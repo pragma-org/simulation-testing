@@ -19,6 +19,7 @@ import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Runtime2
+import Moskstraumen.Time (Time)
 import qualified Moskstraumen.Time as Time
 
 ------------------------------------------------------------------------
@@ -47,7 +48,8 @@ tcpRuntime port neighbours codec = do
       , shutdown = killThread tid
       }
 
-server :: Int -> Codec -> TBQueue [Message] -> TBQueue Message -> IO ()
+server ::
+  Int -> Codec -> TBQueue [(Time, Message)] -> TBQueue Message -> IO ()
 server port codec receiveQueue sendQueue = runTCPServer Nothing (show port) talk
   where
     talk s = do
@@ -57,7 +59,8 @@ server port codec receiveQueue sendQueue = runTCPServer Nothing (show port) talk
           Left err -> hPutStrLn stderr err
           Right request -> do
             -- XXX: assert request.dest == ourNodeId
-            atomically (writeTBQueue receiveQueue [request])
+            now <- Time.getCurrentTime
+            atomically (writeTBQueue receiveQueue [(now, request)])
             -- BUG: this isn't right, as some other thread can write to
             -- the sendQueue... Possible solutions:
             --   1. Merge send and receive? (Could simplify `NodeHandle`

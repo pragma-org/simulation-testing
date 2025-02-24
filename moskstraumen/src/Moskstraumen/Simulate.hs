@@ -18,7 +18,6 @@ import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Shrink
-import Moskstraumen.Time
 import Moskstraumen.Workload
 
 ------------------------------------------------------------------------
@@ -227,7 +226,6 @@ echoWorkload =
               Message
                 { src = "c1"
                 , dest = "n1"
-                , arrivalTime = Just epoch
                 , body =
                     Payload
                       { kind = "echo"

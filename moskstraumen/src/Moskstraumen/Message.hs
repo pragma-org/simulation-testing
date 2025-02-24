@@ -32,7 +32,6 @@ import Moskstraumen.Time
 data Message = Message
   { src :: NodeId
   , dest :: NodeId
-  , arrivalTime :: Maybe Time
   , body :: Payload
   }
   deriving stock (Eq, Ord, Show)
@@ -86,7 +85,6 @@ instance FromJSON Message where
       .: "src"
       <*> v
       .: "dest"
-      <*> pure Nothing
       <*> v
       .: "body"
 
@@ -147,7 +145,6 @@ makeInitMessage myNodeId myNeighbours =
   Message
     { src = "c0"
     , dest = myNodeId
-    , arrivalTime = Nothing
     , body =
         Payload
           { kind = "init"
@@ -171,7 +168,6 @@ unit_encodeMessage =
     ( Message
         { src = "n1"
         , dest = "n2"
-        , arrivalTime = Nothing
         , body =
             Payload
               { kind = "echo"
@@ -189,7 +185,6 @@ unit_decodeMessage =
       ( Message
           { src = "c1"
           , dest = "n1"
-          , arrivalTime = Nothing
           , body =
               Payload
                 { kind = "echo"

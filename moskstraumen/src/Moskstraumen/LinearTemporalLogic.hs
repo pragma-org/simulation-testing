@@ -117,7 +117,8 @@ eval (t :. field) env = case eval t env of
     Kind -> KindValue msg.body.kind
     MsgId -> MaybeMessageIdValue msg.body.msgId
     InReplyTo -> MaybeMessageIdValue msg.body.inReplyTo
-    ArrivalTime -> MaybeTimeValue msg.arrivalTime
+    --  XXX: We probably want Form (Time, Message) and MessageValue to contain Time?
+    ArrivalTime -> MaybeTimeValue undefined
     Project field' -> ValueValue (msg.body.fields Map.! field')
   _otherwise -> error "field access on non-message"
 

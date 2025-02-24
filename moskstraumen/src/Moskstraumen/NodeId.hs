@@ -7,7 +7,9 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
+-- start snippet NodeId
 newtype NodeId = NodeId Text
+  -- end snippet
   deriving stock (Generic)
   deriving newtype (Eq, Ord, Show, IsString)
   deriving anyclass (FromJSON, ToJSON)

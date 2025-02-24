@@ -1,8 +1,7 @@
 # Using Maelstrom to test distributed systems
 
-In the [previous
-post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-introduction.md)
-we introduced simulation testing.
+In the [previous post](00-introduction.md) we introduced simulation
+testing.
 
 Before we start developing the pieces we need to do simulation testing,
 let's first have a look at how more "traditional" testing of distributed
@@ -316,7 +315,7 @@ In a sense Maelstrom can be seen as a platform for developing
 distributed systems which makes it particularly convenient to run Jepsen
 tests on the system being developed.
 
-## Conclusion
+## Conclusion and what's next
 
 We've seen how to represent simple distributed programs and how to
 deploy them and do actual I/O, in particular how to do messaging via
@@ -342,12 +341,13 @@ For more on Maelstrom see the official
 as well as [Fly.io's](https://fly.io/dist-sys/) distributed systems
 challenges.
 
-Next up in our series of posts we shall begin our journey towards
-simulation testing, by taking the Maelstrom protocol and implementing it
-in a completely deterministic way. We'll then re-implement the message
-generation part of workloads to be completely deterministic as well.
-Since execution of the tests will be deterministic, we can also
-implement shrinking and present small counterexamples.
+[Next up](03-simulation-testing-echo-example.md) in our series of posts
+we shall begin our journey towards simulation testing, by taking the
+Maelstrom protocol and implementing it in a completely deterministic
+way. We'll then re-implement the message generation part of workloads to
+be completely deterministic as well. Since execution of the tests will
+be deterministic, we can also implement shrinking and present small
+counterexamples.
 
 [^1]: It can still show small counterexamples using the [Elle
     checker](https://github.com/jepsen-io/elle). These are not

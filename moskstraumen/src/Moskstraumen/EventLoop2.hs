@@ -113,11 +113,11 @@ eventLoop node initialState initialPrng validateMarshal runtime =
               loop eventLoopState'
 
     handleMessages ::
-      [Message]
+      [(Time, Message)]
       -> EventLoopState state input output
       -> m (EventLoopState state input output)
     handleMessages [] eventLoopState = return eventLoopState
-    handleMessages (message : messages) eventLoopState =
+    handleMessages ((_arrivalTime, message) : messages) eventLoopState =
       case message.body.inReplyTo of
         Nothing -> case runParser validateMarshal.validateInput message of
           Nothing -> error ("eventLoop, failed to parse input: " ++ show message)
@@ -181,7 +181,6 @@ eventLoop node initialState initialPrng validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
-                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_
@@ -198,7 +197,6 @@ eventLoop node initialState initialPrng validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
-                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_
@@ -228,7 +226,6 @@ eventLoop node initialState initialPrng validateMarshal runtime =
                 Message
                   { src = srcNodeId
                   , dest = destNodeId
-                  , arrivalTime = Nothing
                   , body =
                       Payload
                         { kind = kind_

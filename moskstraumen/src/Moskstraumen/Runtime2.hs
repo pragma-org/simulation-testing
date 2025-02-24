@@ -16,10 +16,13 @@ import qualified Moskstraumen.Time as Time
 type Microseconds = Int
 
 data Runtime m = Runtime
-  { receive :: m [Message]
+  { receive :: m [(Time, Message)]
   , send :: Message -> m ()
   , log :: Text -> m ()
-  , timeout :: Microseconds -> m [Message] -> m (Maybe [Message])
+  , timeout ::
+      Microseconds
+      -> m [(Time, Message)]
+      -> m (Maybe [(Time, Message)])
   , getCurrentTime :: m Time
   , shutdown :: m ()
   }
@@ -41,7 +44,7 @@ consoleRuntime codec = do
       , shutdown = return ()
       }
   where
-    consoleReceive :: IO [Message]
+    consoleReceive :: IO [(Time, Message)]
     consoleReceive = do
       -- XXX: Batch and read several lines?
       line <- BS8.hGetLine stdin
@@ -50,7 +53,9 @@ consoleRuntime codec = do
         else do
           BS8.hPutStrLn stderr ("recieve: " <> line)
           case codec.decode line of
-            Right message -> return [message]
+            Right message -> do
+              now <- Time.getCurrentTime
+              return [(now, message)]
             Left err ->
               -- XXX: Log and keep stats instead of error.
               error
