@@ -5,9 +5,7 @@ date: 2025-02-06
 
 # Using Maelstrom to test distributed systems
 
-In the [previous
-post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/00-introduction.md)
-we introduced simulation testing. 
+In the [previous post](00-introduction.md) we introduced simulation testing. 
 
 Before we start developing the pieces we need to do simulation testing, let's
 first have a look at how more "traditional" testing of distributed systems

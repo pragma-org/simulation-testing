@@ -5,10 +5,9 @@ date: 2025-02-12
 
 # Sketching how to simulation test distributed systems
 
-In the [last
-post](https://github.com/pragma-org/simulation-testing/blob/main/blog/src/02-maelstrom-testing-echo-example.md)
-we saw how to test a simple distributed system, a node that echos back the
-requests it gets, using Jepsen via Maelstrom.
+In the [last post](02-maelstrom-testing-echo-example.md) we saw how to test a
+simple distributed system, a node that echos back the requests it gets, using
+Jepsen via Maelstrom.
 
 We concluded by listing the pros and cons with the Maelstrom approach: it's
 language agnostic which is good, but the tests are non-determinstic (rerunning
