@@ -60,12 +60,15 @@ server port codec receiveQueue sendQueue = runTCPServer Nothing (show port) talk
             atomically (writeTBQueue receiveQueue [request])
             -- BUG: this isn't right, as some other thread can write to
             -- the sendQueue... Possible solutions:
-            --   1. Merge send and receive? (Could simplify `Interface`
+            --   1. Merge send and receive? (Could simplify `NodeHandle`
             --      also?). I tried this, and couldn't see how it would
             --      work...
             --   2. Some kind of map in shared memory which keys being
             --      sockets? Problem is: how do we know that all `send`s
-            --      have been made and it's ok to return?
+            --      have been made and it's ok to return? Rework the semantics
+            --      so that we get [Message] to send at the end, rather than
+            --      having SEND being part of [Effect]?! Or equivalently: do
+            --      only one runtime.send in event loop.
             --   3. One channel pair per peer?
             response <- atomically (readTBQueue sendQueue)
             sendAll s (codec.encode response)
