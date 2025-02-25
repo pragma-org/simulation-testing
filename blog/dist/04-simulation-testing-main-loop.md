@@ -8,6 +8,8 @@ In this post we'll start working on the implementation.
 We'll be using Haskell as our implementation language, however fear
 not...
 
+## High-level overview
+
 ## Representing the fake "world"
 
 ``` haskell

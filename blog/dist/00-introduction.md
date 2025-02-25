@@ -81,7 +81,7 @@ Will continues saying:
 > because he didn’t think he’d find anything:
 
 ![Aphyr's tweet about testing
-FoundationDB](https://antithesis.com/blog/is_something_bugging_you/images/aphyr_twitter_fdb.png)
+FoundationDB](../image/aphyr_twitter_fdb.png)
 
 Kyle has since said[^3] that that quote is a bit exaggerated and that
 Jepsen can find problems that simulators miss, which makes sense given
