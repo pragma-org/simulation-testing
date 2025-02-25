@@ -10,6 +10,8 @@ not...
 
 ## High-level overview
 
+![Picture of simulator and nodes](../image/simulator.svg)
+
 ## Representing the fake "world"
 
 ``` haskell
