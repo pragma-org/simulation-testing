@@ -143,13 +143,12 @@ newWorld deployment initialMessages prng = do
 
 -- start snippet TestResult
 data TestResult = Success | Failure Trace
+  -- end snippet
   deriving stock (Eq, Show)
 
 testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace) = Just trace
-
--- end snippet
 
 -- start snippet runTest
 runTest ::
@@ -188,24 +187,9 @@ runTests deployment workload numberOfTests0 initialPrng =
     loop :: NumberOfTests -> Prng -> m TestResult
     loop 0 _prng = return Success
     loop n prng = do
-      let size = 100 -- XXX: vary over time
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
-            | i <- [1 .. deployment.numberOfNodes]
-            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
-            ]
-      let (prng', initialMessages) =
-            Gen.runGen (Gen.listOf workload.generateMessage) prng size
-      let initialMessages' :: [Message]
-          initialMessages' =
-            zipWith
-              ( \message index -> message {body = message.body {msgId = Just index}}
-              )
-              initialMessages
-              [0 ..]
+      let (prng', initialMessages) = generate 100 prng -- XXX: vary size over time...
       let (prng'', prng''') = splitPrng prng'
-      result <-
-        runTest deployment workload prng'' (initMessages <> initialMessages')
+      result <- runTest deployment workload prng'' initialMessages
       case result of
         Success -> loop (n - 1) prng'''
         Failure _unShrunkTrace -> do
@@ -213,9 +197,29 @@ runTests deployment workload numberOfTests0 initialPrng =
             shrink
               (fmap testResultToMaybe . runTest deployment workload prng)
               (shrinkList (const []))
-              initialMessages'
+              initialMessages
           let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
           return (Failure shrunkTrace)
+
+    generate :: Int -> Prng -> (Prng, [Message])
+    generate size prng =
+      let initMessages =
+            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
+            | i <- [1 .. deployment.numberOfNodes]
+            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
+            ]
+
+          (prng', initialMessages) =
+            Gen.runGen (Gen.listOf workload.generateMessage) prng size
+
+          messages :: [Message]
+          messages =
+            zipWith
+              ( \message index -> message {body = message.body {msgId = Just index}}
+              )
+              (initMessages <> initialMessages)
+              [0 ..]
+      in  (prng', messages)
 
 -- end snippet
 
