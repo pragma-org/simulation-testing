@@ -150,3 +150,5 @@ test-suite test
   build-depends:
     , base
     , moskstraumen
+    , tasty
+    , tasty-hunit

@@ -85,11 +85,10 @@ shrink p shr x0 = go (unfoldTree shr x0)
         [] -> do
           my <- p x
           case my of
+            Nothing -> undefined
             Just y -> return (NonEmpty.singleton (x, y))
-        ((x', y') : _) -> do
-          my <- p x
-          case my of
-            Just y -> NonEmpty.cons <$> pure (x, y) <*> go x'
+        ((x', y') : _) ->
+          NonEmpty.cons <$> pure (x, y') <*> go x'
 
 mapMaybeM' :: (Monad m) => (a -> m (Maybe b)) -> [a] -> m [(a, b)]
 mapMaybeM' op = foldr f (pure [])

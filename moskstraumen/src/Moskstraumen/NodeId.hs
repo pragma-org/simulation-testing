@@ -2,6 +2,7 @@ module Moskstraumen.NodeId (module Moskstraumen.NodeId) where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
+import qualified Data.Text as Text
 
 import Moskstraumen.Prelude
 
@@ -19,3 +20,6 @@ unNodeId (NodeId text) = text
 
 makeNodeId :: Int -> NodeId
 makeNodeId i = NodeId ("n" <> fromString (show i))
+
+isClientNodeId :: NodeId -> Bool
+isClientNodeId (NodeId text) = "c" `Text.isPrefixOf` text

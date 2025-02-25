@@ -5,10 +5,8 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
-import System.Process (readProcess)
 
 import Moskstraumen.Codec
-import Moskstraumen.Example.Echo
 import qualified Moskstraumen.Generate as Gen
 import Moskstraumen.Heap (Heap)
 import qualified Moskstraumen.Heap as Heap
@@ -86,11 +84,10 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        -- XXX: will be used later when we assign arrival times for replies
         let (prng', prng'') = splitPrng world.prng
         msgs' <- node.handle arrivalTime message
-        let (clientReplies, nodeMessages) =
-              partition (\msg0 -> "c" `Text.isPrefixOf` unNodeId msg0.dest) msgs'
+        let (clientResponses, nodeMessages) =
+              partition (isClientNodeId . dest) msgs'
             meanMicros = 20000 -- 20ms
             nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
         return
@@ -99,7 +96,7 @@ stepWorld world = case Heap.pop world.messages of
               { nodes = world.nodes
               , messages = messages' <> nodeMessages'
               , prng = prng''
-              , trace = world.trace ++ message : clientReplies
+              , trace = world.trace ++ message : clientResponses
               }
 -- end snippet
 {-# SPECIALIZE stepWorld :: World IO -> IO (Either (World IO) ()) #-}
@@ -219,7 +216,7 @@ runTests deployment workload numberOfTests0 initialPrng =
 ------------------------------------------------------------------------
 
 -- start snippet blackboxTest
-blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO ()
+blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO Bool
 blackboxTestWith testConfig binaryFilePath workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
@@ -229,10 +226,14 @@ blackboxTestWith testConfig binaryFilePath workload = do
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests deployment workload testConfig.numberOfTests prng'
-  putStrLn ("Seed: " <> show seed)
-  print result
+  case result of
+    Failure trace -> do
+      putStrLn ("Seed: " <> show seed)
+      print trace
+      return False
+    Success -> return True
 
-blackboxTest :: FilePath -> Workload -> IO ()
+blackboxTest :: FilePath -> Workload -> IO Bool
 blackboxTest = blackboxTestWith defaultTestConfig
 
 -- end snippet
@@ -243,7 +244,7 @@ simulationTestWith ::
   -> state
   -> ValidateMarshal input output
   -> Workload
-  -> IO ()
+  -> IO Bool
 simulationTestWith testConfig node initialState validateMarshal workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let (prng', prng'') = splitPrng prng
@@ -253,71 +254,17 @@ simulationTestWith testConfig node initialState validateMarshal workload = do
           , spawn = simulationSpawn node initialState prng' validateMarshal
           }
   result <- runTests deployment workload testConfig.numberOfTests prng''
-  putStrLn ("Seed: " <> show seed)
-  print result
+  case result of
+    Failure trace -> do
+      putStrLn ("Seed: " <> show seed)
+      print trace
+      return False
+    Success -> return True
 
 simulationTest ::
   (input -> Node state input output)
   -> state
   -> ValidateMarshal input output
   -> Workload
-  -> IO ()
+  -> IO Bool
 simulationTest = simulationTestWith defaultTestConfig
-
-------------------------------------------------------------------------
-
-echoWorkload :: Workload
-echoWorkload =
-  Workload
-    { name = "echo"
-    , generateMessage = do
-        let makeMessage n =
-              Message
-                { src = "c1"
-                , dest = "n1"
-                , body =
-                    Payload
-                      { kind = "echo"
-                      , msgId = Nothing
-                      , inReplyTo = Nothing
-                      , fields =
-                          Map.fromList
-                            [
-                              ( "echo"
-                              , String ("Please echo: " <> fromString (show n))
-                              )
-                            ]
-                      }
-                }
-        makeMessage <$> Gen.chooseInt (0, 127)
-    , property =
-        Always
-          $ FreezeQuantifier "echo"
-          $ Prop (\msg -> msg.body.kind == "echo")
-          :==> Eventually
-            ( FreezeQuantifier
-                "echo_ok"
-                ( Prop (\msg -> msg.body.kind == "echo_ok")
-                    `And` Var "echo_ok"
-                    :. InReplyTo
-                    :== Var "echo"
-                    :. MsgId
-                    `And` Var "echo_ok"
-                    :. Project "echo"
-                    :== Var "echo"
-                    :. Project "echo"
-                )
-            )
-    }
-
-------------------------------------------------------------------------
-
-unit_blackboxTestEcho :: IO ()
-unit_blackboxTestEcho = do
-  binaryFilePath <-
-    filter (/= '\n') <$> readProcess "cabal" ["list-bin", "echo"] ""
-  blackboxTest binaryFilePath echoWorkload
-
-unit_simulationTestEcho :: IO ()
-unit_simulationTestEcho =
-  simulationTest echo () echoValidateMarshal echoWorkload

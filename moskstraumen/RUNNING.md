@@ -81,7 +81,7 @@ cabal repl
 ```
 
 ```
-> import Moskstraumen.Simulate
+> import Moskstraumen.Example.Echo
 > :set +s
 > unit_blackboxTestEcho
 [...]
