@@ -45,8 +45,15 @@ Given this a test run proceeds as follows:
   5. Keep doing step 3 and 4 until we run out of messages on the heap.
   6. Use the developer supplied trace checker to see if the test passed or not.
 
+So, for example, for the echo example in the previous post the developer would
+supply way of generating client requests that express the notion of "node N,
+please echo message M back to me" as well as a way to check if traces are
+correct. A correct trace in the echo example amounts to "for each requests to a
+node to echo something back, there's a response from that node which indeed
+echos back the same message".
+
 From the above recipe we can get something very close to property-based
-testing, by:
+testing, using the following steps:
 
   1. Generate and execute a test using the above recipe;
   2. Repeat N times;
@@ -92,13 +99,38 @@ Where messages are defined as per the Maelstrom
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message.hs snippet=Message}
 ```
 
+We'll leave out the exact definition of `Payload` as nothing in this post
+depends on it (and there are multiple ways one can define it).
+
 ## Making the fake "world" move
+
+The simulator steps throught the heap of messages and delievers them to the
+nodes via the node handle. The responses it gets from the handle are
+partitioned into client responses and messages to other nodes. Client responses
+get appended to the trace, together wwith the message that got delievered,
+while the messages to other nodes get assigned random arrival times and fed
+back into the heap of messages to be delieved.
+
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=stepWorld}
 ```
 
+Note that in the case of the echo example there are no messages between nodes,
+a node echos back the client request immediately without any communication with
+other nodes. We'll see examples of communication between nodes before a client
+response is made a bit later[^1].
+
+The above step function, takes one step in the simulation, we can run the
+simulation to it's completion by merely keep stepping it until we run out of
+messages to deliever:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=runWorld}
 ```
+
+We could imagine having other stopping criteria, e.g. stop after one minute of
+real time, or after one year of simulated time, etc. Time-based stopping
+critera are more interesting if we have infinite generators of client requests
+(which we currently don't).
 
 ## Connecting the fake world to the real world
 
@@ -139,4 +171,8 @@ Where messages are defined as per the Maelstrom
 
 * How do we generate client requests and check that the responses are correct?
 
+
+[^1]: For now I hope you can imagine something like: don't reply to the client
+    until we've replicated the data among enough nodes so that we can ensure
+    it's reliably there in case some nodes crash.
 

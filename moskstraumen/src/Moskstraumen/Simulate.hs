@@ -91,9 +91,9 @@ stepWorld world = case Heap.pop world.messages of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
         let (prng', prng'') = splitPrng world.prng
-        msgs' <- node.handle arrivalTime message
+        responses <- node.handle arrivalTime message
         let (clientResponses, nodeMessages) =
-              partition (isClientNodeId . dest) msgs'
+              partition (isClientNodeId . dest) responses
             meanMicros = 20000 -- 20ms
             nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
         return
