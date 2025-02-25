@@ -8,7 +8,17 @@ In this post we'll start working on the implementation.
 We'll be using Haskell as our implementation language, however fear
 not...
 
-## Data types
+## Representing the fake "world"
+
+``` haskell
+data World m = World
+  { nodes :: Map NodeId (NodeHandle m)
+  , messages :: Heap Time Message
+  , prng :: Prng
+  , trace :: Trace
+  }
+
+```
 
 ``` haskell
 newtype NodeId = NodeId Text
@@ -18,16 +28,6 @@ newtype NodeId = NodeId Text
 data NodeHandle m = NodeHandle
   { handle :: Time -> Message -> m [Message]
   , close :: m ()
-  }
-
-```
-
-``` haskell
-data World m = World
-  { nodes :: Map NodeId (NodeHandle m)
-  , messages :: Heap Time Message
-  , prng :: Prng
-  , trace :: Trace
   }
 
 ```
@@ -43,11 +43,9 @@ data Message = Message
   , dest :: NodeId
   , body :: Payload
   }
-data Payload = Payload
-  { kind :: MessageKind
-  , msgId :: Maybe MessageId
-  , inReplyTo :: Maybe MessageId
 ```
+
+## Making the fake "world" move
 
 ``` haskell
 stepWorld :: (Monad m) => World m -> m (Either (World m) ())
@@ -57,11 +55,10 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        -- XXX: will be used later when we assign arrival times for replies
         let (prng', prng'') = splitPrng world.prng
         msgs' <- node.handle arrivalTime message
-        let (clientReplies, nodeMessages) =
-              partition (\msg0 -> "c" `Text.isPrefixOf` unNodeId msg0.dest) msgs'
+        let (clientResponses, nodeMessages) =
+              partition (isClientNodeId . dest) msgs'
             meanMicros = 20000 -- 20ms
             nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
         return
@@ -70,7 +67,7 @@ stepWorld world = case Heap.pop world.messages of
               { nodes = world.nodes
               , messages = messages' <> nodeMessages'
               , prng = prng''
-              , trace = world.trace ++ message : clientReplies
+              , trace = world.trace ++ message : clientResponses
               }
 ```
 
@@ -82,9 +79,11 @@ runWorld world =
     Left world' -> runWorld world'
 ```
 
+## Connecting the fake world to the real world
+
 ``` haskell
 data Deployment m = Deployment
-  { nodeCount :: Int
+  { numberOfNodes :: Int
   , spawn :: m (NodeHandle m)
   }
 
@@ -97,9 +96,9 @@ newWorld deployment initialMessages prng = do
   let nodeIds =
         map
           (NodeId . ("n" <>) . Text.pack . show)
-          [1 .. deployment.nodeCount]
+          [1 .. deployment.numberOfNodes]
   nodeHandles <-
-    replicateM deployment.nodeCount deployment.spawn
+    replicateM deployment.numberOfNodes deployment.spawn
   let (prng', prng'') = splitPrng prng
       meanMicros = 20000 -- 20ms
       initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
@@ -113,6 +112,28 @@ newWorld deployment initialMessages prng = do
 
 ```
 
+## Running tests
+
+``` haskell
+data TestConfig = TestConfig
+  { numberOfTests :: Int
+  , numberOfNodes :: Int
+  , replaySeed :: Maybe Int
+  }
+
+```
+
+``` haskell
+defaultTestConfig :: TestConfig
+defaultTestConfig =
+  TestConfig
+    { numberOfTests = 100
+    , numberOfNodes = 5
+    , replaySeed = Nothing
+    }
+
+```
+
 ``` haskell
 data Workload = Workload
   { name :: Text
@@ -123,12 +144,81 @@ data Workload = Workload
 ```
 
 ``` haskell
+blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO Bool
+blackboxTestWith testConfig binaryFilePath workload = do
+  (prng, seed) <- newPrng testConfig.replaySeed
+  let deployment =
+        Deployment
+          { numberOfNodes = testConfig.numberOfNodes
+          , spawn = pipeSpawn binaryFilePath seed
+          }
+  let (prng', _prng'') = splitPrng prng
+  result <- runTests deployment workload testConfig.numberOfTests prng'
+  case result of
+    Failure trace -> do
+      putStrLn ("Seed: " <> show seed)
+      print trace
+      return False
+    Success -> return True
+
+blackboxTest :: FilePath -> Workload -> IO Bool
+blackboxTest = blackboxTestWith defaultTestConfig
+
+```
+
+``` haskell
 data TestResult = Success | Failure Trace
   deriving stock (Eq, Show)
 
 testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace) = Just trace
+
+```
+
+``` haskell
+runTests ::
+  forall m.
+  (Monad m) =>
+  Deployment m
+  -> Workload
+  -> NumberOfTests
+  -> Prng
+  -> m TestResult
+runTests deployment workload numberOfTests0 initialPrng =
+  loop numberOfTests0 initialPrng
+  where
+    loop :: NumberOfTests -> Prng -> m TestResult
+    loop 0 _prng = return Success
+    loop n prng = do
+      let size = 100 -- XXX: vary over time
+      let initMessages =
+            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
+            | i <- [1 .. deployment.numberOfNodes]
+            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
+            ]
+      let (prng', initialMessages) =
+            Gen.runGen (Gen.listOf workload.generateMessage) prng size
+      let initialMessages' :: [Message]
+          initialMessages' =
+            zipWith
+              ( \message index -> message {body = message.body {msgId = Just index}}
+              )
+              initialMessages
+              [0 ..]
+      let (prng'', prng''') = splitPrng prng'
+      result <-
+        runTest deployment workload prng'' (initMessages <> initialMessages')
+      case result of
+        Success -> loop (n - 1) prng'''
+        Failure _unShrunkTrace -> do
+          initialMessagesAndTrace <-
+            shrink
+              (fmap testResultToMaybe . runTest deployment workload prng)
+              (shrinkList (const []))
+              initialMessages'
+          let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
+          return (Failure shrunkTrace)
 
 ```
 
@@ -152,115 +242,9 @@ runTest deployment workload prng initialMessages = do
     then return Success
     else return (Failure resultingTrace)
 
-runTests ::
-  forall m.
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> NumberOfTests
-  -> Prng
-  -> m TestResult
-runTests deployment workload numberOfTests0 initialPrng =
-  loop numberOfTests0 initialPrng
-  where
-    loop :: NumberOfTests -> Prng -> m TestResult
-    loop 0 _prng = return Success
-    loop n prng = do
-      let size = 100 -- XXX: vary over time
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
-            | i <- [1 .. deployment.nodeCount]
-            , let js = [j | j <- [1 .. deployment.nodeCount], j /= i]
-            ]
-      let (prng', initialMessages) =
-            Gen.runGen (Gen.listOf workload.generateMessage) prng size
-      let initialMessages' :: [Message]
-          initialMessages' =
-            zipWith
-              ( \message index -> message {body = message.body {msgId = Just index}}
-              )
-              initialMessages
-              [0 ..]
-      let (prng'', prng''') = splitPrng prng'
-      result <-
-        runTest deployment workload prng'' (initMessages <> initialMessages')
-      case result of
-        Success -> loop (n - 1) prng'''
-        Failure trace -> do
-          initialMessagesAndTrace <-
-            shrink
-              (fmap testResultToMaybe . runTest deployment workload prng)
-              (shrinkList (const []))
-              initialMessages'
-          let (_failingMessages, failingTrace) = NonEmpty.last initialMessagesAndTrace
-          return (Failure failingTrace)
-
 ```
 
-``` haskell
-runTests ::
-  forall m.
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> NumberOfTests
-  -> Prng
-  -> m TestResult
-runTests deployment workload numberOfTests0 initialPrng =
-  loop numberOfTests0 initialPrng
-  where
-    loop :: NumberOfTests -> Prng -> m TestResult
-    loop 0 _prng = return Success
-    loop n prng = do
-      let size = 100 -- XXX: vary over time
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
-            | i <- [1 .. deployment.nodeCount]
-            , let js = [j | j <- [1 .. deployment.nodeCount], j /= i]
-            ]
-      let (prng', initialMessages) =
-            Gen.runGen (Gen.listOf workload.generateMessage) prng size
-      let initialMessages' :: [Message]
-          initialMessages' =
-            zipWith
-              ( \message index -> message {body = message.body {msgId = Just index}}
-              )
-              initialMessages
-              [0 ..]
-      let (prng'', prng''') = splitPrng prng'
-      result <-
-        runTest deployment workload prng'' (initMessages <> initialMessages')
-      case result of
-        Success -> loop (n - 1) prng'''
-        Failure trace -> do
-          initialMessagesAndTrace <-
-            shrink
-              (fmap testResultToMaybe . runTest deployment workload prng)
-              (shrinkList (const []))
-              initialMessages'
-          let (_failingMessages, failingTrace) = NonEmpty.last initialMessagesAndTrace
-          return (Failure failingTrace)
-
-```
-
-``` haskell
-blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO ()
-blackboxTestWith testConfig binaryFilePath workload = do
-  (prng, seed) <- newPrng testConfig.replaySeed
-  let deployment =
-        Deployment
-          { nodeCount = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath seed
-          }
-  let (prng', _prng'') = splitPrng prng
-  result <- runTests deployment workload testConfig.numberOfTests prng'
-  putStrLn ("Seed: " <> show seed)
-  print result
-
-blackboxTest :: FilePath -> Workload -> IO ()
-blackboxTest = blackboxTestWith defaultTestConfig
-
-```
+## Conclusion and what's next
 
 - Console NodeHandle
 

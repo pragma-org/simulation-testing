@@ -17,8 +17,12 @@ function CodeBlock (cb)
 
       for line in fh:lines ("L")
       do
+--        if cb.attributes.snippet then
+--          io.stderr:write("snippet: '" .. cb.attributes.snippet .. "'\n")
+--          io.stderr:write("line: '" .. line .. "'\n")
+--        end
         if cb.attributes.snippet and 
-           string.find(line, "start snippet " .. cb.attributes.snippet) 
+           string.match(line, "start snippet " .. cb.attributes.snippet .. "\n$")
         then
           including = true
           cb.attributes.startFrom = number + 1

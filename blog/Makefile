@@ -1,6 +1,7 @@
 SRC_FILES := $(wildcard src/*.md)
+DIST_FILES := $(patsubst src/%.md, dist/%.md, $(SRC_FILES))
 
-all: $(patsubst src/%.md, dist/%.md, $(SRC_FILES))
+all: $(DIST_FILES)
 
 dist/%.md: src/%.md
 	pandoc  --lua-filter=pandoc-include-code.lua \
@@ -12,4 +13,7 @@ dist/%.md: src/%.md
 check:
 	vale src/*.md
 
-.PHONY: check
+clean:
+	rm $(DIST_FILES)
+
+.PHONY: check clean

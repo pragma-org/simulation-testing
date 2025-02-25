@@ -40,7 +40,7 @@ type Trace = [Message]
 
 -- start snippet Deployment
 data Deployment m = Deployment
-  { nodeCount :: Int
+  { numberOfNodes :: Int
   , spawn :: m (NodeHandle m)
   }
 
@@ -48,12 +48,16 @@ data Deployment m = Deployment
 
 type NumberOfTests = Int
 
+-- start snippet TestConfig
 data TestConfig = TestConfig
   { numberOfTests :: Int
   , numberOfNodes :: Int
   , replaySeed :: Maybe Int
   }
 
+-- end snippet
+
+-- start snippet defaultTestConfig
 defaultTestConfig :: TestConfig
 defaultTestConfig =
   TestConfig
@@ -61,6 +65,8 @@ defaultTestConfig =
     , numberOfNodes = 5
     , replaySeed = Nothing
     }
+
+-- end snippet
 
 ------------------------------------------------------------------------
 
@@ -117,9 +123,9 @@ newWorld deployment initialMessages prng = do
   let nodeIds =
         map
           (NodeId . ("n" <>) . Text.pack . show)
-          [1 .. deployment.nodeCount]
+          [1 .. deployment.numberOfNodes]
   nodeHandles <-
-    replicateM deployment.nodeCount deployment.spawn
+    replicateM deployment.numberOfNodes deployment.spawn
   let (prng', prng'') = splitPrng prng
       meanMicros = 20000 -- 20ms
       initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
@@ -185,8 +191,8 @@ runTests deployment workload numberOfTests0 initialPrng =
       let size = 100 -- XXX: vary over time
       let initMessages =
             [ makeInitMessage (makeNodeId i) (map makeNodeId js)
-            | i <- [1 .. deployment.nodeCount]
-            , let js = [j | j <- [1 .. deployment.nodeCount], j /= i]
+            | i <- [1 .. deployment.numberOfNodes]
+            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
             ]
       let (prng', initialMessages) =
             Gen.runGen (Gen.listOf workload.generateMessage) prng size
@@ -202,14 +208,14 @@ runTests deployment workload numberOfTests0 initialPrng =
         runTest deployment workload prng'' (initMessages <> initialMessages')
       case result of
         Success -> loop (n - 1) prng'''
-        Failure trace -> do
+        Failure _unShrunkTrace -> do
           initialMessagesAndTrace <-
             shrink
               (fmap testResultToMaybe . runTest deployment workload prng)
               (shrinkList (const []))
               initialMessages'
-          let (_failingMessages, failingTrace) = NonEmpty.last initialMessagesAndTrace
-          return (Failure failingTrace)
+          let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
+          return (Failure shrunkTrace)
 
 -- end snippet
 
@@ -221,7 +227,7 @@ blackboxTestWith testConfig binaryFilePath workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
         Deployment
-          { nodeCount = testConfig.numberOfNodes
+          { numberOfNodes = testConfig.numberOfNodes
           , spawn = pipeSpawn binaryFilePath seed
           }
   let (prng', _prng'') = splitPrng prng
@@ -250,7 +256,7 @@ simulationTestWith testConfig node initialState validateMarshal workload = do
   let (prng', prng'') = splitPrng prng
   let deployment =
         Deployment
-          { nodeCount = testConfig.numberOfNodes
+          { numberOfNodes = testConfig.numberOfNodes
           , spawn = simulationSpawn node initialState prng' validateMarshal
           }
   result <- runTests deployment workload testConfig.numberOfTests prng''
