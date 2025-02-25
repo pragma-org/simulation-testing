@@ -3,12 +3,17 @@
 In the last post we sketched a high-level plan of how to implement
 language agnostic simulation testing.
 
-In this post we'll start working on the implementation.
+In this post we'll start working on the implementation. In particular we'll
+have a look at the simulator is implemented and how it's used to in the main
+test loop that gives us simulation testing.
 
 We'll be using Haskell as our implementation language, however fear
-not...
+not, I'm aware it's not everybody's favorite language and I try to avoid any
+clever uses in order to be accessible to the larger programming community.
+Should anything be unclear, feel free to get in touch and I'll do my best to
+explain it in a different way.
 
-## High-level picture of how the simulator works
+## High-level overview of how the simulator works
 
 Before we start introducing code, let's try to visualise the end result:
 
@@ -52,17 +57,37 @@ Later on we'll also introduce faults into the mix, but for now this will do.
 
 ## Representing the fake "world"
 
+The simulator is manipulating a fake representation of the "world":
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=World}
 ```
+
+This fake world consists of four parts, that we discussed above, the nodes and
+their node handles, the heap of message ordered by arrival time, a
+pseudo-random number generator and a trace of client request and response
+messages.
+
+The node id is just a string, just like in Maelstrom:
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeId.hs snippet=NodeId}
 ```
 
+The node handle is an interface with two operations:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeHandle.hs snippet=NodeHandle}
 ```
 
+The `handle` operation is called with an arrival time and a message and returns
+a sequence of responses, while `close` is used to shutdown the node handle (if
+needed).
+
+A trace is merely a list of messages:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=Trace}
 ```
+
+Where messages are defined as per the Maelstrom
+[protocol](https://github.com/jepsen-io/maelstrom/blob/main/doc/protocol.md):
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message.hs snippet=Message}
 ```
