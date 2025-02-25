@@ -205,11 +205,21 @@ the trace:
 
 ## Conclusion and what's next
 
-* Console NodeHandle (need event loop and runtime interface...)
+We've seen how one could go about implementing testing around
+a simulation of a network between nodes in a distributed system.
 
-* Main function?
+There were a couple of things we had to leave out from the code:
 
-* How do we generate client requests and check that the responses are correct?
+  1. How generation of client requests is implemented;
+  2. How to check that traces, that the simulator returns, are correct;
+  3. How to shrink and present minimal counterexamples when the check fails;
+  4. How to spawn node handles which allow us to communicate with nodes via
+     `stdin` and `stdout` similar to Maelstrom.
+
+This is what we'll turn our attention to next. Probably tackling point 1-3 in
+one or two posts. For point 4 we need a bit more context, in particular we need
+to introduce the deterministic event loop on top of which nodes are running
+(the node handle will be connected to the event loop).
 
 
 [^1]: For now I hope you can imagine something like: don't reply to the client
