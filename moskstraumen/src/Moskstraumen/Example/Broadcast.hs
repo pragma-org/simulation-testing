@@ -83,7 +83,7 @@ broadcast (Broadcast msg) = do
                 )
                 $ \resp ->
                   case resp of
-                    BroadcastOk -> do
+                    Right BroadcastOk -> do
                       info ("Got ack from: " <> unNodeId nodeId)
                       modifyState
                         (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})

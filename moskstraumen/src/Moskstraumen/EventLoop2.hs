@@ -10,11 +10,13 @@ import Text.Read (readMaybe)
 
 import Moskstraumen.Codec
 import Moskstraumen.Effect
+import Moskstraumen.Error
 import Moskstraumen.Message
 import Moskstraumen.Node4
 import Moskstraumen.NodeId
 import Moskstraumen.Parse
 import Moskstraumen.Prelude
+import Moskstraumen.Pretty
 import Moskstraumen.Random
 import Moskstraumen.Runtime.TCP
 import Moskstraumen.Runtime2
@@ -30,13 +32,17 @@ rPC_TIMEOUT_MICROS = 1_000_000 -- 1 second.
 ------------------------------------------------------------------------
 
 data EventLoopState state input output = EventLoopState
-  { rpcs :: Map MessageId (output -> Node state input output)
+  { rpcs ::
+      Map MessageId (Either RPCError output -> Node state input output)
   , nodeState :: NodeState state
   , nextMessageId :: MessageId
   , timerWheel ::
       TimerWheel Time (Maybe MessageId, Node state input output)
-  , vars :: Map VarId output
-  , awaits :: Map VarId (NodeContext, output -> Node state input output)
+  , vars :: Map VarId (Either RPCError output)
+  , awaits ::
+      Map
+        VarId
+        (NodeContext, Either RPCError output -> Node state input output)
   , prng :: Prng
   }
 
@@ -136,7 +142,7 @@ eventLoop node initialState initialPrng validateMarshal runtime =
                 eventLoopState {nodeState = nodeState', prng = prng''}
             handleMessages messages eventLoopState'
         Just inReplyToMessageId ->
-          case runParser validateMarshal.validateOutput message of
+          case runParser (rpcErrorParser `alt` validateMarshal.validateOutput) message of
             Nothing ->
               error ("eventLoop, failed to parse output: " ++ show message)
             Just output ->
@@ -192,7 +198,11 @@ eventLoop node initialState initialPrng validateMarshal runtime =
           runtime.send message
           handleEffects effects eventLoopState
         REPLY srcNodeId destNodeId mMessageId output -> do
-          let (kind_, fields_) = validateMarshal.marshalOutput output
+          let (kind_, fields_) =
+                either
+                  marshalRPCError
+                  validateMarshal.marshalOutput
+                  output
           let message =
                 Message
                   { src = srcNodeId

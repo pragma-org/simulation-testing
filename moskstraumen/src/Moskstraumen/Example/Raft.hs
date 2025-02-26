@@ -43,6 +43,7 @@ data Output
   | PreconditionFailed Text
   | CasOk
   | RequestVoteRes {term_ :: Term, vote_granted :: Bool}
+  | TemporarilyUnavailable Text
 
 type Key = Int
 type RaftValue = Int
@@ -220,9 +221,13 @@ raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
   reply (RequestVoteRes myTerm voteGranted)
 raft input = do
   raftState <- getState
-  let (store', output) = apply input raftState.store
-  putState raftState {store = store'}
-  reply output
+  if raftState.role /= Leader
+    then error "raise RCPError TemporarilyUnavailable \"not a leader\"" -- XXX:
+    else do
+      let (store', output) = apply input raftState.store
+      let log' = appendLog raftState.log [Entry raftState.term input]
+      putState raftState {store = store', log = log'}
+      reply output
 
 becomeCandidate :: Node RaftState Input Output
 becomeCandidate = do
@@ -288,7 +293,7 @@ requestVotes = do
     (RequestVote myTerm myNodeId (size log) (entryTerm (lastEntry log)))
     (info "[leader election] brpc failed")
     $ \output -> case output of
-      RequestVoteRes remoteTerm voteGranted -> do
+      Right (RequestVoteRes remoteTerm voteGranted) -> do
         maybeStepDown remoteTerm
         role <- role <$> getState
         myTerm' <- term <$> getState

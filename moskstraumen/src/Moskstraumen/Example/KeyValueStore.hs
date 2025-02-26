@@ -10,6 +10,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 
 import Moskstraumen.Codec
+import Moskstraumen.Error
 import Moskstraumen.EventLoop2
 import Moskstraumen.Message
 import Moskstraumen.Node4
@@ -42,7 +43,6 @@ data Output
   | TxnOk {txn :: [MicroOp]}
   | ReadOk {value :: State}
   | CasOk
-  | Error {code :: Int, text :: Text}
 
 type State = IntMap [Int]
 
@@ -96,11 +96,10 @@ keyValueStoreV2 (Txn ops) = do
     <> fromString (show ops)
   readResponse <- syncRpc "lin-kv" (Read kEY) (info "sync rpc failed...")
   store <- case readResponse of
-    Error code text -> do
-      info
-        ("Read failed, code: " <> Text.pack (show code) <> ", text: " <> text)
+    Left rpcError -> do
+      info ("Read failed: " <> Text.pack (show rpcError))
       return initialState
-    ReadOk store -> do
+    Right (ReadOk store) -> do
       info $ "Successful read: " <> fromString (show store)
       return store
   let (store', ops') = transact ops store
@@ -111,12 +110,10 @@ keyValueStoreV2 (Txn ops) = do
       (Cas kEY (toJson store) (toJson store') True)
       (info "sync rpc failed...")
   case casResponse of
-    Error code text -> do
-      info
-        ("CAS failed, code: " <> Text.pack (show code) <> ", text: " <> text)
-      reply
-        (Error code text)
-    CasOk -> info "CAS successful!"
+    Left rpcError -> do
+      info ("CAS failed: " <> Text.pack (show rpcError))
+      raise (TxnConflict "CAS Failed!")
+    Right CasOk -> info "CAS successful!"
 
   sender <- getSender
   info $ "replying to sender: " <> unNodeId sender
@@ -161,7 +158,6 @@ marshalInput_ (Cas key old new create) =
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (TxnOk ops) = ("txn_ok", [("txn", List (map marshalMicroOp ops))])
-marshalOutput_ (Error code text) = ("error", [("code", Int code), ("text", String text)])
 
 marshalMicroOp :: MicroOp -> Value
 marshalMicroOp (R key values) = List [String "r", Int key, List (map Int values)]
@@ -184,10 +180,6 @@ validateOutput_ =
                 <$> hasTextField "value"
             )
     , CasOk <$ hasKind "cas_ok"
-    , Error
-        <$ hasKind "error"
-        <*> hasField "code" isInt
-        <*> hasField "text" isText
     ]
 
 ------------------------------------------------------------------------

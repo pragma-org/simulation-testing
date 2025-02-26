@@ -6,6 +6,7 @@ module Moskstraumen.Node4 (module Moskstraumen.Node4) where
 import Control.Monad.RWS.Strict
 
 import Moskstraumen.Effect
+import Moskstraumen.Error
 import Moskstraumen.FreeMonad
 import Moskstraumen.Message
 import Moskstraumen.NodeId
@@ -24,14 +25,14 @@ newtype Node' state input output a
 
 data NodeF state input output x
   = Send NodeId input x
-  | Reply output x
+  | Reply (Either RPCError output) x
   | RPC
       NodeId
       input
       -- NOTE: This needs to be lazy, or `rpcRetryForever` will loop with
       -- `StrictData`.
       ~(Node state input output)
-      (output -> Node state input output)
+      (Either RPCError output -> Node state input output)
       x
   | Info Text x
   | After Int ~(Node state input output) x
@@ -43,8 +44,8 @@ data NodeF state input output x
   | SetPeers [NodeId] x
   | GetSender (NodeId -> x)
   | NewVar (VarId -> x)
-  | DeliverVar VarId output x
-  | AwaitVar VarId (output -> x)
+  | DeliverVar VarId (Either RPCError output) x
+  | AwaitVar VarId (Either RPCError output -> x)
   | GetTime (Time -> x)
   | Random (Double -> x)
   deriving (Functor)
@@ -91,13 +92,16 @@ send :: NodeId -> input -> Node state input output
 send destNodeId input = generic_ (Send destNodeId input)
 
 reply :: output -> Node state input output
-reply output = generic_ (Reply output)
+reply output = generic_ (Reply (Right output))
+
+raise :: RPCError -> Node state input output
+raise rpcError = generic_ (Reply (Left rpcError))
 
 rpc ::
   NodeId
   -> input
   -> Node state input output
-  -> (output -> Node state input output)
+  -> (Either RPCError output -> Node state input output)
   -> Node state input output
 rpc destNodeId input failure success =
   generic_ (RPC destNodeId input failure success)
@@ -105,7 +109,7 @@ rpc destNodeId input failure success =
 brpc ::
   input
   -> Node state input output
-  -> (output -> Node state input output)
+  -> (Either RPCError output -> Node state input output)
   -> Node state input output
 brpc input failure success = do
   self <- getNodeId
@@ -117,19 +121,19 @@ brpc input failure success = do
       (info ("brpc to " <> unNodeId destNodeId) >> failure)
       success
 
-rpcRetryForever ::
-  NodeId
-  -> input
-  -> (output -> Node state input output)
-  -> Node state input output
-rpcRetryForever nodeId input success = do
-  rpc
-    nodeId
-    input
-    ( info ("RPC to " <> unNodeId nodeId <> " timeout, retrying...")
-        >> rpcRetryForever nodeId input success
-    )
-    success
+-- rpcRetryForever ::
+--   NodeId
+--   -> input
+--   -> (output -> Node state input output)
+--   -> Node state input output
+-- rpcRetryForever nodeId input success = do
+--   rpc
+--     nodeId
+--     input
+--     ( info ("RPC to " <> unNodeId nodeId <> " timeout, retrying...")
+--         >> rpcRetryForever nodeId input success
+--     )
+--     success
 
 info :: Text -> Node state input output
 info text = do
@@ -179,10 +183,10 @@ every micros task = after micros (task >> every micros task)
 newVar :: Node' state input output VarId
 newVar = generic NewVar
 
-deliverVar :: VarId -> a -> Node state input a
+deliverVar :: VarId -> Either RPCError output -> Node state input output
 deliverVar varId output = generic_ (DeliverVar varId output)
 
-awaitVar :: VarId -> Node' state input output output
+awaitVar :: VarId -> Node' state input output (Either RPCError output)
 awaitVar varId = generic (AwaitVar varId)
 
 getTime :: Node' state input output Time
@@ -192,7 +196,7 @@ syncRpc ::
   NodeId
   -> input
   -> Node state input output
-  -> Node' state input output output
+  -> Node' state input output (Either RPCError output)
 syncRpc toNodeId input failure = do
   var <- newVar
   rpc toNodeId input failure $ \output -> do

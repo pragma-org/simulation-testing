@@ -3,10 +3,10 @@ module Moskstraumen.Parse (module Moskstraumen.Parse) where
 import Control.Monad.Reader
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text
 
+import Moskstraumen.Error
 import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
@@ -64,6 +64,7 @@ isNodeId (String text)
       Left _err -> Nothing
       Right _nodeId -> Just (NodeId text)
   | otherwise = Nothing
+isNodeId _ = Nothing
 
 hasNodeIdField :: Field -> Parser NodeId
 hasNodeIdField field = do
@@ -97,6 +98,30 @@ hasMapField field valueParser = do
 
 isList :: (Value -> Maybe a) -> Value -> Maybe [a]
 isList itemParser (List values) = traverse itemParser values
+isList _itetParser _ = Nothing
 
 runParser :: Parser a -> Message -> Maybe a
 runParser parser message = runReaderT parser message
+
+rpcErrorParser :: Parser RPCError
+rpcErrorParser = do
+  code <- hasIntField "code"
+  case code of
+    0 -> Timeout <$> hasTextField "text"
+    10 -> NotSupported <$> hasTextField "text"
+    11 -> TemporarilyUnavailable <$> hasTextField "text"
+    12 -> MalformedRequest <$> hasTextField "text"
+    13 -> Crash <$> hasTextField "text"
+    14 -> Abort <$> hasTextField "text"
+    20 -> KeyDoesNotExist <$> hasTextField "text"
+    21 -> KeyAlreadyExists <$> hasTextField "text"
+    22 -> PreconditionFailed <$> hasTextField "text"
+    30 -> TxnConflict <$> hasTextField "text"
+    i -> CustomError i <$> hasTextField "text"
+
+alt :: Parser a -> Parser b -> Parser (Either a b)
+alt parser1 parser2 = do
+  message <- ask
+  case runParser parser1 message of
+    Nothing -> fmap Right parser2
+    Just x -> return (Left x)
