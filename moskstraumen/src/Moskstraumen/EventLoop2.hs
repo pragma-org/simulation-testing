@@ -35,7 +35,7 @@ data EventLoopState state input output = EventLoopState
   { rpcs ::
       Map MessageId (Either RPCError output -> Node state input output)
   , nodeState :: NodeState state
-  , nextMessageId :: MessageId
+  , nextMessageId :: Map NodeId MessageId
   , timerWheel ::
       TimerWheel Time (Maybe MessageId, Node state input output)
   , vars :: Map VarId (Either RPCError output)
@@ -52,7 +52,7 @@ initialEventLoopState initialNodeState initialPrng =
   EventLoopState
     { rpcs = Map.empty
     , nodeState = initialNodeState
-    , nextMessageId = 0
+    , nextMessageId = Map.empty
     , timerWheel = emptyTimerWheel
     , vars = Map.empty
     , awaits = Map.empty
@@ -230,7 +230,7 @@ eventLoop node initialState initialPrng validateMarshal runtime =
           runtime.log text
           handleEffects effects eventLoopState
         DO_RPC srcNodeId destNodeId input failure success -> do
-          let messageId = eventLoopState.nextMessageId
+          let messageId = Map.findWithDefault 0 srcNodeId eventLoopState.nextMessageId
           let (kind_, fields_) = validateMarshal.marshalInput input
           let message =
                 Message
@@ -256,7 +256,8 @@ eventLoop node initialState initialPrng validateMarshal runtime =
             effects
             eventLoopState
               { rpcs = Map.insert messageId success eventLoopState.rpcs
-              , nextMessageId = messageId + 1
+              , nextMessageId =
+                  Map.insert srcNodeId (messageId + 1) eventLoopState.nextMessageId
               , timerWheel = timerWheel'
               }
         DELIVER_VAR varId output -> do
