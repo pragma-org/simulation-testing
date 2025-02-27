@@ -10,7 +10,7 @@ See the following series of posts:
    systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/02-maelstrom-testing-echo-example.md);
 3. [Sketching how to simulation test distributed
    systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/03-simulation-testing-echo-example.md);
-4. Work in progress: [The main test loop of simulation
+4. [The main test loop of simulation
    testing](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/04-simulation-testing-main-loop.md).
 
 ## Running
