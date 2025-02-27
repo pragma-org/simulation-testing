@@ -20,14 +20,14 @@ import Moskstraumen.Time
 ------------------------------------------------------------------------
 
 -- start snippet NodeHandle
-data NodeHandle m = NodeHandle
-  { handle :: Time -> Message -> m [Message]
-  , close :: m ()
+data NodeHandle = NodeHandle
+  { handle :: Time -> Message -> IO [Message]
+  , close :: IO ()
   }
 
 -- end snippet
 
-simulationRuntime :: IO (NodeHandle IO, Runtime IO)
+simulationRuntime :: IO (NodeHandle, Runtime IO)
 simulationRuntime = do
   inputMVar <- newEmptyMVar
   outputQueue <- newTBQueueIO 65536
@@ -80,7 +80,7 @@ simulationSpawn ::
   -> state
   -> Prng
   -> ValidateMarshal input output
-  -> IO (NodeHandle IO)
+  -> IO NodeHandle
 simulationSpawn node initialState initialPrng validateMarshal = do
   (interface, runtime) <- simulationRuntime
   tid <-
@@ -123,7 +123,7 @@ return
     }
  -}
 
-pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle IO
+pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
 pipeNodeHandle hin hout processHandle =
   NodeHandle
     { handle = \_arrivalTime msg -> do
@@ -137,7 +137,7 @@ pipeNodeHandle hin hout processHandle =
     , close = terminateProcess processHandle
     }
 
-pipeSpawn :: FilePath -> Seed -> IO (NodeHandle IO)
+pipeSpawn :: FilePath -> Seed -> IO NodeHandle
 pipeSpawn fp seed = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess

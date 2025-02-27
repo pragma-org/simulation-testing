@@ -24,8 +24,8 @@ import Moskstraumen.Workload
 ------------------------------------------------------------------------
 
 -- start snippet World
-data World m = World
-  { nodes :: Map NodeId (NodeHandle m)
+data World = World
+  { nodes :: Map NodeId NodeHandle
   , messages :: Heap Time Message
   , prng :: Prng
   , trace :: Trace
@@ -39,9 +39,9 @@ type Trace = [Message]
 -- end snippet
 
 -- start snippet Deployment
-data Deployment m = Deployment
+data Deployment = Deployment
   { numberOfNodes :: Int
-  , spawn :: m (NodeHandle m)
+  , spawn :: IO NodeHandle
   }
 
 -- end snippet
@@ -83,7 +83,7 @@ generateRandomArrivalTimes now meanMicros = go []
         go ((arrivalTime, message) : acc) messages prng'
 
 -- start snippet stepWorld
-stepWorld :: (Monad m) => World m -> m (Either (World m) ())
+stepWorld :: World -> IO (Either World ())
 stepWorld world = case Heap.pop world.messages of
   Nothing -> return (Right ())
   Just ((arrivalTime, message), messages') ->
@@ -104,21 +104,20 @@ stepWorld world = case Heap.pop world.messages of
               , prng = prng''
               , trace = world.trace ++ message : clientResponses
               }
+
 -- end snippet
-{-# SPECIALIZE stepWorld :: World IO -> IO (Either (World IO) ()) #-}
 
 -- start snippet runWorld
-runWorld :: (Monad m) => World m -> m Trace
+runWorld :: World -> IO Trace
 runWorld world =
   stepWorld world >>= \case
     Right () -> return world.trace
     Left world' -> runWorld world'
+
 -- end snippet
-{-# SPECIALIZE runWorld :: World IO -> IO Trace #-}
 
 -- start snippet newWorld
-newWorld ::
-  (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
+newWorld :: Deployment -> [Message] -> Prng -> IO World
 newWorld deployment initialMessages prng = do
   let nodeIds =
         map
@@ -151,13 +150,7 @@ testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace) = Just trace
 
 -- start snippet runTest
-runTest ::
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> Prng
-  -> [Message]
-  -> m TestResult
+runTest :: Deployment -> Workload -> Prng -> [Message] -> IO TestResult
 runTest deployment workload prng initialMessages = do
   world <-
     newWorld
@@ -174,17 +167,11 @@ runTest deployment workload prng initialMessages = do
 
 -- start snippet runTests
 runTests ::
-  forall m.
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> NumberOfTests
-  -> Prng
-  -> m TestResult
+  Deployment -> Workload -> NumberOfTests -> Prng -> IO TestResult
 runTests deployment workload numberOfTests0 initialPrng =
   loop numberOfTests0 initialPrng
   where
-    loop :: NumberOfTests -> Prng -> m TestResult
+    loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
     loop n prng = do
       let (prng', initialMessages) = generate 100 prng -- XXX: vary size over time...
