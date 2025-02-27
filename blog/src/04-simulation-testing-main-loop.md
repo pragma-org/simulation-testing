@@ -1,3 +1,8 @@
+---
+author: Stevan A
+date: 2025-02-27
+---
+
 # The main test loop of simulation testing
 
 In the [last post](03-simulation-testing-echo-example.md) we sketched a
