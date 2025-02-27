@@ -1,7 +1,7 @@
 # The main test loop of simulation testing
 
-In the last post we sketched a high-level plan of how to implement
-language agnostic simulation testing.
+In the [last post](03-simulation-testing-echo-example.md) we sketched a
+high-level plan of how to implement language agnostic simulation testing.
 
 In this post we'll start working on the implementation. In particular we'll
 have a look at the simulator is implemented and how it's used to in the main

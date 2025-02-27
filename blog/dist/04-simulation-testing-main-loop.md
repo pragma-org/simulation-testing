@@ -1,7 +1,8 @@
 # The main test loop of simulation testing
 
-In the last post we sketched a high-level plan of how to implement
-language agnostic simulation testing.
+In the [last post](03-simulation-testing-echo-example.md) we sketched a
+high-level plan of how to implement language agnostic simulation
+testing.
 
 In this post we'll start working on the implementation. In particular
 we'll have a look at the simulator is implemented and how it's used to
@@ -70,8 +71,8 @@ do.
 The simulator is manipulating a fake representation of the "world":
 
 ``` haskell
-data World m = World
-  { nodes :: Map NodeId (NodeHandle m)
+data World = World
+  { nodes :: Map NodeId NodeHandle
   , messages :: Heap Time Message
   , prng :: Prng
   , trace :: Trace
@@ -93,9 +94,9 @@ newtype NodeId = NodeId Text
 The node handle is an interface with two operations:
 
 ``` haskell
-data NodeHandle m = NodeHandle
-  { handle :: Time -> Message -> m [Message]
-  , close :: m ()
+data NodeHandle = NodeHandle
+  { handle :: Time -> Message -> IO [Message]
+  , close :: IO ()
   }
 
 ```
@@ -135,7 +136,7 @@ delivered, while the messages to other nodes get assigned random arrival
 times and fed back into the heap of messages to be delivered.
 
 ``` haskell
-stepWorld :: (Monad m) => World m -> m (Either (World m) ())
+stepWorld :: World -> IO (Either World ())
 stepWorld world = case Heap.pop world.messages of
   Nothing -> return (Right ())
   Just ((arrivalTime, message), messages') ->
@@ -156,6 +157,7 @@ stepWorld world = case Heap.pop world.messages of
               , prng = prng''
               , trace = world.trace ++ message : clientResponses
               }
+
 ```
 
 Note that in the case of the echo example there are no messages between
@@ -174,11 +176,12 @@ the simulation to it's completion by merely keep stepping it until we
 run out of messages to deliver:
 
 ``` haskell
-runWorld :: (Monad m) => World m -> m Trace
+runWorld :: World -> IO Trace
 runWorld world =
   stepWorld world >>= \case
     Right () -> return world.trace
     Left world' -> runWorld world'
+
 ```
 
 We could imagine having other stopping criteria, e.g. stop after one
@@ -196,9 +199,9 @@ providing a way of specifying how many nodes are in a test and how to
 spawn node handles:
 
 ``` haskell
-data Deployment m = Deployment
+data Deployment = Deployment
   { numberOfNodes :: Int
-  , spawn :: m (NodeHandle m)
+  , spawn :: IO NodeHandle
   }
 
 ```
@@ -207,8 +210,7 @@ Given the node count, a spawn function, a list of initial messages, and
 a PRNG, we can construct a fake "world" as follows:
 
 ``` haskell
-newWorld ::
-  (Monad m) => Deployment m -> [Message] -> Prng -> m (World m)
+newWorld :: Deployment -> [Message] -> Prng -> IO World
 newWorld deployment initialMessages prng = do
   let nodeIds =
         map
@@ -316,17 +318,11 @@ data TestResult = Success | Failure Trace
 
 ``` haskell
 runTests ::
-  forall m.
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> NumberOfTests
-  -> Prng
-  -> m TestResult
+  Deployment -> Workload -> NumberOfTests -> Prng -> IO TestResult
 runTests deployment workload numberOfTests0 initialPrng =
   loop numberOfTests0 initialPrng
   where
-    loop :: NumberOfTests -> Prng -> m TestResult
+    loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
     loop n prng = do
       let (prng', initialMessages) = generate 100 prng -- XXX: vary size over time...
@@ -369,13 +365,7 @@ Where running a single test creates a new fake world, simulates it and
 checks the trace:
 
 ``` haskell
-runTest ::
-  (Monad m) =>
-  Deployment m
-  -> Workload
-  -> Prng
-  -> [Message]
-  -> m TestResult
+runTest :: Deployment -> Workload -> Prng -> [Message] -> IO TestResult
 runTest deployment workload prng initialMessages = do
   world <-
     newWorld
