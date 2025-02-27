@@ -8,6 +8,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Moskstraumen.Codec
+import Moskstraumen.Error
 import Moskstraumen.EventLoop2
 import Moskstraumen.Message
 import Moskstraumen.Node4
@@ -20,6 +21,12 @@ import Moskstraumen.Time
 
 eLECTION_TIMEOUT_MICROS :: Int
 eLECTION_TIMEOUT_MICROS = 2_000_000 -- 2s.
+
+hEARTBEAT_INTERVAL_MICROS :: Int
+hEARTBEAT_INTERVAL_MICROS = 1_000_000 -- 1s.
+
+mIN_REPLICATION_INTERVAL_MICROS :: Int
+mIN_REPLICATION_INTERVAL_MICROS = 50_000 -- 50ms.
 
 ------------------------------------------------------------------------
 
@@ -34,16 +41,24 @@ data Input
       , last_log_index :: Int
       , last_log_term :: Term
       }
+  | AppendEntries
+      { term_ :: Term
+      , leader_id :: NodeId
+      , prev_log_index :: Int
+      , prev_log_term :: Term
+      , entries :: Log
+      , leader_commit :: Int
+      }
+  deriving (Show)
 
 data Output
   = InitOk
   | ReadOk {value :: RaftValue}
-  | KeyDoesntExist Text
   | WriteOk
-  | PreconditionFailed Text
   | CasOk
   | RequestVoteRes {term_ :: Term, vote_granted :: Bool}
-  | TemporarilyUnavailable Text
+  | AppendEntriesOk {success :: Bool, term_ :: Term}
+  deriving (Show)
 
 type Key = Int
 type RaftValue = Int
@@ -60,10 +75,18 @@ data RaftState = RaftState
   , role :: Role
   , electionDeadline :: Time
   , stepDownDeadline :: Time
+  -- ^  When to step down automatically.
+  , lastReplication :: Time
   , term :: Term
   , votedFor :: Maybe NodeId
   , votes :: Set NodeId
   , log :: Log
+  , commitIndex :: Int
+  -- ^ The highest committed entry in the log.
+  , nextIndex :: Map NodeId Int
+  -- ^ The next index to replicate.
+  , matchIndex :: Map NodeId Int
+  -- ^  The highest log entry known to be replicated on that node.
   }
 
 initialState :: RaftState
@@ -76,14 +99,20 @@ initialState =
     , votes = Set.empty
     , electionDeadline = epoch
     , stepDownDeadline = epoch
+    , lastReplication = epoch
     , log = initialLog
+    , commitIndex = 0
+    , nextIndex = Map.empty
+    , matchIndex = Map.empty
     }
 
 ------------------------------------------------------------------------
 
 newtype Log = Log [Entry]
+  deriving newtype (Show)
 
 data Entry = Entry {entryTerm :: Term, op :: Input}
+  deriving (Show)
 
 initialLog :: Log
 initialLog = Log [dummyEntry]
@@ -102,29 +131,35 @@ lastEntry (Log entries) = last entries
 size :: Log -> Int
 size (Log entries) = length entries
 
+fromIndex :: Int -> Log -> Log
+fromIndex i (Log entries)
+  | i <= 0 = error ("Illegal index: " ++ show i)
+  | otherwise = Log (drop (i - 1) entries)
+
 ------------------------------------------------------------------------
 
-apply :: Input -> Store -> (Store, Output)
+apply :: Input -> Store -> (Store, Either RPCError Output)
 apply (Read key) store =
   case Map.lookup key store of
-    Nothing -> (store, KeyDoesntExist "not found")
-    Just value -> (store, ReadOk value)
+    Nothing -> (store, Left (KeyDoesNotExist "not found"))
+    Just value -> (store, Right (ReadOk value))
 apply (Write key value) store =
-  (Map.insert key value store, WriteOk)
+  (Map.insert key value store, Right WriteOk)
 apply (Cas key from to) store =
   case Map.lookup key store of
-    Nothing -> (store, KeyDoesntExist "not found")
+    Nothing -> (store, Left (KeyDoesNotExist "not found"))
     Just value
       | value == from ->
-          (Map.insert key to store, CasOk)
+          (Map.insert key to store, Right CasOk)
       | otherwise ->
           ( store
-          , PreconditionFailed
-              ( "expected "
-                  <> fromString (show from)
-                  <> ", but had "
-                  <> fromString (show value)
-              )
+          , Left
+              $ PreconditionFailed
+                ( "expected "
+                    <> fromString (show from)
+                    <> ", but had "
+                    <> fromString (show value)
+                )
           )
 apply Init {} _store = error "impossible, already handled"
 
@@ -164,6 +199,8 @@ raft (Init myNodeId myNeighbours) = do
       info
         "[leader election] Stepping down: haven't received any acks recently"
       becomeFollower
+  every mIN_REPLICATION_INTERVAL_MICROS $ do
+    replicateLog False
   reply InitOk
 raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
   maybeStepDown remoteTerm
@@ -222,12 +259,89 @@ raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
 raft input = do
   raftState <- getState
   if raftState.role /= Leader
-    then error "raise RCPError TemporarilyUnavailable \"not a leader\"" -- XXX:
+    then do
+      info "[replication] Not leader"
+      raise (TemporarilyUnavailable "not a leader")
     else do
-      let (store', output) = apply input raftState.store
+      let (store', rpcErrorOrOutput) = apply input raftState.store
       let log' = appendLog raftState.log [Entry raftState.term input]
+      info ("[replication] Log: " <> textShow log')
       putState raftState {store = store', log = log'}
-      reply output
+      either raise reply rpcErrorOrOutput
+
+{- | If we're the leader, replicate unacknowledged log entries to followers.
+     Also serves as a heartbeat.
+-}
+replicateLog :: Bool -> Node RaftState Input Output
+replicateLog force = do
+  now <- getTime
+  raftState <- getState
+  let elapsedTime = diffTimeMicros now raftState.lastReplication
+  when
+    ( raftState.role
+        == Leader
+        && mIN_REPLICATION_INTERVAL_MICROS
+        < elapsedTime
+    )
+    $ do
+      nodes <- otherNodeIds
+      forM_ nodes $ \node -> do
+        let ni = raftState.nextIndex Map.! node
+        let entries = fromIndex ni raftState.log
+        when (0 < size entries || hEARTBEAT_INTERVAL_MICROS < elapsedTime) $ do
+          myNodeId <- getNodeId
+          info
+            ("[replication] Replicating " <> textShow ni <> " to " <> unNodeId node)
+          now <- getTime
+          modifyState (\raftState -> raftState {lastReplication = now})
+          rpc
+            node
+            ( AppendEntries
+                { term_ = raftState.term
+                , leader_id = myNodeId
+                , prev_log_index = ni - 1
+                , prev_log_term = entryTerm (raftState.log ! (ni - 1))
+                , entries = entries
+                , leader_commit = raftState.commitIndex
+                }
+            )
+            (info ("[replication] AppendEntries failed to node: " <> unNodeId node))
+            $ \res -> do
+              case res of
+                Right (AppendEntriesOk success term) -> do
+                  maybeStepDown term
+                  when (raftState.role == Leader && term == raftState.term) $ do
+                    resetStepDownDeadline
+                    if success
+                      then do
+                        let nextIndex' = max (raftState.nextIndex Map.! node) (ni + size entries)
+                        putState
+                          raftState
+                            { nextIndex = Map.insert node nextIndex' raftState.nextIndex
+                            , matchIndex =
+                                Map.insert
+                                  node
+                                  (max (raftState.matchIndex Map.! node) (ni + size entries - 1))
+                                  raftState.matchIndex
+                            }
+                        info ("[replication] Next index: " <> textShow nextIndex')
+                      else do
+                        -- We didn't match; back up our next index for this node.
+                        putState
+                          raftState
+                            { nextIndex = Map.adjust pred node raftState.nextIndex
+                            }
+                _otherwise -> undefined
+
+addMyMatchIndex :: Node RaftState Input Output
+addMyMatchIndex = do
+  self <- getNodeId
+  modifyState
+    ( \raftState ->
+        raftState
+          { matchIndex = Map.insert self (size raftState.log) raftState.matchIndex
+          }
+    )
 
 becomeCandidate :: Node RaftState Input Output
 becomeCandidate = do
@@ -247,7 +361,14 @@ becomeFollower = do
   info
     ( "[leader election] Become follower for term " <> fromString (show term)
     )
-  modifyState (\raftState -> raftState {role = Follower})
+  modifyState
+    ( \raftState ->
+        raftState
+          { role = Follower
+          , matchIndex = Map.empty
+          , nextIndex = Map.empty
+          }
+    )
   resetElectionDeadline
 
 resetElectionDeadline :: Node RaftState input output
@@ -328,14 +449,32 @@ requestVotes = do
 
 -- What number would constitute a majority of n nodes?
 majority :: Int -> Int
-majority n = floor (realToFrac n / 2.0) + 1
+majority n = floor (realToFrac n / 2.0 :: Double) + 1
 
 becomeLeader :: Node RaftState Input Output
 becomeLeader = do
   role <- role <$> getState
   -- Should be a candidate.
   assertM (role == Candidate)
-  modifyState (\raftState -> raftState {role = Leader})
+  now <- getTime
+  modifyState
+    ( \raftState ->
+        raftState
+          { role = Leader
+          , lastReplication = epoch
+          , nextIndex = Map.empty
+          , matchIndex = Map.empty
+          }
+    )
+  nodes <- otherNodeIds
+  forM_ nodes $ \node -> do
+    modifyState
+      ( \raftState ->
+          raftState
+            { nextIndex = Map.insert node (size raftState.log + 1) raftState.nextIndex
+            , matchIndex = Map.insert node 0 raftState.matchIndex
+            }
+      )
   resetStepDownDeadline
   term <- term <$> getState
   info ("[leader election] Become leader for term " <> textShow term)
@@ -408,8 +547,6 @@ marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (ReadOk value) = ("read_ok", [("value", Int value)])
 marshalOutput_ WriteOk = ("write_ok", [])
 marshalOutput_ CasOk = ("cas_ok", [])
-marshalOutput_ (KeyDoesntExist msg) = ("error", [("code", Int 20), ("text", String msg)])
-marshalOutput_ (PreconditionFailed msg) = ("error", [("code", Int 22), ("text", String msg)])
 marshalOutput_ (RequestVoteRes term_ vote_granted) =
   ( "request_vote_res"
   ,

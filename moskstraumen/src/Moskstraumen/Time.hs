@@ -23,6 +23,7 @@ addTimeMicros :: Int -> Time -> Time
 addTimeMicros micros (Time time) =
   Time (addUTCTime (realToFrac micros * 0.000001) time)
 
+-- diffTimeMicros t1 t2 = t1 - t2
 diffTimeMicros :: Time -> Time -> Int
 diffTimeMicros (Time t1) (Time t2) = micros
   where

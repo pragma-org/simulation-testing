@@ -226,6 +226,12 @@ info "syncRpcRetry: await..."
 awaitVar var
  -}
 
+otherNodeIds :: Node' state input output [NodeId]
+otherNodeIds = do
+  myNodeId <- getNodeId
+  myNeighbours <- getPeers
+  return (filter (/= myNodeId) myNeighbours)
+
 ------------------------------------------------------------------------
 
 execNode ::
