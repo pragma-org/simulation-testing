@@ -76,7 +76,8 @@ Will continues saying:
 > Kyle Kingsbury aka “aphyr” didn’t even bother testing it with Jepsen, because
 > he didn’t think he’d find anything:
 
-![Aphyr's tweet about testing FoundationDB](../image/aphyr_twitter_fdb.png) 
+![Aphyr's tweet about testing
+FoundationDB](https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/heads/main/blog/image/aphyr_twitter_fdb.png)
 
 Kyle has since said[^3] that that quote is a bit exaggerated and that Jepsen
 can find problems that simulators miss, which makes sense given that there can
