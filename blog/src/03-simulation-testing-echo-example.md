@@ -312,8 +312,8 @@ We've located the sources of non-determinism in the Maelstrom tests from the
 last post and sketched how we can swap out these components for deterministic
 ones.
 
-Next we'll start on the actual implementation for the deterministic simulation
-testing.
+[Next](04-simulation-testing-main-loop.md) we'll start on the actual
+implementation for the deterministic simulation testing.
 
 
 [^1]: Could be a blessing but more likely it's a curse.

@@ -22,7 +22,8 @@ explain it in a different way.
 
 Before we start introducing code, let's try to visualise the end result:
 
-![Picture of simulator and nodes](../image/simulator.svg)
+![Picture of simulator and
+nodes](https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/heads/main/blog/image/simulator.svg)
 
 The simulator consists of four things:
 
