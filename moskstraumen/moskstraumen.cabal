@@ -13,8 +13,8 @@ maintainer:      stevana@users.noreply.github.com
 category:        Testing
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
-
--- extra-source-files:
+data-dir:        data
+data-files:      chain.json
 
 common warnings
   ghc-options: -Wall
@@ -26,6 +26,7 @@ library
     Moskstraumen.Effect
     Moskstraumen.Error
     Moskstraumen.EventLoop2
+    Moskstraumen.Example.Amaru
     Moskstraumen.Example.Broadcast
     Moskstraumen.Example.CRDT.GSet
     Moskstraumen.Example.Echo
@@ -54,6 +55,7 @@ library
     Moskstraumen.VarId
     Moskstraumen.Workload
 
+  other-modules:      Paths_moskstraumen
   default-extensions:
     DeriveAnyClass
     DeriveFunctor
