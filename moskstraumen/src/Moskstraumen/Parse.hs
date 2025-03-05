@@ -100,6 +100,14 @@ isList :: (Value -> Maybe a) -> Value -> Maybe [a]
 isList itemParser (List values) = traverse itemParser values
 isList _itetParser _ = Nothing
 
+isPair ::
+  (Value -> Maybe a) -> (Value -> Maybe b) -> Value -> Maybe (a, b)
+isPair parseA parseB (List [v1, v2]) = do
+  x <- parseA v1
+  y <- parseB v2
+  return (x, y)
+isPair _parseA _parseB _ = Nothing
+
 runParser :: Parser a -> Message -> Maybe a
 runParser parser message = runReaderT parser message
 

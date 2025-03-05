@@ -57,7 +57,7 @@ data Output
   | WriteOk
   | CasOk
   | RequestVoteRes {term_ :: Term, vote_granted :: Bool}
-  | AppendEntriesOk {success :: Bool, term_ :: Term}
+  | AppendEntriesOk {term_ :: Term, success :: Bool}
   deriving (Show)
 
 type Key = Int
@@ -135,6 +135,10 @@ fromIndex :: Int -> Log -> Log
 fromIndex i (Log entries)
   | i <= 0 = error ("Illegal index: " ++ show i)
   | otherwise = Log (drop (i - 1) entries)
+
+-- | Truncate the log to this many entries.
+truncate :: Log -> Int -> Log
+truncate (Log entries) len = Log (take len entries)
 
 ------------------------------------------------------------------------
 
@@ -256,6 +260,24 @@ raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
                     return True
 
   reply (RequestVoteRes myTerm voteGranted)
+raft
+  ( AppendEntries
+      term_
+      leader_id
+      prev_log_index
+      prev_log_term
+      entries
+      leader_commit
+    ) = do
+    maybeStepDown term_
+    myTerm <- term <$> getState
+    if term_ < myTerm
+      then reply (AppendEntriesOk myTerm False)
+      else do
+        resetElectionDeadline
+        if prev_log_index <= 0
+          then error ("Out of bounds previous log index: " <> show prev_log_index)
+          else undefined
 raft input = do
   raftState <- getState
   if raftState.role /= Leader
@@ -308,7 +330,7 @@ replicateLog force = do
             (info ("[replication] AppendEntries failed to node: " <> unNodeId node))
             $ \res -> do
               case res of
-                Right (AppendEntriesOk success term) -> do
+                Right (AppendEntriesOk term success) -> do
                   maybeStepDown term
                   when (raftState.role == Leader && term == raftState.term) $ do
                     resetStepDownDeadline
@@ -518,7 +540,34 @@ validateInput_ =
         <*> hasNodeIdField "candidate_id"
         <*> hasIntField "last_log_index"
         <*> (fromIntegral <$> hasIntField "last_log_term")
+    , AppendEntries
+        <$ hasKind "append_entries"
+        <*> (fromIntegral <$> hasIntField "term")
+        <*> hasNodeIdField "leader_id"
+        <*> hasIntField "prev_log_index"
+        <*> (fromIntegral <$> hasIntField "prev_log_term")
+        <*> ( Log
+                <$> hasListField
+                  "entries"
+                  ( \v ->
+                      isPair isInt validateOp v >>= \(term_, op) -> return (Entry (fromIntegral term_) op)
+                  )
+            )
+        <*> hasIntField "leader_commit"
     ]
+
+validateOp :: Value -> Maybe Input
+validateOp (Map op) = case Map.toList op of
+  [("read", Map args)] -> case Map.toList args of
+    [("key", Int key)] -> return (Read key)
+    _otherwise -> Nothing
+  [("write", Map args)] -> case Map.toList args of
+    [("key", Int key), ("value", Int value)] -> return (Write key value)
+    _otherwise -> Nothing
+  [("cas", Map args)] -> case Map.toList args of
+    [("key", Int key), ("from", Int from), ("to", Int to)] -> return (Cas key from to)
+    _otherwise -> Nothing
+validateOp _ = Nothing
 
 marshalInput_ :: Input -> (MessageKind, [(Field, Value)])
 marshalInput_ (Init _myNodeId _myNeighbours) = ("init", [])
@@ -541,6 +590,50 @@ marshalInput_ (RequestVote term_ candidate_id last_log_index last_log_term) =
     , ("last_log_term", Int (fromIntegral last_log_term))
     ]
   )
+marshalInput_
+  ( AppendEntries
+      term_
+      leader_id
+      prev_log_index
+      prev_log_term
+      (Log entries)
+      leader_commit
+    ) =
+    ( "append_entries"
+    ,
+      [ ("term", Int (fromIntegral term_)) -- XXX: Word64 -> Int...
+      , ("leader_id", String (unNodeId leader_id))
+      , ("prev_log_index", Int prev_log_index)
+      , ("prev_log_term", Int (fromIntegral prev_log_term)) -- XXX: Word64 -> Int...
+      ,
+        ( "entries"
+        , List
+            ( map
+                (\(Entry term_ op) -> List [Int (fromIntegral term_), marshalOp op])
+                entries
+            )
+        )
+      , ("leader_commit", Int leader_commit)
+      ]
+    )
+
+marshalOp :: Input -> Value
+marshalOp (Read key) = Map (Map.fromList [("read", Map (Map.fromList [("key", Int key)]))])
+marshalOp (Write key value) =
+  Map
+    ( Map.fromList
+        [("write", Map (Map.fromList [("key", Int key), ("value", Int value)]))]
+    )
+marshalOp (Cas key from to) =
+  Map
+    ( Map.fromList
+        [
+          ( "cas"
+          , Map
+              (Map.fromList [("key", Int key), ("from", Int from), ("to", Int to)])
+          )
+        ]
+    )
 
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
