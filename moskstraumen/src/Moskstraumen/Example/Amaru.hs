@@ -17,6 +17,8 @@ import System.Random
 import Moskstraumen.Generate
 import Moskstraumen.Prelude
 import Moskstraumen.Random
+import Moskstraumen.Simulate
+import Moskstraumen.Workload
 import Paths_moskstraumen
 
 ------------------------------------------------------------------------
@@ -150,3 +152,27 @@ findNodeInForest ::
   (Foldable t) => (a -> Bool) -> t (Tree a) -> Maybe (Tree a)
 findNodeInForest p forest =
   getAlt (foldMap (Alt . findNodeInTree p) forest)
+
+------------------------------------------------------------------------
+
+workload :: IO Workload
+workload = do
+  bs <- readChainJson
+  case parseJson bs of
+    Nothing -> putStrLn "workload: parseJson failed"
+    Just blocks ->
+      return
+        Workload
+          { name = "Amaru workload"
+          , generateMessage = undefined -- generate (recreateTree blocks)
+          , property = undefined
+          }
+
+------------------------------------------------------------------------
+
+libMain :: [String] -> IO ()
+libMain args = do
+  case args of
+    [binaryFilePath] ->
+      print =<< blackboxTest binaryFilePath =<< workload
+    _otherwise -> error "pass path to binary as argument"
