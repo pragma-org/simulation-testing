@@ -197,7 +197,7 @@ runTests deployment workload numberOfTests0 initialPrng =
             ]
 
           (prng', initialMessages) =
-            Gen.runGen (Gen.listOf workload.generateMessage) prng size
+            Gen.runGen workload.generate prng size
 
           messages :: [Message]
           messages =

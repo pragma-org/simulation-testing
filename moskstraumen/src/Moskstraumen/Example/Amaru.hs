@@ -1,7 +1,7 @@
 module Moskstraumen.Example.Amaru (module Moskstraumen.Example.Amaru) where
 
-import Data.Aeson
-import Data.Aeson.Types
+import Data.Aeson (FromJSON, decode, (.:))
+import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Map (Map)
@@ -15,6 +15,7 @@ import Debug.Trace
 import System.Random
 
 import Moskstraumen.Generate
+import Moskstraumen.Message
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Simulate
@@ -71,8 +72,8 @@ recreateTree (block0 : blocks0) = case block0.parent of
 data Input = Fwd Hash | Bwd Hash
   deriving stock (Show)
 
-generate :: Chain -> Gen [Input]
-generate chain0 = go [] chain0 [] Set.empty
+generateInputs :: Chain -> Gen [Input]
+generateInputs chain0 = go [] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
     go acc (Node block []) [] _done = return (reverse (Fwd block.hash : acc))
@@ -111,6 +112,31 @@ generate chain0 = go [] chain0 [] Set.empty
 data GenStep = Fork Hash [Int]
   deriving stock (Show)
 
+inputsToMessages :: [Input] -> [Message]
+inputsToMessages = go 0 []
+  where
+    go _n acc [] = reverse acc
+    go n acc (input : inputs) =
+      let (inputKind, hashValue) = case input of
+            Fwd hash -> ("fwd", String hash)
+            Bwd hash -> ("bwd", String hash)
+      in  go
+            (n + 1)
+            ( Message
+                { src = "c1"
+                , dest = "n1"
+                , body =
+                    Payload
+                      { kind = inputKind
+                      , msgId = Just n
+                      , inReplyTo = Nothing
+                      , fields = Map.fromList [("hash", hashValue)]
+                      }
+                }
+                : acc
+            )
+            inputs
+
 ------------------------------------------------------------------------
 
 t :: IO ()
@@ -122,7 +148,9 @@ t = do
       seed <- randomIO
       let prng = mkPrng seed
           size = 30
-      mapM_ print $ snd $ runGen (generate (recreateTree blocks)) prng size
+      mapM_ print
+        $ snd
+        $ runGen (generateInputs (recreateTree blocks)) prng size
 
 -- Just blocks -> putStr $ drawTree $ fmap summary $ recreateTree blocks
 
@@ -159,12 +187,12 @@ workload :: IO Workload
 workload = do
   bs <- readChainJson
   case parseJson bs of
-    Nothing -> putStrLn "workload: parseJson failed"
+    Nothing -> error "workload: parseJson failed"
     Just blocks ->
       return
         Workload
           { name = "Amaru workload"
-          , generateMessage = undefined -- generate (recreateTree blocks)
+          , generate = fmap inputsToMessages (generateInputs (recreateTree blocks))
           , property = undefined
           }
 

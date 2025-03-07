@@ -100,7 +100,7 @@ echoWorkload :: Workload
 echoWorkload =
   Workload
     { name = "echo"
-    , generateMessage = do
+    , generate = do
         let makeMessage n =
               Message
                 { src = "c1"
@@ -119,7 +119,7 @@ echoWorkload =
                             ]
                       }
                 }
-        makeMessage <$> Gen.chooseInt (0, 127)
+        Gen.listOf (makeMessage <$> Gen.chooseInt (0, 127))
     , property =
         Always
           $ FreezeQuantifier "echo"
