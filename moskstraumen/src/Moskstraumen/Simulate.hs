@@ -169,7 +169,10 @@ runTest deployment workload prng initialMessages = do
       prng
   resultingTrace <- runWorld world
   traverse_ (.close) world.nodes
-  if sat workload.property resultingTrace emptyEnv
+  let ok = case workload.property of
+        LTL formula -> sat formula resultingTrace emptyEnv
+        TracePredicate predicate -> predicate resultingTrace
+  if ok
     then return Success
     else return (Failure resultingTrace)
 
@@ -197,6 +200,10 @@ runTests deployment workload numberOfTests0 initialPrng =
               (shrinkList (const []))
               initialMessages
           let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
+          putStrLn
+            ( "Shrunk: "
+                <> show (NonEmpty.length initialMessagesAndTrace)
+            )
           return (Failure shrunkTrace)
 
     generate :: Int -> Prng -> (Prng, [Message])

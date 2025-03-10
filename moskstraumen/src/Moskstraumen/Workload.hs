@@ -8,10 +8,15 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 
 -- start snippet Workload
+
+data Property
+  = LTL (Form Message)
+  | TracePredicate ([Message] -> Bool)
+
 data Workload = Workload
   { name :: Text
   , generate :: Gen [Message]
-  , property :: Form Message
+  , property :: Property
   }
 
 -- end snippet

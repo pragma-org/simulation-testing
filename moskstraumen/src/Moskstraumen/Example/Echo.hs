@@ -14,7 +14,6 @@ import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate
 import Moskstraumen.Workload
-import System.Exit
 import System.Process (readProcess)
 
 ------------------------------------------------------------------------
@@ -122,7 +121,8 @@ echoWorkload =
                 }
         Gen.listOf (makeMessage <$> Gen.chooseInt (0, 127))
     , property =
-        Always
+        LTL
+          $ Always
           $ FreezeQuantifier "echo"
           $ Prop (\msg -> msg.body.kind == "echo")
           :==> Eventually

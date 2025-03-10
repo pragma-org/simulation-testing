@@ -3,6 +3,7 @@ module Main where
 import System.Environment
 import System.Exit
 
+import Moskstraumen.Example.Amaru
 import Moskstraumen.Example.Echo
 import Moskstraumen.Simulate
 
@@ -12,10 +13,11 @@ libMainBlackbox :: [String] -> IO ()
 libMainBlackbox args =
   case args of
     [binary, workloadArg, numberOfTests] -> do
-      let workload = case workloadArg of
-            "echo" -> echoWorkload
-            _otherwise ->
-              error ("libMainBlackbox: unknown workload: " <> workloadArg)
+      workload <- case workloadArg of
+        "echo" -> return echoWorkload
+        "amaru" -> amaruWorkload
+        _otherwise ->
+          error ("libMainBlackbox: unknown workload: " <> workloadArg)
       ok <-
         blackboxTestWith
           defaultTestConfig {numberOfTests = read numberOfTests}

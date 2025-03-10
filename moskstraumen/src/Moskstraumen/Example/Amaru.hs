@@ -183,8 +183,8 @@ findNodeInForest p forest =
 
 ------------------------------------------------------------------------
 
-workload :: IO Workload
-workload = do
+amaruWorkload :: IO Workload
+amaruWorkload = do
   bs <- readChainJson
   case parseJson bs of
     Nothing -> error "workload: parseJson failed"
@@ -193,8 +193,13 @@ workload = do
         Workload
           { name = "Amaru workload"
           , generate = fmap inputsToMessages (generateInputs (recreateTree blocks))
-          , property = undefined
+          , property = TracePredicate (tracePredicate (height (last blocks)))
           }
+  where
+    tracePredicate :: Int -> [Message] -> Bool
+    tracePredicate tallestHeight messages =
+      length (filter (\message -> message.body.kind == "fwd_ok") messages)
+        == tallestHeight
 
 ------------------------------------------------------------------------
 
@@ -202,5 +207,5 @@ libMain :: [String] -> IO ()
 libMain args = do
   case args of
     [binaryFilePath] ->
-      print =<< blackboxTest binaryFilePath =<< workload
+      print =<< blackboxTest binaryFilePath =<< amaruWorkload
     _otherwise -> error "pass path to binary as argument"
