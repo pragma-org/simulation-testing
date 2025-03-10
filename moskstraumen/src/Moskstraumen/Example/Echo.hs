@@ -14,6 +14,7 @@ import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate
 import Moskstraumen.Workload
+import System.Exit
 import System.Process (readProcess)
 
 ------------------------------------------------------------------------

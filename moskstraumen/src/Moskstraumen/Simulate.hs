@@ -149,6 +149,15 @@ testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace) = Just trace
 
+handleResult :: TestResult -> Seed -> IO Bool
+handleResult (Failure trace) seed = do
+  putStrLn ("Seed: " <> show seed)
+  print trace
+  return False
+handleResult Success _seed = do
+  putStrLn "Success!"
+  return True
+
 -- start snippet runTest
 runTest :: Deployment -> Workload -> Prng -> [Message] -> IO TestResult
 runTest deployment workload prng initialMessages = do
@@ -174,7 +183,8 @@ runTests deployment workload numberOfTests0 initialPrng =
     loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
     loop n prng = do
-      let (prng', initialMessages) = generate 100 prng -- XXX: vary size over time...
+      let size = 10 -- XXX: vary size over time...
+      let (prng', initialMessages) = generate size prng
       let (prng'', prng''') = splitPrng prng'
       result <- runTest deployment workload prng'' initialMessages
       case result of
@@ -223,12 +233,7 @@ blackboxTestWith testConfig binaryFilePath workload = do
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests deployment workload testConfig.numberOfTests prng'
-  case result of
-    Failure trace -> do
-      putStrLn ("Seed: " <> show seed)
-      print trace
-      return False
-    Success -> return True
+  handleResult result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
 blackboxTest = blackboxTestWith defaultTestConfig
@@ -251,12 +256,7 @@ simulationTestWith testConfig node initialState validateMarshal workload = do
           , spawn = simulationSpawn node initialState prng' validateMarshal
           }
   result <- runTests deployment workload testConfig.numberOfTests prng''
-  case result of
-    Failure trace -> do
-      putStrLn ("Seed: " <> show seed)
-      print trace
-      return False
-    Success -> return True
+  handleResult result seed
 
 simulationTest ::
   (input -> Node state input output)
