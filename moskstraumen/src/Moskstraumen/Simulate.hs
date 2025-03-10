@@ -152,7 +152,7 @@ testResultToMaybe (Failure trace) = Just trace
 handleResult :: TestResult -> Seed -> IO Bool
 handleResult (Failure trace) seed = do
   putStrLn ("Seed: " <> show seed)
-  print trace
+  mapM_ print trace
   putStrLn "Failure!"
   return False
 handleResult Success _seed = do
