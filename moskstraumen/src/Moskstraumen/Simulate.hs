@@ -183,7 +183,7 @@ runTests deployment workload numberOfTests0 initialPrng =
     loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
     loop n prng = do
-      let size = 10 -- XXX: vary size over time...
+      let size = 30 -- XXX: vary size over time...
       let (prng', initialMessages) = generate size prng
       let (prng'', prng''') = splitPrng prng'
       result <- runTest deployment workload prng'' initialMessages
