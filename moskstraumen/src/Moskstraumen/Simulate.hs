@@ -153,6 +153,7 @@ handleResult :: TestResult -> Seed -> IO Bool
 handleResult (Failure trace) seed = do
   putStrLn ("Seed: " <> show seed)
   print trace
+  putStrLn "Failure!"
   return False
 handleResult Success _seed = do
   putStrLn "Success!"
