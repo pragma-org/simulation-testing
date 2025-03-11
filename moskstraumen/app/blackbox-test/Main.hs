@@ -12,7 +12,7 @@ import Moskstraumen.Simulate
 libMainBlackbox :: [String] -> IO ()
 libMainBlackbox args =
   case args of
-    [binary, workloadArg, numberOfTests] -> do
+    (binary : workloadArg : numberOfTestsArg : args') -> do
       workload <- case workloadArg of
         "echo" -> return echoWorkload
         "amaru" -> amaruWorkload
@@ -20,8 +20,14 @@ libMainBlackbox args =
           error ("libMainBlackbox: unknown workload: " <> workloadArg)
       ok <-
         blackboxTestWith
-          defaultTestConfig {numberOfTests = read numberOfTests}
+          defaultTestConfig {numberOfTests = read numberOfTestsArg}
           binary
+          ( \seed -> case workloadArg of
+              "echo" -> [show seed]
+              "amaru" -> args'
+              _otherwise ->
+                error ("libMainBlackbox: unknown workload: " <> workloadArg)
+          )
           workload
       if ok
         then exitSuccess

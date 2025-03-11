@@ -137,9 +137,9 @@ pipeNodeHandle hin hout processHandle =
     , close = terminateProcess processHandle
     }
 
-pipeSpawn :: FilePath -> Seed -> IO NodeHandle
-pipeSpawn fp seed = do
+pipeSpawn :: FilePath -> [String] -> IO NodeHandle
+pipeSpawn fp args = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
-      (proc fp [show seed]) {std_in = CreatePipe, std_out = CreatePipe}
+      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
   return (pipeNodeHandle hin hout processHandle)

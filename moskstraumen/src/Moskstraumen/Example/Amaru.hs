@@ -69,47 +69,53 @@ recreateTree (block0 : blocks0) = case block0.parent of
 
 ------------------------------------------------------------------------
 
-data Input = Fwd Hash | Bwd Hash
+data Input
+  = Fwd {hash :: Hash, slot :: Int, header :: Text}
+  | Bck {hash :: Hash, slot :: Int}
   deriving stock (Show)
 
 generateInputs :: Chain -> Gen [Input]
 generateInputs chain0 = go [] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
-    go acc (Node block []) [] _done = return (reverse (Fwd block.hash : acc))
-    go acc (Node block []) steps@(Fork parentHash _indices : _) done =
+    go acc (Node block []) [] _done = return (reverse (Fwd block.hash block.slot block.header : acc))
+    go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done =
       go
-        (Bwd parentHash : acc)
+        (Bck parentHash parentSlot : acc)
         (findNodeInTree_ (\block -> block.hash == parentHash) chain0)
         steps
         done
-    go acc (Node block [child]) steps done = go (Fwd block.hash : acc) child steps done
+    go acc (Node block [child]) steps done = go (Fwd block.hash block.slot block.header : acc) child steps done
     go acc (Node block children) [] done
       | block.hash `Set.member` done = do
           return (reverse acc)
       | otherwise = do
           index <- chooseInt (0, length children - 1)
           go
-            (Fwd block.hash : acc)
+            (Fwd block.hash block.slot block.header : acc)
             (children !! index)
-            (Fork block.hash [index] : [])
+            (Fork block.hash block.slot [index] : [])
             done
-    go acc node@(Node block children) (Fork hash indices : steps) done
+    go acc node@(Node block children) (Fork hash _slot indices : steps) done
       | block.hash == hash && length children /= length indices = do
           index <-
             chooseInt (0, length children - 1) `suchThat` (`notElem` indices)
-          go acc (children !! index) (Fork hash (index : indices) : steps) done
+          go
+            acc
+            (children !! index)
+            (Fork hash _slot (index : indices) : steps)
+            done
       | block.hash == hash && length children == length indices = do
           go acc node steps (Set.insert hash done)
       | otherwise = do
           index <- chooseInt (0, length children - 1)
           go
-            (Fwd block.hash : acc)
+            (Fwd block.hash block.slot block.header : acc)
             (children !! index)
-            (Fork block.hash [index] : steps)
+            (Fork block.hash block.slot [index] : steps)
             done
 
-data GenStep = Fork Hash [Int]
+data GenStep = Fork Hash Int [Int]
   deriving stock (Show)
 
 inputsToMessages :: [Input] -> [Message]
@@ -117,9 +123,12 @@ inputsToMessages = go 0 []
   where
     go _n acc [] = reverse acc
     go n acc (input : inputs) =
-      let (inputKind, hashValue) = case input of
-            Fwd hash -> ("fwd", String hash)
-            Bwd hash -> ("bwd", String hash)
+      let (inputKind, fields_) = case input of
+            Fwd hash slot header ->
+              ( "fwd"
+              , [("hash", String hash), ("slot", Int slot), ("header", String header)]
+              )
+            Bck hash slot -> ("bck", [("hash", String hash), ("slot", Int slot)])
       in  go
             (n + 1)
             ( Message
@@ -130,7 +139,7 @@ inputsToMessages = go 0 []
                       { kind = inputKind
                       , msgId = Just n
                       , inReplyTo = Nothing
-                      , fields = Map.fromList [("hash", hashValue)]
+                      , fields = Map.fromList fields_
                       }
                 }
                 : acc

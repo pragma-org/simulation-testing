@@ -231,20 +231,21 @@ runTests deployment workload numberOfTests0 initialPrng =
 ------------------------------------------------------------------------
 
 -- start snippet blackboxTest
-blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO Bool
-blackboxTestWith testConfig binaryFilePath workload = do
+blackboxTestWith ::
+  TestConfig -> FilePath -> (Seed -> [String]) -> Workload -> IO Bool
+blackboxTestWith testConfig binaryFilePath args workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath seed
+          , spawn = pipeSpawn binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests deployment workload testConfig.numberOfTests prng'
   handleResult result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
-blackboxTest = blackboxTestWith defaultTestConfig
+blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
 -- end snippet
 
