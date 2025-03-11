@@ -15,4 +15,4 @@ See the following series of posts:
 
 ## Running
 
-See [`RUNNING.md`](RUNNING.md) for details on how to run the tests.
+See [`RUNNING.md`](moskstraumen/RUNNING.md) for details on how to run the tests.
