@@ -150,7 +150,7 @@ makeInitMessage myNodeId myNeighbours =
     , body =
         Payload
           { kind = "init"
-          , msgId = Nothing
+          , msgId = Just 0
           , inReplyTo = Nothing
           , fields =
               Map.fromList
