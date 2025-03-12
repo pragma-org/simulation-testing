@@ -1,5 +1,6 @@
 module Moskstraumen.Simulate (module Moskstraumen.Simulate) where
 
+import Control.Exception
 import Data.List (partition)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -167,8 +168,8 @@ runTest deployment workload prng initialMessages = do
       deployment
       initialMessages
       prng
-  resultingTrace <- runWorld world
-  traverse_ (.close) world.nodes
+  resultingTrace <-
+    runWorld world `finally` traverse_ (.close) world.nodes
   let ok = case workload.property of
         LTL formula -> sat formula resultingTrace emptyEnv
         TracePredicate predicate -> predicate resultingTrace
@@ -208,10 +209,10 @@ runTests deployment workload numberOfTests0 initialPrng =
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
+      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
+          initMessages =
+            [ makeInitMessage (makeNodeId i) (neighbours i)
             | i <- [1 .. deployment.numberOfNodes]
-            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
             ]
 
           (prng', initialMessages) =
