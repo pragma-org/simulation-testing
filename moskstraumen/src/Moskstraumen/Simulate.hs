@@ -209,10 +209,10 @@ runTests deployment workload numberOfTests0 initialPrng =
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
+      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
+          initMessages =
+            [ makeInitMessage (makeNodeId i) (neighbours i)
             | i <- [1 .. deployment.numberOfNodes]
-            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
             ]
 
           (prng', initialMessages) =
