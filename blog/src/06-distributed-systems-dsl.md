@@ -135,6 +135,8 @@ pipeSpawn fp args = do
 With this we've got all code needed to actually run the tests for our echo
 example.
 
+* XXX: Show real deployment of same code using TCP runtime?
+
 ## Conclusion and what's next
 
 * Our runtime is trivially deterministic, over the next couple of posts we'll
