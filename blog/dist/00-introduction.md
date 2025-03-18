@@ -94,10 +94,10 @@ Dirk Greef, TigerBeetle's CEO, has
 testing helped them get the same confidence that would normal take 10
 years to get for a consensus algorithm and storage engine using
 conventional testing, within a single year, i.e. a 10x improvement how
-fast the system can get production ready.
+fast the system can get production ready[^6].
 
 IOG also implemented simulation testing, but taking a seemingly
-different approach to that of FoundationDB[^6].
+different approach to that of FoundationDB[^7].
 
 As a final note, let me close by saying that the people behind
 FoundationDB went on to found Antithesis and spent 5 years building a
@@ -219,7 +219,12 @@ for then later simulation testing the exact same example.
         TigerBeetle’s main() Street](https://youtu.be/AGxAnkrhDGY) (P99
         CONF, 2023) .
 
-[^6]: IOG published a
+[^6]: In another [discussion](https://youtu.be/JoYjji1DZCE?t=2346) Joran
+    says that their simulator runs at 700x real-time and then
+    parallelised over 1000 cores, so for each second in real time their
+    simulation simulates 8.1 days worth of simulated time.
+
+[^7]: IOG published a
     [paper](http://www.cse.chalmers.se/~rjmh/tfp/proceedings/TFP_2020_paper_11.pdf)
     called "Flexibility with Formality: Practical Experience with Agile
     Formal Methods in Large-Scale Functional Programming" (2020), where
