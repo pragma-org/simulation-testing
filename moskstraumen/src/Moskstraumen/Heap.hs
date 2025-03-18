@@ -1,5 +1,6 @@
 module Moskstraumen.Heap (module Moskstraumen.Heap) where
 
+import qualified Data.Foldable as Foldable
 import qualified Data.Heap as Heap
 
 import Moskstraumen.Prelude
@@ -19,3 +20,7 @@ pop (Heap heap) = case Heap.viewMin heap of
 
 fromList :: (Ord time) => [(time, a)] -> Heap time a
 fromList = Heap . Heap.fromList . map (uncurry Heap.Entry)
+
+toList :: Heap time a -> [(time, a)]
+toList (Heap entries) =
+  map (\(Heap.Entry time x) -> (time, x)) (Foldable.toList entries)

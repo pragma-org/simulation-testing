@@ -35,7 +35,7 @@ data World = World
 -- end snippet
 
 -- start snippet Trace
-type Trace = [Message]
+type Trace = [(Time, Message)]
 
 -- end snippet
 
@@ -103,7 +103,13 @@ stepWorld world = case Heap.pop world.messages of
               { nodes = world.nodes
               , messages = messages' <> nodeMessages'
               , prng = prng''
-              , trace = world.trace ++ message : clientResponses
+              , -- XXX: the arrival time for client responses is arbitrary
+                trace =
+                  world.trace ++ (arrivalTime, message)
+                    : map
+                      ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                      )
+                      clientResponses
               }
 
 -- end snippet
@@ -118,22 +124,18 @@ runWorld world =
 -- end snippet
 
 -- start snippet newWorld
-newWorld :: Deployment -> [Message] -> Prng -> IO World
+newWorld :: Deployment -> Heap Time Message -> Prng -> IO World
 newWorld deployment initialMessages prng = do
   let nodeIds =
         map
           (NodeId . ("n" <>) . Text.pack . show)
           [1 .. deployment.numberOfNodes]
-  nodeHandles <-
-    replicateM deployment.numberOfNodes deployment.spawn
-  let (prng', prng'') = splitPrng prng
-      meanMicros = 20000 -- 20ms
-      initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
+  nodeHandles <- replicateM deployment.numberOfNodes deployment.spawn
   return
     World
       { nodes = Map.fromList (zip nodeIds nodeHandles)
-      , messages = initialMessages'
-      , prng = prng''
+      , messages = initialMessages
+      , prng = prng
       , trace = []
       }
 
@@ -161,7 +163,8 @@ handleResult Success _seed = do
   return True
 
 -- start snippet runTest
-runTest :: Deployment -> Workload -> Prng -> [Message] -> IO TestResult
+runTest ::
+  Deployment -> Workload -> Prng -> Heap Time Message -> IO TestResult
 runTest deployment workload prng initialMessages = do
   world <-
     newWorld
@@ -171,8 +174,9 @@ runTest deployment workload prng initialMessages = do
   resultingTrace <-
     runWorld world `finally` traverse_ (.close) world.nodes
   let ok = case workload.property of
-        LTL formula -> sat formula resultingTrace emptyEnv
-        TracePredicate predicate -> predicate resultingTrace
+        -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
+        LTL formula -> sat formula (map snd resultingTrace) emptyEnv
+        TracePredicate predicate -> predicate (map snd resultingTrace)
   if ok
     then return Success
     else return (Failure resultingTrace)
@@ -191,15 +195,28 @@ runTests deployment workload numberOfTests0 initialPrng =
       let size = 30 -- XXX: vary size over time...
       let (prng', initialMessages) = generate size prng
       let (prng'', prng''') = splitPrng prng'
-      result <- runTest deployment workload prng'' initialMessages
+      let meanMicros = 20000 -- 20ms  -- XXX: make parameter of workload
+
+      -- XXX: Split prng once more...
+      let initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
+
+      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
+
+          initMessages =
+            Heap.fromList
+              [ (epoch, makeInitMessage (makeNodeId i) (neighbours i))
+              | i <- [1 .. deployment.numberOfNodes]
+              ]
+      result <-
+        runTest deployment workload prng'' (initMessages <> initialMessages')
       case result of
         Success -> loop (n - 1) prng'''
         Failure _unShrunkTrace -> do
           initialMessagesAndTrace <-
             shrink
               (fmap testResultToMaybe . runTest deployment workload prng)
-              (shrinkList (const []))
-              initialMessages
+              (map Heap.fromList . shrinkList (const []) . Heap.toList)
+              (initMessages <> initialMessages') -- XXX: avoid shrinking initMessages?
           let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
           putStrLn
             ( "Shrunk: "
@@ -209,13 +226,7 @@ runTests deployment workload numberOfTests0 initialPrng =
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
-      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
-          initMessages =
-            [ makeInitMessage (makeNodeId i) (neighbours i)
-            | i <- [1 .. deployment.numberOfNodes]
-            ]
-
-          (prng', initialMessages) =
+      let (prng', initialMessages) =
             Gen.runGen workload.generate prng size
 
           messages :: [Message]
@@ -223,7 +234,7 @@ runTests deployment workload numberOfTests0 initialPrng =
             zipWith
               ( \message index -> message {body = message.body {msgId = Just index}}
               )
-              (initMessages <> initialMessages)
+              initialMessages
               [0 ..]
       in  (prng', messages)
 
