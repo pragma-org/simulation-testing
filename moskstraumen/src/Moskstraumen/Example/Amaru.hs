@@ -75,8 +75,11 @@ data Input
   | Topology {upsteam :: [Text], downstream :: [Text]}
   deriving stock (Show)
 
+defaultTopology :: Input
+defaultTopology = Topology ["c1"] []
+
 generateInputs :: Chain -> Gen [Input]
-generateInputs chain0 = go [Topology ["c1"] []] chain0 [] Set.empty
+generateInputs chain0 = go [] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
     go acc (Node block []) [] _done = return (reverse (Fwd block.hash block.slot block.header : acc))
