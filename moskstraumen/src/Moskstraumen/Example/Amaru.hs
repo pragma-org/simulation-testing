@@ -72,10 +72,11 @@ recreateTree (block0 : blocks0) = case block0.parent of
 data Input
   = Fwd {hash :: Hash, slot :: Int, header :: Text}
   | Bck {hash :: Hash, slot :: Int}
+  | Topology {upsteam :: [Text], downstream :: [Text]}
   deriving stock (Show)
 
 generateInputs :: Chain -> Gen [Input]
-generateInputs chain0 = go [] chain0 [] Set.empty
+generateInputs chain0 = go [Topology ["c1"] []] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
     go acc (Node block []) [] _done = return (reverse (Fwd block.hash block.slot block.header : acc))
@@ -129,6 +130,13 @@ inputsToMessages = go 0 []
               , [("hash", String hash), ("slot", Int slot), ("header", String header)]
               )
             Bck hash slot -> ("bck", [("hash", String hash), ("slot", Int slot)])
+            Topology upstream downstream ->
+              ( "topology"
+              ,
+                [ ("upstream", List (map String upstream))
+                , ("downstream", List (map String downstream))
+                ]
+              )
       in  go
             (n + 1)
             ( Message

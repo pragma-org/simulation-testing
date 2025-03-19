@@ -24,7 +24,7 @@ libMainBlackbox args =
         blackboxTestWith
           defaultTestConfig
             { numberOfTests = read numberOfTestsArg
-            , numberOfNodes = read numberOfNodes
+            , numberOfNodes = read numberOfNodesArg
             }
           binary
           ( \seed -> case workloadArg of
