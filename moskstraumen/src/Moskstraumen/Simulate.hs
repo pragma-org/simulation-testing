@@ -72,10 +72,10 @@ defaultTestConfig =
 ------------------------------------------------------------------------
 
 generateRandomArrivalTimes ::
-  Time -> Double -> [Message] -> Prng -> Heap Time Message
+  Time -> Double -> [Message] -> Prng -> (Prng, Heap Time Message)
 generateRandomArrivalTimes now meanMicros = go []
   where
-    go acc [] _prng = Heap.fromList acc
+    go acc [] prng = (prng, Heap.fromList acc)
     go acc (message : messages) prng =
       let
         (deltaMicros, prng') = exponential meanMicros prng
@@ -91,18 +91,22 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        let (prng', prng'') = splitPrng world.prng
         responses <- node.handle arrivalTime message
         let (clientResponses, nodeMessages) =
               partition (isClientNodeId . dest) responses
             meanMicros = 20000 -- 20ms
-            nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
+            (prng', nodeMessages') =
+              generateRandomArrivalTimes
+                arrivalTime
+                meanMicros
+                nodeMessages
+                world.prng
         return
           $ Left
             World
               { nodes = world.nodes
               , messages = messages' <> nodeMessages'
-              , prng = prng''
+              , prng = prng'
               , -- XXX: the arrival time for client responses is arbitrary
                 trace =
                   world.trace ++ (arrivalTime, message)
@@ -194,23 +198,21 @@ runTests deployment workload numberOfTests0 initialPrng =
     loop n prng = do
       let size = 30 -- XXX: vary size over time...
       let (prng', initialMessages) = generate size prng
-      let (prng'', prng''') = splitPrng prng'
       let meanMicros = 20000 -- 20ms  -- XXX: make parameter of workload
-
-      -- XXX: Split prng once more...
-      let initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
-
+      let (prng'', initialMessages') =
+            generateRandomArrivalTimes epoch meanMicros initialMessages prng'
+      let (prng''', prng'''') = splitPrng prng''
       let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
 
-          initMessages =
+      let initMessages =
             Heap.fromList
               [ (epoch, makeInitMessage (makeNodeId i) (neighbours i))
               | i <- [1 .. deployment.numberOfNodes]
               ]
       result <-
-        runTest deployment workload prng'' (initMessages <> initialMessages')
+        runTest deployment workload prng''' (initMessages <> initialMessages')
       case result of
-        Success -> loop (n - 1) prng'''
+        Success -> loop (n - 1) prng''''
         Failure _unShrunkTrace -> do
           initialMessagesAndTrace <-
             shrink
