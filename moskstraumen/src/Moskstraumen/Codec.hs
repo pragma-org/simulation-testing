@@ -11,17 +11,23 @@ import Moskstraumen.Pretty
 
 ------------------------------------------------------------------------
 
+-- start snippet Codec
 data Codec = Codec
   { decode :: ByteString -> Either String Message
   , encode :: Message -> ByteString
   }
 
+-- end snippet
+
+-- start snippet jsonCodec
 jsonCodec :: Codec
 jsonCodec =
   Codec
     { decode = Json.eitherDecode . BS8.fromStrict
     , encode = BS8.toStrict . Json.encode
     }
+
+-- end snippet
 
 data ValidateMarshal input output = ValidateMarshal
   { validateInput :: Parser input

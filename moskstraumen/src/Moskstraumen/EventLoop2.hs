@@ -313,27 +313,35 @@ eventLoop node initialState initialPrng validateMarshal runtime =
             effects
             eventLoopState'
 
+eventLoop' ::
+  (input -> Node state input output)
+  -> state
+  -> ValidateMarshal input output
+  -> Runtime IO
+  -> IO ()
+eventLoop' node initialState validateMarshal runtime = do
+  args <- getArgs
+  seed <- case readMaybe =<< safeHead args of
+    Nothing -> randomIO
+    Just seed -> return seed
+  eventLoop node initialState (mkPrng seed) validateMarshal runtime
+    `finally` runtime.shutdown
+
 consoleEventLoop ::
   (input -> Node state input output)
   -> state
   -> ValidateMarshal input output
   -> IO ()
 consoleEventLoop node initialState validateMarshal = do
-  args <- getArgs
-  seed <- case readMaybe =<< safeHead args of
-    Nothing -> randomIO
-    Just seed -> return seed
   runtime <- consoleRuntime jsonCodec
-  eventLoop node initialState (mkPrng seed) validateMarshal runtime
+  eventLoop' node initialState validateMarshal runtime
 
 tcpEventLoop ::
   (input -> Node state input output)
   -> state
-  -> Seed
   -> ValidateMarshal input output
   -> Int
   -> IO ()
-tcpEventLoop node initialState seed validateMarshal port = do
+tcpEventLoop node initialState validateMarshal port = do
   runtime <- tcpRuntime port noNeighbours jsonCodec
-  eventLoop node initialState (mkPrng seed) validateMarshal runtime
-    `finally` runtime.shutdown
+  eventLoop' node initialState validateMarshal runtime

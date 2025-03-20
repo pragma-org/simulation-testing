@@ -18,21 +18,48 @@ effectively means:
   3. Failures are reproducible, given the seed of the workload generator.
 
 But how do we fulfill the assumption that our distributed system is indeed
-determinisitic? This is the problem we'll tackle in this post, and we'll do so
-by means of a domain-specific language inspired by Jepsen's Maelstrom.
+determinisitic? This is the problem we'll start tackling in this post, and
+we'll do so by means of introducing a domain-specific language inspired by
+Jepsen's Maelstrom.
 
 ## Motivation
 
-* If the programming languages we were using had deterministic runtimes then we
-  could skip this, but this unfortunatelly not the case as we saw in a previous
-  [post](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/03-simulation-testing-echo-example.md).
+Hopefully by now it should already be clear why we need determinism, but the
+need for a new domain-specific language deserves some explaination.
 
-* Carve out a DSL which is expressive enough for distributed systems, while
-  easy to make deterministic
+If the programming languages we were using had deterministic runtimes then we
+could skip this, however this is unfortunately not the case as we saw in a
+previous
+[post](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/03-simulation-testing-echo-example.md).
 
-* The DSL constructs are taken straight from Maelstrom
+In fact even seemingly pure things such as iterating over a hash map can be
+non-determinisitic in some programming languages (because sometimes insertion
+order matters).
 
-* "Runtime" is made deterministic, unlike most runtimes for Maelstrom
+Besides most programming languages are not very well suited for writing
+distributed systems out of the box, so we typically need to add ways to do:
+
+  1. Message passing or RPC
+  2. Timers for timeouts and periodic work
+  3. Concurrency and parallelism
+  4. Observability
+
+Choices regarding how to do these thing idiomatically within each programming
+language can be overwhelming, and even more so if the distributed system uses
+several different programming languages.
+
+In a way the domain-specific language that we will introduce abstracts these
+necessary constructs, and provides a uniform way of writing programs across
+languages while also achiving determinism and therefore the ability to do
+simulation testing.
+
+The constructs for our doman-specific language are taken straight from Jepsen's
+Maelstrom, which already has been shown to be portable to many different
+languages while at the same time being expressive enough to implement a variety
+of distributed systems.
+
+As pointed out eariler, they key difference between what we are about to do and
+Maelstrom is that our workload generator and runtime will be deterministic.
 
 ## Syntax
 
@@ -48,7 +75,7 @@ echo input = let output = input in Reply output
 ## Semantics
 
 ```haskell
-runNode :: Node input output -> input -> output
+runNode :: Node input output -> (input -> output)
 runNode node input = case node input of
   Reply output -> output
 ```
@@ -81,7 +108,11 @@ eventLoop node validateMarshal runtime = loop
       loop
 ```
 
-* XXX: Codec
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Codec.hs snippet=Codec}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Codec.hs snippet=jsonCodec}
+```
 
 ```haskell
 consoleRuntime :: Codec -> IO (Runtime IO)
@@ -119,13 +150,14 @@ consoleRuntime codec = do
       BS8.hPutStrLn stdout (codec.encode message)
 ```
 
-* XXX: NodeHandle
+``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeHandle.hs snippet=NodeHandle}
+```
 
 ```haskell
 pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
 pipeNodeHandle hin hout processHandle =
   NodeHandle
-    { handle = \msg -> do
+    { handle = \_arrivalTime msg -> do
         BS8.hPutStr hin (encode jsonCodec msg)
         BS8.hPutStr hin "\n"
         hFlush hin
@@ -151,6 +183,10 @@ With this we've got all code needed to actually run the tests for our echo
 example.
 
 * XXX: Show real deployment of same code using TCP runtime?
+
+```haskell
+tcpRuntime :: Port -> Map NodeId Port -> Codec -> IO (Runtime IO)
+```
 
 ## Conclusion and what's next
 
