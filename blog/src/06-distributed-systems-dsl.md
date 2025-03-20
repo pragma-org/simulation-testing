@@ -6,6 +6,21 @@ status: sketch
 
 # A domain-specific language for simulation testing distributed systems
 
+In past posts we've built a simulator and a workload generator and checker for
+distributed systems. The assumption we made is that if the distributed system
+we are building is deterministic, then we can test it effectively. Where
+effectively means:
+
+  1. It's fast, because we can simulate the passage of time and thus not have
+     to wait for timeouts; 
+  2. It produces minimal counterexamples when the checker fails, because we can
+     shrink the generated workload;
+  3. Failures are reproducible, given the seed of the workload generator.
+
+But how do we fulfill the assumption that our distributed system is indeed
+determinisitic? This is the problem we'll tackle in this post, and we'll do so
+by means of a domain-specific language inspired by Jepsen's Maelstrom.
+
 ## Motivation
 
 * If the programming languages we were using had deterministic runtimes then we

@@ -1,5 +1,21 @@
 # A domain-specific language for simulation testing distributed systems
 
+In past posts we've built a simulator and a workload generator and
+checker for distributed systems. The assumption we made is that if the
+distributed system we are building is deterministic, then we can test it
+effectively. Where effectively means:
+
+1.  It's fast, because we can simulate the passage of time and thus not
+    have to wait for timeouts;
+2.  It produces minimal counterexamples when the checker fails, because
+    we can shrink the generated workload;
+3.  Failures are reproducible, given the seed of the workload generator.
+
+But how do we fulfill the assumption that our distributed system is
+indeed determinisitic? This is the problem we'll tackle in this post,
+and we'll do so by means of a domain-specific language inspired by
+Jepsen's Maelstrom.
+
 ## Motivation
 
 - If the programming languages we were using had deterministic runtimes
@@ -60,39 +76,68 @@ eventLoop node validateMarshal runtime = loop
       loop
 ```
 
-consoleRuntime :: Codec -\> IO (Runtime IO) 31 │ consoleRuntime codec =
-do 32 │ hSetBuffering stdin LineBuffering 33 │ hSetBuffering stdout
-LineBuffering 34 │ hSetBuffering stderr LineBuffering 35 │ return 36 │
-Runtime 37 │ { receive = consoleReceive 38 │ , send = consoleSend 39 │ ,
-log = \text -\> Text.hPutStrLn stderr text 40 │ , -- NOTE: `timeout 0`
-times out immediately while negative values 41 │ -- don't, hence the
-`max 0`. 42 │ timeout = \micros -\> System.Timeout.timeout (max 0
-micros) 43 │ , getCurrentTime = Time.getCurrentTime 44 │ , shutdown =
-return () 45 │ } 46 │ where 47 │ consoleReceive :: IO \[(Time,
-Message)\] 48 │ consoleReceive = do 49 │ -- XXX: Batch and read several
-lines? 50 │ line \<- BS8.hGetLine stdin 51 │ if BS8.null line 52 │ then
-return \[\] 53 │ else do 54 │ BS8.hPutStrLn stderr ("recieve: " \<\>
-line) 55 │ case codec.decode line of 56 │ Right message -\> do 57 │ now
-\<- Time.getCurrentTime 58 │ return \[(now, message)\] 59 │ Left err -\>
-60 │ -- XXX: Log and keep stats instead of error. 61 │ error 62 │ \$
-"consoleReceive: failed to decode message: " 63 │ ++ show err 64 │ ++
-"\nline: " 65 │ ++ show line 66 │ 67 │ consoleSend :: Message -\> IO ()
-68 │ consoleSend message = do 69 │ BS8.hPutStrLn stderr ("send: " \<\>
-codec.encode message) 70 │ BS8.hPutStrLn stdout (codec.encode message)
+- XXX: Codec
 
-│ pipeNodeHandle :: Handle -\> Handle -\> ProcessHandle -\> NodeHandle
-127 │ pipeNodeHandle hin hout processHandle = 128 │ NodeHandle 129 │ {
-handle = \_arrivalTime msg -\> do 130 │ BS8.hPutStr hin (encode
-jsonCodec msg) 131 │ BS8.hPutStr hin "\n" 132 │ hFlush hin 133 │ line
-\<- BS8.hGetLine hout 134 │ case decode jsonCodec line of 135 │ Left err
--\> hPutStrLn stderr err \>\> return \[\] 136 │ Right msg' -\> return
-\[msg'\] 137 │ , close = terminateProcess processHandle 138 │ } 139 │
-140 │ pipeSpawn :: FilePath -\> \[String\] -\> IO NodeHandle 141 │
-pipeSpawn fp args = do 142 │ (Just hin, Just hout, \_, processHandle)
-\<- 143 │ createProcess 144 │ (proc fp args) {std_in = CreatePipe,
-std_out = CreatePipe} 145 │ return (pipeNodeHandle hin hout
-processHandle)
-───────┴────────────────────────────────────────────────────────
+``` haskell
+consoleRuntime :: Codec -> IO (Runtime IO)
+consoleRuntime codec = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  return
+    Runtime
+      { receive = consoleReceive
+      , send = consoleSend
+      }
+  where
+    consoleReceive :: IO [(Time, Message)]
+    consoleReceive = do
+      -- XXX: Batch and read several lines?
+      line <- BS8.hGetLine stdin
+      if BS8.null line
+        then return []
+        else do
+          BS8.hPutStrLn stderr ("recieve: " <> line)
+          case codec.decode line of
+            Right message -> do
+              return [message]
+            Left err ->
+              error
+                $ "consoleReceive: failed to decode message: "
+                ++ show err
+                ++ "\nline: "
+                ++ show line
+
+    consoleSend :: Message -> IO ()
+    consoleSend message = do
+      BS8.hPutStrLn stderr ("send: " <> codec.encode message)
+      BS8.hPutStrLn stdout (codec.encode message)
+```
+
+- XXX: NodeHandle
+
+``` haskell
+pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
+pipeNodeHandle hin hout processHandle =
+  NodeHandle
+    { handle = \msg -> do
+        BS8.hPutStr hin (encode jsonCodec msg)
+        BS8.hPutStr hin "\n"
+        hFlush hin
+        line <- BS8.hGetLine hout
+        case decode jsonCodec line of
+          Left err -> hPutStrLn stderr err >> return []
+          Right msg' -> return [msg']
+    , close = terminateProcess processHandle
+    }
+
+pipeSpawn :: FilePath -> [String] -> IO NodeHandle
+pipeSpawn fp args = do
+  (Just hin, Just hout, _, processHandle) <-
+    createProcess
+      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
+  return (pipeNodeHandle hin hout processHandle)
+```
 
 ``` haskell
 blackboxTestWith ::
@@ -113,8 +158,15 @@ blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
 ```
 
-## Example: Broadcast
+With this we've got all code needed to actually run the tests for our
+echo example.
 
-## Syntax extension: async RPC call
+- XXX: Show real deployment of same code using TCP runtime?
 
-## Semantics of async RPC calls
+## Conclusion and what's next
+
+- Our runtime is trivially deterministic, over the next couple of posts
+  we'll introduce more complicated examples which will require us to
+  extend the syntax and event loop. For example we'll need some kind of
+  asynchronous RPC construct and this won't be trivially deterministic
+  anymore.
