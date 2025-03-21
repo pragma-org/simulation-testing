@@ -79,7 +79,9 @@ generateRandomArrivalTimes now meanMicros = go []
     go acc (message : messages) prng =
       let
         (deltaMicros, prng') = exponential meanMicros prng
-        arrivalTime = addTimeMicros (round deltaMicros) now
+        -- XXX: deltaMicros shouldn't be hardcoded.
+        deltaMicros' = 1
+        arrivalTime = addTimeMicros (round deltaMicros') now
       in
         go ((arrivalTime, message) : acc) messages prng'
 
