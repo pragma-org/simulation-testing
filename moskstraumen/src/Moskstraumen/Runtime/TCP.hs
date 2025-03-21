@@ -4,12 +4,12 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
+import Data.IORef
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text.IO as Text
 import Network.Socket
-import Data.IORef
 import Network.Socket.ByteString (recv, sendAll)
 import System.IO
 import qualified System.Timeout as Timeout
@@ -51,7 +51,10 @@ tcpRuntime port neighbours codec = do
       , shutdown = killThread tid
       }
   where
-    sendTcp :: IORef (Map (NodeId, MessageId) (MVar Message)) -> Message -> IO ()
+    -- XXX: This wouldn't work if we did several replies. We should refactor
+    -- event loop to only do one send (of a list of messages).
+    sendTcp ::
+      IORef (Map (NodeId, MessageId) (MVar Message)) -> Message -> IO ()
     sendTcp replyVarsMap message =
       case message.body.inReplyTo of
         Nothing -> do
@@ -64,10 +67,14 @@ tcpRuntime port neighbours codec = do
           m <- readIORef replyVarsMap
           case Map.lookup (message.dest, messageId) m of
             Nothing -> hPutStrLn stderr "send: timeout"
-            Just replyMVar -> putMVar replyMVar message 
+            Just replyMVar -> putMVar replyMVar message
 
 server ::
-  Int -> Codec -> TBQueue [(Time, Message)] -> IORef (Map (NodeId, MessageId) (MVar Message)) -> IO ()
+  Int
+  -> Codec
+  -> TBQueue [(Time, Message)]
+  -> IORef (Map (NodeId, MessageId) (MVar Message))
+  -> IO ()
 server port codec receiveQueue replyVarsMap = runTCPServer Nothing (show port) talk
   where
     talk :: Socket -> IO ()
@@ -83,12 +90,16 @@ server port codec receiveQueue replyVarsMap = runTCPServer Nothing (show port) t
               Just messageId -> do
                 now <- Time.getCurrentTime
                 replyMVar <- newEmptyMVar
-                atomicModifyIORef' replyVarsMap (\m -> (Map.insert (request.src, messageId) replyMVar m, ()))
+                atomicModifyIORef'
+                  replyVarsMap
+                  (\m -> (Map.insert (request.src, messageId) replyMVar m, ()))
                 atomically (writeTBQueue receiveQueue [(now, request)])
                 mResponse <- Timeout.timeout rEPLY_TIMEOUT_MICROS (takeMVar replyMVar)
                 case mResponse of
                   Nothing -> do
-                    atomicModifyIORef' replyVarsMap (\m -> (Map.delete (request.src, messageId) m, ()))
+                    atomicModifyIORef'
+                      replyVarsMap
+                      (\m -> (Map.delete (request.src, messageId) m, ()))
                     sendAll s "error: timeout"
                   Just response -> sendAll s (codec.encode response)
 

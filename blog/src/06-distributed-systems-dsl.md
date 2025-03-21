@@ -63,21 +63,38 @@ Maelstrom is that our workload generator and runtime will be deterministic.
 
 ## Syntax
 
-```haskell
-data NodeBody output = Reply output
+We'll start of with a the bare minimum domain-specific language able to express
+the echo example, and then we'll build upon this and then in future posts we'll
+expand the set of examples that we can implement.
 
+A node, in the distributed system, will be the basis for our language and is
+merely a function from some input to a "node body":
+
+```haskell
 type Node input output = input -> NodeBody output
 
+data NodeBody output = Reply output
+```
+
+For now the node body can only express the ability to reply to an input.
+However this is already enough to express our echo example:
+
+```haskell
 echo :: Node String String
 echo input = let output = input in Reply output
 ```
 
 ## Semantics
 
+
+
 ```haskell
-runNode :: Node input output -> (input -> output)
-runNode node input = case node input of
-  Reply output -> output
+data Effect output
+  = REPLY NodeId NodeId (Maybe MessageId) output
+
+runNode :: Node input output -> (Message -> input -> [Effect output])
+runNode node = \message input -> case node input of
+  Reply output -> [REPLY message.dst message.src message.body.msgId output]
 ```
 
 
