@@ -79,11 +79,12 @@ defaultTopology :: Input
 defaultTopology = Topology ["c1"] []
 
 generateInputs :: Chain -> Gen [Input]
-generateInputs chain0 = go [defaultTopology] chain0 [] Set.empty
+generateInputs chain0 = go [] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
     go acc (Node block []) [] _done = return (reverse (Fwd block.hash block.slot block.header : acc))
-    go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done 
+    go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done
+      -- XXX: This won't work for other chains, obviously...
       | block.height == 47 = do
           return (reverse acc)
       | otherwise = do
@@ -190,7 +191,13 @@ ss = do
       size = 30
   case parseJson bs of
     Nothing -> putStrLn "parseJson failed"
-    Just blocks -> mapM_ print $ snd $ runGen (fmap inputsToMessages (generateInputs (recreateTree blocks))) prng size
+    Just blocks ->
+      mapM_ print
+        $ snd
+        $ runGen
+          (fmap inputsToMessages (generateInputs (recreateTree blocks)))
+          prng
+          size
 
 summary :: Block -> String
 summary block =
@@ -236,7 +243,21 @@ amaruWorkload = do
   where
     tracePredicate :: Int -> [Message] -> Bool
     tracePredicate tallestHeight messages =
-      length (filter (\message -> message.body.kind == "fwd_ok") messages)
+      traceShow
+        ( "TRACEPREDICATE"
+        , length
+            ( filter
+                (\message -> message.body.kind == "fwd" && message.dest == "c1")
+                messages
+            )
+        , tallestHeight
+        , length (filter (\message -> message.body.kind == "bck") messages)
+        )
+        $ length
+          ( filter
+              (\message -> message.body.kind == "fwd" && message.dest == "c1")
+              messages
+          )
         == tallestHeight
 
 ------------------------------------------------------------------------

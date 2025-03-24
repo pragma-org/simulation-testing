@@ -54,6 +54,7 @@ data TestConfig = TestConfig
   { numberOfTests :: Int
   , numberOfNodes :: Int
   , replaySeed :: Maybe Int
+  , disableShrinking :: Bool
   }
 
 -- end snippet
@@ -65,6 +66,7 @@ defaultTestConfig =
     { numberOfTests = 100
     , numberOfNodes = 5
     , replaySeed = Nothing
+    , disableShrinking = False
     }
 
 -- end snippet
@@ -93,30 +95,36 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        responses <- node.handle arrivalTime message
-        let (clientResponses, nodeMessages) =
-              partition (isClientNodeId . dest) responses
-            meanMicros = 20000 -- 20ms
-            (prng', nodeMessages') =
-              generateRandomArrivalTimes
-                arrivalTime
-                meanMicros
-                nodeMessages
-                world.prng
-        return
-          $ Left
-            World
-              { nodes = world.nodes
-              , messages = messages' <> nodeMessages'
-              , prng = prng'
-              , -- XXX: the arrival time for client responses is arbitrary
-                trace =
-                  world.trace ++ (arrivalTime, message)
-                    : map
-                      ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
-                      )
-                      clientResponses
-              }
+        try (node.handle arrivalTime message) >>= \case
+          Left err -> do
+            putStrLn
+              "------------------------------------------------------------------------"
+            putStrLn "node.handle failed:"
+            error (displayException (err :: SomeException))
+          Right responses -> do
+            let (clientResponses, nodeMessages) =
+                  partition (isClientNodeId . dest) responses
+                meanMicros = 20000 -- 20ms
+                (prng', nodeMessages') =
+                  generateRandomArrivalTimes
+                    arrivalTime
+                    meanMicros
+                    nodeMessages
+                    world.prng
+            return
+              $ Left
+                World
+                  { nodes = world.nodes
+                  , messages = messages' <> nodeMessages'
+                  , prng = prng'
+                  , -- XXX: the arrival time for client responses is arbitrary
+                    trace =
+                      world.trace ++ (arrivalTime, message)
+                        : map
+                          ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                          )
+                          clientResponses
+                  }
 
 -- end snippet
 
@@ -191,9 +199,13 @@ runTest deployment workload prng initialMessages = do
 
 -- start snippet runTests
 runTests ::
-  Deployment -> Workload -> NumberOfTests -> Prng -> IO TestResult
-runTests deployment workload numberOfTests0 initialPrng =
-  loop numberOfTests0 initialPrng
+  TestConfig
+  -> Deployment
+  -> Workload
+  -> Prng
+  -> IO TestResult
+runTests testConfig deployment workload initialPrng =
+  loop testConfig.numberOfTests initialPrng
   where
     loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
@@ -204,8 +216,7 @@ runTests deployment workload numberOfTests0 initialPrng =
       let (prng'', initialMessages') =
             generateRandomArrivalTimes epoch meanMicros initialMessages prng'
       let (prng''', prng'''') = splitPrng prng''
-      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
-
+      let neighbours i = ["c1"] -- XXX: [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
       let initMessages =
             Heap.fromList
               [ (epoch, makeInitMessage (makeNodeId i) (neighbours i))
@@ -215,18 +226,22 @@ runTests deployment workload numberOfTests0 initialPrng =
         runTest deployment workload prng''' (initMessages <> initialMessages')
       case result of
         Success -> loop (n - 1) prng''''
-        Failure _unShrunkTrace -> do
-          initialMessagesAndTrace <-
-            shrink
-              (fmap testResultToMaybe . runTest deployment workload prng)
-              (map Heap.fromList . shrinkList (const []) . Heap.toList)
-              (initMessages <> initialMessages') -- XXX: avoid shrinking initMessages?
-          let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
-          putStrLn
-            ( "Shrunk: "
-                <> show (NonEmpty.length initialMessagesAndTrace)
-            )
-          return (Failure shrunkTrace)
+        Failure unShrunkTrace -> do
+          if testConfig.disableShrinking
+            then return (Failure unShrunkTrace)
+            else do
+              putStrLn "Shrinking..."
+              initialMessagesAndTrace <-
+                shrink
+                  (fmap testResultToMaybe . runTest deployment workload prng)
+                  (map Heap.fromList . shrinkList (const []) . Heap.toList)
+                  (initMessages <> initialMessages') -- XXX: avoid shrinking initMessages?
+              let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
+              putStrLn
+                ( "Shrunk: "
+                    <> show (NonEmpty.length initialMessagesAndTrace)
+                )
+              return (Failure shrunkTrace)
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
@@ -257,7 +272,7 @@ blackboxTestWith testConfig binaryFilePath args workload = do
           , spawn = pipeSpawn binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
-  result <- runTests deployment workload testConfig.numberOfTests prng'
+  result <- runTests testConfig deployment workload prng'
   handleResult result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
@@ -280,7 +295,7 @@ simulationTestWith testConfig node initialState validateMarshal workload = do
           { numberOfNodes = testConfig.numberOfNodes
           , spawn = simulationSpawn node initialState prng' validateMarshal
           }
-  result <- runTests deployment workload testConfig.numberOfTests prng''
+  result <- runTests testConfig deployment workload prng''
   handleResult result seed
 
 simulationTest ::

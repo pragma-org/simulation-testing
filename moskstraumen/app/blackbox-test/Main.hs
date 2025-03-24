@@ -20,16 +20,21 @@ libMainBlackbox args =
         "amaru" -> amaruWorkload
         _otherwise ->
           error ("libMainBlackbox: unknown workload: " <> workloadArg)
+
+      let (disableShrinking', args'') = case args' of
+            "--disable-shrinking" : rest -> (True, rest)
+            _otherwise -> (False, args')
       ok <-
         blackboxTestWith
           defaultTestConfig
             { numberOfTests = read numberOfTestsArg
             , numberOfNodes = read numberOfNodesArg
+            , disableShrinking = disableShrinking'
             }
           binary
           ( \seed -> case workloadArg of
               "echo" -> [show seed]
-              "amaru" -> args'
+              "amaru" -> args''
               _otherwise ->
                 error ("libMainBlackbox: unknown workload: " <> workloadArg)
           )
