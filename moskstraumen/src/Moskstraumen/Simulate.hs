@@ -73,17 +73,17 @@ defaultTestConfig =
 
 generateRandomArrivalTimes ::
   Time -> Double -> [Message] -> Prng -> (Prng, Heap Time Message)
-generateRandomArrivalTimes now meanMicros = go []
+generateRandomArrivalTimes now meanMicros = go 0 []
   where
-    go acc [] prng = (prng, Heap.fromList acc)
-    go acc (message : messages) prng =
+    go _i acc [] prng = (prng, Heap.fromList acc)
+    go i acc (message : messages) prng =
       let
         (deltaMicros, prng') = exponential meanMicros prng
         -- XXX: deltaMicros shouldn't be hardcoded.
-        deltaMicros' = 1
+        deltaMicros' = i
         arrivalTime = addTimeMicros (round deltaMicros') now
       in
-        go ((arrivalTime, message) : acc) messages prng'
+        go (i + 1) ((arrivalTime, message) : acc) messages prng'
 
 -- start snippet stepWorld
 stepWorld :: World -> IO (Either World ())
