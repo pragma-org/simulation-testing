@@ -79,16 +79,19 @@ defaultTopology :: Input
 defaultTopology = Topology ["c1"] []
 
 generateInputs :: Chain -> Gen [Input]
-generateInputs chain0 = go [] chain0 [] Set.empty
+generateInputs chain0 = go [defaultTopology] chain0 [] Set.empty
   where
     go :: [Input] -> Chain -> [GenStep] -> Set Hash -> Gen [Input]
     go acc (Node block []) [] _done = return (reverse (Fwd block.hash block.slot block.header : acc))
-    go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done =
-      go
-        (Bck parentHash parentSlot : acc)
-        (findNodeInTree_ (\block -> block.hash == parentHash) chain0)
-        steps
-        done
+    go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done 
+      | block.height == 47 = do
+          return (reverse acc)
+      | otherwise = do
+          go
+            (Bck parentHash parentSlot : acc)
+            (findNodeInTree_ (\block -> block.hash == parentHash) chain0)
+            steps
+            done
     go acc (Node block [child]) steps done = go (Fwd block.hash block.slot block.header : acc) child steps done
     go acc (Node block children) [] done
       | block.hash `Set.member` done = do
@@ -172,7 +175,22 @@ t = do
         $ snd
         $ runGen (generateInputs (recreateTree blocks)) prng size
 
--- Just blocks -> putStr $ drawTree $ fmap summary $ recreateTree blocks
+s :: IO ()
+s = do
+  bs <- readChainJson
+  case parseJson bs of
+    Nothing -> putStrLn "parseJson failed"
+    Just blocks -> putStr $ drawTree $ fmap summary $ recreateTree blocks
+
+ss :: IO ()
+ss = do
+  bs <- readChainJson
+  seed <- randomIO
+  let prng = mkPrng seed
+      size = 30
+  case parseJson bs of
+    Nothing -> putStrLn "parseJson failed"
+    Just blocks -> mapM_ print $ snd $ runGen (fmap inputsToMessages (generateInputs (recreateTree blocks))) prng size
 
 summary :: Block -> String
 summary block =
