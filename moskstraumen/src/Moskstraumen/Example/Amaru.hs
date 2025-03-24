@@ -89,7 +89,8 @@ generateInputs chain0 = go [] chain0 [] Set.empty
           return (reverse acc)
       | otherwise = do
           go
-            (Bck parentHash parentSlot : acc)
+            ( Bck parentHash parentSlot : Fwd block.hash block.slot block.header : acc
+            )
             (findNodeInTree_ (\block -> block.hash == parentHash) chain0)
             steps
             done
@@ -169,7 +170,8 @@ t = do
   case parseJson bs of
     Nothing -> putStrLn "parseJson failed"
     Just blocks -> do
-      seed <- randomIO
+      -- seed <- randomIO
+      let seed = 1234
       let prng = mkPrng seed
           size = 30
       mapM_ print
@@ -186,18 +188,57 @@ s = do
 ss :: IO ()
 ss = do
   bs <- readChainJson
-  seed <- randomIO
+  -- seed <- randomIO
+  let seed = 1234
   let prng = mkPrng seed
       size = 30
   case parseJson bs of
     Nothing -> putStrLn "parseJson failed"
-    Just blocks ->
-      mapM_ print
-        $ snd
-        $ runGen
-          (fmap inputsToMessages (generateInputs (recreateTree blocks)))
-          prng
-          size
+    Just blocks -> do
+      let messages =
+            snd
+              $ runGen
+                (fmap inputsToMessages (generateInputs (recreateTree blocks)))
+                prng
+                size
+      putStrLn "messages: "
+      mapM_
+        ( \message ->
+            print
+              ( message.body.kind
+              , message.body.fields Map.! "hash"
+              , message.body.fields Map.! "slot"
+              )
+        )
+        messages
+      putStrLn
+        $ "fwds: "
+        ++ show
+          ( length
+              ( filter
+                  ( \message -> case message.body.kind of
+                      "fwd" -> True
+                      _otherwise -> False
+                  )
+                  messages
+              )
+          )
+
+      putStrLn
+        $ "bcks: "
+        ++ show
+          ( length
+              ( filter
+                  ( \message -> case message.body.kind of
+                      "bck" -> True
+                      _otherwise -> False
+                  )
+                  messages
+              )
+          )
+
+      putStrLn ("length messages: " ++ show (length messages))
+      putStrLn ("length blocks: " ++ show (length blocks))
 
 summary :: Block -> String
 summary block =
