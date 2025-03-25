@@ -9,7 +9,7 @@ import Moskstraumen.Prelude
 type Pretty output = output -> (MessageKind, [(Field, Value)])
 
 marshal :: Pretty output -> output -> Message
-marshal pretty = undefined
+marshal _pretty = undefined
 
 marshalRPCError :: Pretty RPCError
 marshalRPCError (Timeout text) = errorMessage 0 text

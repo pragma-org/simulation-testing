@@ -4,6 +4,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Moskstraumen.Example.Echo
+import Moskstraumen.Message
 
 ------------------------------------------------------------------------
 
@@ -19,6 +20,9 @@ unitTests =
     "Unit tests"
     [ failingTestCase "blackboxTestEcho" unit_blackboxTestEcho
     , failingTestCase "simulationTestEcho" unit_simulationTestEcho
+    , testCase
+        "encodeDecodeMessage"
+        (assertBool "encodeDecode" unit_encodeDecodeMessage)
     ]
 
 ------------------------------------------------------------------------

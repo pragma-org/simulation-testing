@@ -4,7 +4,6 @@ import Data.Aeson (
   FromJSON,
   ToJSON,
   ToJSONKey,
-  pairs,
   withObject,
   (.:),
   (.:?),
@@ -16,16 +15,13 @@ import qualified Data.Aeson.KeyMap as Json
 import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Scientific (floatingOrInteger)
-import Data.Text (Text)
+import Data.Scientific (floatingOrInteger, fromFloatDigits)
 import qualified Data.Text as Text
-import Data.Time (UTCTime)
 import qualified Data.Vector as Vector
 import Data.Word
 
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
-import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -136,6 +132,7 @@ instance FromJSON Payload where
 instance ToJSON Value where
   toJSON (String text) = Json.String text
   toJSON (Int int) = Json.Number (fromInteger (fromIntegral int))
+  toJSON (Double double) = Json.Number (fromFloatDigits double)
   toJSON (Map keyValues) = Json.Object (Json.fromMapText (Map.map Json.toJSON keyValues))
   toJSON (List values) = Json.Array (Vector.fromList (map Json.toJSON values))
   toJSON (Bool bool) = Json.Bool bool
@@ -168,34 +165,33 @@ makeInitMessage myNodeId myNeighbours =
 
 ------------------------------------------------------------------------
 
-unit_encodeMessage =
-  Json.encode
-    ( Message
-        { src = "n1"
-        , dest = "n2"
-        , body =
-            Payload
-              { kind = "echo"
-              , msgId = Just 0
-              , inReplyTo = Nothing
-              , fields = Map.fromList [("echo", "foo")]
-              }
-        }
-    )
-
-unit_decodeMessage =
+unit_encodeDecodeMessage :: Bool
+unit_encodeDecodeMessage =
   Json.decode
-    "{\"src\": \"c1\", \"dest\": \"n1\", \"body\": {\"msg_id\": 1, \"type\": \"echo\", \"echo\": \"hello there\"}}"
+    ( Json.encode
+        ( Message
+            { src = "n1"
+            , dest = "n2"
+            , body =
+                Payload
+                  { kind = "echo"
+                  , msgId = Just 0
+                  , inReplyTo = Nothing
+                  , fields = Map.fromList [("echo", "hello")]
+                  }
+            }
+        )
+    )
     == Just
       ( Message
-          { src = "c1"
-          , dest = "n1"
+          { src = "n1"
+          , dest = "n2"
           , body =
               Payload
                 { kind = "echo"
-                , msgId = Just 1
+                , msgId = Just 0
                 , inReplyTo = Nothing
-                , fields = Map.fromList [("echo", "hello there")]
+                , fields = Map.fromList [("echo", "hello")]
                 }
           }
       )

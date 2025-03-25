@@ -11,7 +11,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Data.Tree
-import Debug.Trace
 
 import Moskstraumen.Generate
 import Moskstraumen.Message

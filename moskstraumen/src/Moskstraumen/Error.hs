@@ -1,8 +1,5 @@
 module Moskstraumen.Error (module Moskstraumen.Error) where
 
-import Data.Aeson
-import Data.Scientific
-
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------

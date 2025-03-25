@@ -5,7 +5,6 @@ import Data.List (partition)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Text.Printf
@@ -179,7 +178,7 @@ handleResult mPrettyMessage (Failure trace reason) seed = do
   putStrLn "Trace: "
   mapM_
     ( Text.putStrLn
-        . ( \(index, (time, message)) ->
+        . ( \(index, (_time, message)) ->
               Text.pack (printf "%3d" index)
                 <> ". "
                 <> maybe textShow (\f m -> f m) (fmap snd mPrettyMessage) message

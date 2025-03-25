@@ -1,4 +1,4 @@
-module Moskstraumen.Prelude (module X, Generic, Text, module Moskstraumen.Prelude, foldMapM) where
+module Moskstraumen.Prelude (module X, Generic, Text, module Moskstraumen.Prelude) where
 
 import Control.Exception (assert)
 import Control.Monad as X

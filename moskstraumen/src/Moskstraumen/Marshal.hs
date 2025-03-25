@@ -9,7 +9,6 @@ module Moskstraumen.Marshal (module Moskstraumen.Marshal) where
 -- https://www.stephendiehl.com/posts/generics/
 -- https://stackoverflow.com/questions/42583838/generically-build-parsers-from-custom-data-types
 
-import Data.ByteString (ByteString)
 import qualified Data.Text as Text
 import GHC.Generics
 
@@ -87,9 +86,9 @@ data EchoInput =
   deriving anyclass (Marshal, Unmarshal)
 
 -- test :: Bool
-test =
-  -- marshal (Init "a" ["b"])
-  marshal (Echo "a")
+-- test =
+--  -- marshal (Init "a" ["b"])
+--  marshal (Echo "a")
 
 -- == [("Init", [("node_id", String "a"), ("node_ids", List [String "b"])])]
 
@@ -117,7 +116,7 @@ instance (GUnmarshal a, GUnmarshal b) => GUnmarshal (a :+: b) where
 
 -- Selector Metadata
 instance (GUnmarshal f, Selector c) => GUnmarshal (M1 S c f) where
-  gunmarshal x@(kind, fieldValues) = case lookup field fieldValues of
+  gunmarshal x@(_kind, fieldValues) = case lookup field fieldValues of
     Nothing -> undefined
     Just _value -> M1 <$> gunmarshal x
     where
@@ -126,7 +125,7 @@ instance (GUnmarshal f, Selector c) => GUnmarshal (M1 S c f) where
 
 -- Constructor Metadata
 instance (GUnmarshal f, Constructor c) => GUnmarshal (M1 C c f) where
-  gunmarshal x@(MessageKind kind, fieldValues) =
+  gunmarshal x@(MessageKind kind, _fieldValues) =
     if kind == Text.pack (conName m)
       then M1 <$> gunmarshal x
       else undefined
@@ -146,5 +145,7 @@ class UnmarshalValue a where
 
 instance UnmarshalValue Text where
   unmarshalValue (String text) = Right text
+  unmarshalValue _ = Left "unmarshalValue"
 
+t :: Either String EchoInput
 t = unmarshal ("Echo", [("echo", "a")]) :: Either String EchoInput

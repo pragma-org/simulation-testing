@@ -113,6 +113,7 @@ broadcastValidateInput =
 
 broadcastMarshalInput ::
   BroadcastInput -> (MessageKind, [(Field, Value)])
+broadcastMarshalInput (Init {}) = undefined
 broadcastMarshalInput (Broadcast msg) = ("broadcast", [("message", msg)])
 broadcastMarshalInput (Topology topology) =
   ( "topology"
@@ -124,6 +125,7 @@ broadcastMarshalInput (Topology topology) =
       )
     ]
   )
+broadcastMarshalInput (Read {}) = undefined
 
 broadcastMarshalOutput ::
   BroadcastOutput -> (MessageKind, [(Field, Value)])

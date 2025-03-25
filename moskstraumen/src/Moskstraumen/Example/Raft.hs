@@ -165,6 +165,8 @@ apply (Cas key from to) store =
                     <> fromString (show value)
                 )
           )
+apply (RequestVote {}) _store = undefined
+apply (AppendEntries {}) _store = undefined
 apply Init {} _store = error "impossible, already handled"
 
 raft :: Input -> Node RaftState Input Output
@@ -198,8 +200,8 @@ raft (Init myNodeId myNeighbours) = do
   -- Leader step down thread, runs every 0.1s.
   every 100_000 $ do
     raftState <- getState
-    now <- getTime
-    when (raftState.role == Leader && raftState.stepDownDeadline < now) $ do
+    now' <- getTime
+    when (raftState.role == Leader && raftState.stepDownDeadline < now') $ do
       info
         "[leader election] Stepping down: haven't received any acks recently"
       becomeFollower
@@ -263,11 +265,11 @@ raft (RequestVote remoteTerm candidateId lastLogIndex lastLogTerm) = do
 raft
   ( AppendEntries
       term_
-      leader_id
+      _leader_id
       prev_log_index
-      prev_log_term
-      entries
-      leader_commit
+      _prev_log_term
+      _entries
+      _leader_commit
     ) = do
     maybeStepDown term_
     myTerm <- term <$> getState
@@ -314,8 +316,8 @@ replicateLog force = do
           myNodeId <- getNodeId
           info
             ("[replication] Replicating " <> textShow ni <> " to " <> unNodeId node)
-          now <- getTime
-          modifyState (\raftState -> raftState {lastReplication = now})
+          now' <- getTime
+          modifyState (\raftState' -> raftState' {lastReplication = now'})
           rpc
             node
             ( AppendEntries
@@ -468,6 +470,7 @@ requestVotes = do
                 info "[leader election] Trying to become leader"
                 -- We have a majority of votes for this term!
                 becomeLeader
+      _otherwise -> undefined
 
 -- What number would constitute a majority of n nodes?
 majority :: Int -> Int
@@ -478,7 +481,7 @@ becomeLeader = do
   role <- role <$> getState
   -- Should be a candidate.
   assertM (role == Candidate)
-  now <- getTime
+  -- XXX: ? now <- getTime
   modifyState
     ( \raftState ->
         raftState
@@ -567,6 +570,7 @@ validateOp (Map op) = case Map.toList op of
   [("cas", Map args)] -> case Map.toList args of
     [("key", Int key), ("from", Int from), ("to", Int to)] -> return (Cas key from to)
     _otherwise -> Nothing
+  _ -> Nothing
 validateOp _ = Nothing
 
 marshalInput_ :: Input -> (MessageKind, [(Field, Value)])
@@ -609,7 +613,7 @@ marshalInput_
         ( "entries"
         , List
             ( map
-                (\(Entry term_ op) -> List [Int (fromIntegral term_), marshalOp op])
+                (\(Entry term'_ op) -> List [Int (fromIntegral term'_), marshalOp op])
                 entries
             )
         )
@@ -634,6 +638,9 @@ marshalOp (Cas key from to) =
           )
         ]
     )
+marshalOp (Init {}) = undefined
+marshalOp (RequestVote {}) = undefined
+marshalOp (AppendEntries {}) = undefined
 
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
@@ -647,6 +654,7 @@ marshalOutput_ (RequestVoteRes term_ vote_granted) =
     , ("vote_granted", Bool vote_granted)
     ]
   )
+marshalOutput_ (AppendEntriesOk {}) = undefined
 
 -- marshalOutput_ (Error code text) = ("error", [("code", Int code), ("text", String text)])
 

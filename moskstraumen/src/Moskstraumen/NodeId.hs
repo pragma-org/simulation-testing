@@ -1,7 +1,6 @@
 module Moskstraumen.NodeId (module Moskstraumen.NodeId) where
 
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Text (Text)
 import qualified Data.Text as Text
 
 import Moskstraumen.Prelude

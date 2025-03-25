@@ -60,6 +60,8 @@ keyValueStore (Txn ops) = do
   let (store', ops') = transact ops store
   putState store'
   reply (TxnOk ops')
+keyValueStore (Read {}) = undefined
+keyValueStore (Cas {}) = undefined
 
 transact :: [MicroOp] -> State -> (State, [MicroOp])
 transact = go []
@@ -102,6 +104,7 @@ keyValueStoreV2 (Txn ops) = do
     Right (ReadOk store) -> do
       info $ "Successful read: " <> fromString (show store)
       return store
+    Right _ -> error "unexpected response"
   let (store', ops') = transact ops store
   info $ "attempting CAS " <> toJson store <> " " <> toJson store'
   casResponse <-
@@ -114,10 +117,12 @@ keyValueStoreV2 (Txn ops) = do
       info ("CAS failed: " <> Text.pack (show rpcError))
       raise (TxnConflict "CAS Failed!")
     Right CasOk -> info "CAS successful!"
+    Right _ -> error "unexpected response"
 
-  sender <- getSender
   info $ "replying to sender: " <> unNodeId sender
   reply (TxnOk ops')
+keyValueStoreV2 (Read {}) = undefined
+keyValueStoreV2 (Cas {}) = undefined
 
 ------------------------------------------------------------------------
 
@@ -158,6 +163,7 @@ marshalInput_ (Cas key old new create) =
 marshalOutput_ :: Output -> (MessageKind, [(Field, Value)])
 marshalOutput_ InitOk = ("init_ok", [])
 marshalOutput_ (TxnOk ops) = ("txn_ok", [("txn", List (map marshalMicroOp ops))])
+marshalOutput_ _ = error "marshalOutput_: not implemented yet"
 
 marshalMicroOp :: MicroOp -> Value
 marshalMicroOp (R key values) = List [String "r", Int key, List (map Int values)]

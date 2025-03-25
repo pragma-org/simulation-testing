@@ -35,7 +35,7 @@ noNeighbours = Map.empty
 -- >>> tcpEventLoop echo () echoValidateMarshal 3000
 -- echo -n "{\"body\":{\"type\":\"echo\",\"echo\":\"hi\",\"msg_id\":1}, \"src\": \"c1\", \"dest\":\"n1\"}" | nc 127.0.0.1 3000
 tcpRuntime :: Port -> Map NodeId Port -> Codec -> IO (Runtime IO)
-tcpRuntime port neighbours codec = do
+tcpRuntime port _neighbours codec = do
   receiveQueue <- newTBQueueIO 1024
   replyVarsMap <- newIORef Map.empty
   tid <- forkIO (server port codec receiveQueue replyVarsMap)
@@ -51,8 +51,6 @@ tcpRuntime port neighbours codec = do
       , shutdown = killThread tid
       }
   where
-    -- XXX: This wouldn't work if we did several replies. We should refactor
-    -- event loop to only do one send (of a list of messages).
     sendTcp ::
       IORef (Map (NodeId, MessageId) (MVar Message)) -> Message -> IO ()
     sendTcp replyVarsMap message =

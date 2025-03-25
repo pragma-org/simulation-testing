@@ -27,7 +27,10 @@ addTimeMicros micros (Time time) =
 diffTimeMicros :: Time -> Time -> Int
 diffTimeMicros (Time t1) (Time t2) = micros
   where
+    nanos :: Double
     nanos = realToFrac (diffUTCTime t1 t2)
+
+    micros :: Int
     micros = round (nanos * 1_000_000)
 
 iso8601Format :: Time -> Text

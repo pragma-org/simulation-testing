@@ -341,4 +341,4 @@ runNode (Node node0) = paraM aux return node0
     aux (Random ih) = do
       nodeContext <- ask
       let (double, prng') = randomR (0, 1) nodeContext.prng
-      local (\nodeContext -> nodeContext {prng = prng'}) (snd (ih double))
+      local (\nodeContext' -> nodeContext' {prng = prng'}) (snd (ih double))

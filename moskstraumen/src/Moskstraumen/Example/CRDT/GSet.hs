@@ -70,7 +70,7 @@ gsetValidateInput =
 
 gsetMarshalInput ::
   GSetInput -> (MessageKind, [(Field, Value)])
-gsetMarshalInput (Init myNodeId myNeighbours) = ("init", [])
+gsetMarshalInput (Init _myNodeId _myNeighbours) = ("init", [])
 gsetMarshalInput (Add value) = ("add", [("element", value)])
 gsetMarshalInput Read = ("read", [])
 gsetMarshalInput (Replicate values) = ("replicate", [("value", List (Set.toList values))])

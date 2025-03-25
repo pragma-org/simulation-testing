@@ -48,10 +48,10 @@ data EventLoopState state input output = EventLoopState
 
 initialEventLoopState ::
   NodeState state -> Prng -> EventLoopState state input output
-initialEventLoopState initialNodeState initialPrng =
+initialEventLoopState initialNodeState0 initialPrng =
   EventLoopState
     { rpcs = Map.empty
-    , nodeState = initialNodeState
+    , nodeState = initialNodeState0
     , nextMessageId = Map.empty
     , timerWheel = emptyTimerWheel
     , vars = Map.empty
@@ -92,13 +92,13 @@ eventLoop node initialState initialPrng validateMarshal runtime =
               -- there's a messageId associated with the timer, it means
               -- that an RPC call timed out and we should remove the
               -- successful continuation from from eventLoopState.rpcs.
-              now <- runtime.getCurrentTime
-              -- traceM ("timer triggered, now: " <> show now)
+              now' <- runtime.getCurrentTime
+              -- traceM ("timer triggered, now: " <> show now')
               let (prng', prng'') = splitPrng eventLoopState.prng
               let (nodeState', effects) =
                     execNode
                       timeoutNode
-                      (NodeContext Nothing now prng')
+                      (NodeContext Nothing now' prng')
                       eventLoopState.nodeState
               let eventLoopState' =
                     eventLoopState
