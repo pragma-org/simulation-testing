@@ -4,7 +4,6 @@ import Data.Aeson (FromJSON, decode, (.:))
 import Data.Aeson.Types (parseMaybe)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Monoid (Alt (Alt), getAlt)
 import Data.Set (Set)
@@ -12,7 +11,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Tree
 import Debug.Trace
-import System.Random
 
 import Moskstraumen.Generate
 import Moskstraumen.Message
@@ -86,12 +84,12 @@ generateInputs chain0 = go [] chain0 [] Set.empty
     go acc (Node block []) steps@(Fork parentHash parentSlot _indices : _) done
       -- XXX: This won't work for other chains, obviously...
       | block.height == 47 = do
-          return (reverse acc)
+          return (reverse (Fwd block.hash block.slot block.header : acc))
       | otherwise = do
           go
             ( Bck parentHash parentSlot : Fwd block.hash block.slot block.header : acc
             )
-            (findNodeInTree_ (\block -> block.hash == parentHash) chain0)
+            (findNodeInTree_ (\block' -> block'.hash == parentHash) chain0)
             steps
             done
     go acc (Node block [child]) steps done = go (Fwd block.hash block.slot block.header : acc) child steps done
@@ -171,7 +169,7 @@ t = do
     Nothing -> putStrLn "parseJson failed"
     Just blocks -> do
       -- seed <- randomIO
-      let seed = 1234
+      let seed = 123
       let prng = mkPrng seed
           size = 30
       mapM_ print
@@ -184,6 +182,13 @@ s = do
   case parseJson bs of
     Nothing -> putStrLn "parseJson failed"
     Just blocks -> putStr $ drawTree $ fmap summary $ recreateTree blocks
+
+debugLastBlock :: IO ()
+debugLastBlock = do
+  bs <- readChainJson
+  case parseJson bs of
+    Nothing -> putStrLn "parseJson failed"
+    Just blocks -> print (last blocks)
 
 ss :: IO ()
 ss = do
@@ -239,6 +244,7 @@ ss = do
 
       putStrLn ("length messages: " ++ show (length messages))
       putStrLn ("length blocks: " ++ show (length blocks))
+      putStrLn ("heights: " ++ show (map height blocks))
 
 summary :: Block -> String
 summary block =
@@ -279,27 +285,14 @@ amaruWorkload = do
         Workload
           { name = "Amaru workload"
           , generate = fmap inputsToMessages (generateInputs (recreateTree blocks))
-          , property = TracePredicate (tracePredicate (height (last blocks)))
+          , property = TracePredicate (tracePredicate (last blocks))
           }
   where
-    tracePredicate :: Int -> [Message] -> Bool
-    tracePredicate tallestHeight messages =
-      traceShow
-        ( "TRACEPREDICATE"
-        , length
-            ( filter
-                (\message -> message.body.kind == "fwd" && message.dest == "c1")
-                messages
-            )
-        , tallestHeight
-        , length (filter (\message -> message.body.kind == "bck") messages)
-        )
-        $ length
-          ( filter
-              (\message -> message.body.kind == "fwd" && message.dest == "c1")
-              messages
-          )
-        == tallestHeight
+    tracePredicate :: Block -> [Message] -> PropertyResult
+    tracePredicate lastBlock messages =
+      let lastMessageSUT = last messages
+          lastHashSUT = lastMessageSUT.body.fields Map.! "hash"
+      in  lastHashSUT === String lastBlock.hash
 
 ------------------------------------------------------------------------
 

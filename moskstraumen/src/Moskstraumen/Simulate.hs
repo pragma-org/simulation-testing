@@ -158,19 +158,21 @@ newWorld deployment initialMessages prng = do
 ------------------------------------------------------------------------
 
 -- start snippet TestResult
-data TestResult = Success | Failure Trace
+data TestResult = Success | Failure Trace Reason
   -- end snippet
   deriving stock (Eq, Show)
 
+type Reason = String
+
 testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
-testResultToMaybe (Failure trace) = Just trace
+testResultToMaybe (Failure trace _reason) = Just trace
 
 handleResult :: TestResult -> Seed -> IO Bool
-handleResult (Failure trace) seed = do
+handleResult (Failure trace reason) seed = do
   putStrLn ("Seed: " <> show seed)
   mapM_ print trace
-  putStrLn "Failure!"
+  putStrLn ("Failure: " <> reason)
   return False
 handleResult Success _seed = do
   putStrLn "Success!"
@@ -187,13 +189,17 @@ runTest deployment workload prng initialMessages = do
       prng
   resultingTrace <-
     runWorld world `finally` traverse_ (.close) world.nodes
-  let ok = case workload.property of
+  let propertyResult = case workload.property of
         -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
-        LTL formula -> sat formula (map snd resultingTrace) emptyEnv
+        LTL formula ->
+          if sat formula (map snd resultingTrace) emptyEnv
+            then Pass
+            else Fail "LTL formula failed"
         TracePredicate predicate -> predicate (map snd resultingTrace)
-  if ok
-    then return Success
-    else return (Failure resultingTrace)
+  case propertyResult of
+    Pass -> return Success
+    Fail reason -> do
+      return (Failure resultingTrace reason)
 
 -- end snippet
 
@@ -226,9 +232,9 @@ runTests testConfig deployment workload initialPrng =
         runTest deployment workload prng''' (initMessages <> initialMessages')
       case result of
         Success -> loop (n - 1) prng''''
-        Failure unShrunkTrace -> do
+        Failure unShrunkTrace reason -> do
           if testConfig.disableShrinking
-            then return (Failure unShrunkTrace)
+            then return (Failure unShrunkTrace reason)
             else do
               putStrLn "Shrinking..."
               initialMessagesAndTrace <-
@@ -241,7 +247,7 @@ runTests testConfig deployment workload initialPrng =
                 ( "Shrunk: "
                     <> show (NonEmpty.length initialMessagesAndTrace)
                 )
-              return (Failure shrunkTrace)
+              return (Failure shrunkTrace reason)
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =

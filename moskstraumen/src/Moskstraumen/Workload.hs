@@ -11,7 +11,12 @@ import Moskstraumen.Prelude
 
 data Property
   = LTL (Form Message)
-  | TracePredicate ([Message] -> Bool)
+  | TracePredicate ([Message] -> PropertyResult)
+
+data PropertyResult = Pass | Fail String
+
+(===) :: (Show a, Eq a) => a -> a -> PropertyResult
+x === y = if x == y then Pass else Fail (show x <> " /= " <> show y)
 
 data Workload = Workload
   { name :: Text
