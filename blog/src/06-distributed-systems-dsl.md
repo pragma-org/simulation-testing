@@ -97,11 +97,14 @@ runNode node = \message input -> case node input of
   Reply output -> [REPLY message.dst message.src message.body.msgId output]
 ```
 
+```haskell
+runEffect :: Effect output -> ValidateMarshal input output -> Runtime -> IO ()
+```
 
 ```haskell
 data ValidateMarshal input output = ValidateMarshal
   { validateInput :: Message -> Maybe input
-  , marshalOutput :: output -> Message
+  , marshalOutput :: output -> (MessageKind, [(Field, Value)])
   }
 ```
 
