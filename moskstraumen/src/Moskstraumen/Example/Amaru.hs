@@ -9,11 +9,13 @@ import Data.Monoid (Alt (Alt), getAlt)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 import Data.Tree
 import Debug.Trace
 
 import Moskstraumen.Generate
 import Moskstraumen.Message
+import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Simulate
@@ -176,12 +178,28 @@ t = do
         $ snd
         $ runGen (generateInputs (recreateTree blocks)) prng size
 
-s :: IO ()
-s = do
+chainTree :: IO Text
+chainTree = do
   bs <- readChainJson
   case parseJson bs of
-    Nothing -> putStrLn "parseJson failed"
-    Just blocks -> putStr $ drawTree $ fmap summary $ recreateTree blocks
+    Nothing -> error "parseJson failed"
+    Just blocks ->
+      return
+        ( "Block tree:\n"
+            <> ( Text.pack
+                  ( drawTree
+                      ( fmap
+                          summary
+                          (recreateTree blocks)
+                      )
+                  )
+               )
+        )
+
+s :: IO ()
+s = do
+  text <- chainTree
+  Text.putStr text
 
 debugLastBlock :: IO ()
 debugLastBlock = do
@@ -249,10 +267,9 @@ ss = do
 summary :: Block -> String
 summary block =
   unlines
-    [ "{ parent = " <> maybe "null" (Text.unpack . Text.take 8) block.parent
-    , ", hash = " <> Text.unpack (Text.take 8 block.hash)
-    , ", height = "
-        <> show block.height
+    -- [ "{ parent = " <> maybe "null" (Text.unpack . Text.take 8) block.parent
+    [ "{ hash = " <> Text.unpack (Text.take 8 block.hash)
+    , ", height = " <> show block.height
     , "}"
     ]
 
@@ -286,8 +303,32 @@ amaruWorkload = do
           { name = "Amaru workload"
           , generate = fmap inputsToMessages (generateInputs (recreateTree blocks))
           , property = TracePredicate (tracePredicate (last blocks))
+          , prettyFailure =
+              Just
+                $ ( chainTree
+                  , \message ->
+                      unNodeId message.src
+                        <> " -- "
+                        <> unMessageKind message.body.kind
+                        <> " --> "
+                        <> unNodeId message.dest
+                        <> if message.body.kind == "fwd" || message.body.kind == "bck"
+                          then
+                            " { hash: "
+                              <> prettyHash (message.body.fields Map.! "hash")
+                              <> ", slot: "
+                              <> prettySlot (message.body.fields Map.! "slot")
+                              <> "}"
+                          else ""
+                  )
           }
   where
+    prettyHash (String hash) = Text.take 8 hash <> "..."
+    prettyHash _ = error "prettyHash"
+
+    prettySlot (Int slot) = textShow slot
+    prettySlot _ = error "prettySlot"
+
     tracePredicate :: Block -> [Message] -> PropertyResult
     tracePredicate lastBlock messages =
       let lastMessageSUT = last messages

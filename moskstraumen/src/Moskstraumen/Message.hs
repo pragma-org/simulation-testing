@@ -43,6 +43,9 @@ newtype MessageKind = MessageKind Text
   deriving newtype (Eq, Ord, Show, Semigroup, Monoid, IsString)
   deriving anyclass (FromJSON, ToJSON)
 
+unMessageKind :: MessageKind -> Text
+unMessageKind (MessageKind text) = text
+
 type MessageId = Word64
 
 data Payload = Payload

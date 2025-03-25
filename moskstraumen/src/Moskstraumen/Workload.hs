@@ -16,12 +16,15 @@ data Property
 data PropertyResult = Pass | Fail String
 
 (===) :: (Show a, Eq a) => a -> a -> PropertyResult
-x === y = if x == y then Pass else Fail (show x <> " /= " <> show y)
+x === y
+  | x == y = Pass
+  | otherwise = Fail (show x <> " /= " <> show y)
 
 data Workload = Workload
   { name :: Text
   , generate :: Gen [Message]
   , property :: Property
+  , prettyFailure :: Maybe (IO Text, Message -> Text)
   }
 
 -- end snippet
