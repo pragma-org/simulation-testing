@@ -42,6 +42,7 @@ library
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node4
+    Moskstraumen.Node5
     Moskstraumen.NodeHandle
     Moskstraumen.NodeId
     Moskstraumen.Parse
