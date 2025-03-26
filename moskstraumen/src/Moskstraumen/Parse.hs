@@ -62,7 +62,7 @@ isNodeId :: Value -> Maybe NodeId
 isNodeId (String text)
   | "n" `Text.isPrefixOf` text = case Text.decimal (Text.drop 1 text) of
       Left _err -> Nothing
-      Right _nodeId -> Just (NodeId text)
+      Right (_nodeId :: Int, _rest) -> Just (NodeId text)
   | otherwise = Nothing
 isNodeId _ = Nothing
 
