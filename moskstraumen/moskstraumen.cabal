@@ -61,8 +61,10 @@ library
   other-modules:      Paths_moskstraumen
   default-extensions:
     DeriveAnyClass
+    DeriveFoldable
     DeriveFunctor
     DeriveGeneric
+    DeriveTraversable
     DerivingStrategies
     DuplicateRecordFields
     GADTs

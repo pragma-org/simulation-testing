@@ -3,10 +3,12 @@ module Moskstraumen.Node5 (module Moskstraumen.Node5) where
 import Control.Applicative
 import Data.Aeson
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 
 import Moskstraumen.FreeMonad
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
@@ -100,10 +102,11 @@ data Message a = Message
   , inReplyTo :: Maybe MessageId
   , payload :: a
   }
+  deriving stock (Functor, Foldable, Traversable)
 
-data Runtime o m = Runtime
-  { send :: Message o -> m ()
-  -- , receive :: m [(Time, Message)]
+data Runtime = Runtime
+  { send :: [Message Value] -> IO ()
+  , receive :: IO [(Time, Message Value)]
   -- , log :: Text -> m ()
   -- , timeout ::
   --     Microseconds
@@ -118,38 +121,61 @@ data NodeState s i o = NodeState
   , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
   , nextMsgId :: MessageId
   , self :: NodeId
+  , nextVarId :: VarId
   }
+
+initialNodeState :: s -> NodeState s i o
+initialNodeState s = NodeState s Map.empty 0 "uninitialised" 0
 
 data Codec i o = Codec
   { decodeInput :: Value -> Either String i
   , encodeOutput :: o -> Value
   }
 
-{-
 ------------------------------------------------------------------------
 
 runNode ::
-  (Monad m) =>
-  Node s i o
+  Node s i o a
   -> Codec i o
-  -> Runtime o m
-  -> s
+  -> NodeState s i o
   -> Message Value
-  -> m ()
-runNode node codec runtime s mv = case mv.inReplyTo of
+  -> (NodeState s i o, [Message Value], a)
+runNode node codec s mv = case mv.inReplyTo of
   Nothing -> case traverse codec.decodeInput mv of
-    Right mi -> runNodeBody (node mi.payload) codec runtime s mi
+    Right mi -> runNodeBody (void mv) (node mi.payload) codec s
+    Left _ -> undefined
+  Just msgId -> undefined
 
--- XXX: use iter
--- XXX: keep pure?
 runNodeBody ::
-  (Monad m) =>
-  NodeBody s i o ()
+  Message ()
+  -> NodeBody s i o a
   -> Codec i o
-  -> Runtime o m
-  -> s
-  -> Message i
-  -> m ()
+  -> NodeState s i o
+  -> (NodeState s i o, [Message Value], a)
+runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
+  where
+    done x (s, messages) = (s, reverse messages, x)
+
+    go (Reply o k) (s, acc) = do
+      let message =
+            Message
+              { src = mv.dest
+              , dest = mv.src
+              , msgId = undefined
+              , inReplyTo = mv.msgId
+              , payload = codec.encodeOutput o
+              }
+      k () (s, message : acc)
+    go (NewVar k) (s, acc) = do
+      let varId = s.nextVarId
+      k varId (s {nextVarId = varId + 1}, acc)
+    go (DeliverVar varId var x) acc = undefined
+    go (AwaitVar varId k) acc = undefined
+
+-- go (RPC)
+-- \| RPC NodeId i (RPCError -> x) (o -> x) ~x
+
+{-
 runNodeBody (Pure ()) _codec _runtime _s _mi = return ()
 runNodeBody (Free (Reply o k)) codec runtime s mi = do
   let mv = Message mi.dest mi.src mi.msgId (codec.encodeOutput o)
@@ -161,4 +187,18 @@ runNodeBody (Free (Send nid i k)) codec runtime s mi = do
   runNodeBody (NodeBody (k ())) codec runtime s mi
 runNodeBody (Free (RPC nid i failure success k)) codec runtime s mi = do
   runNodeBody (NodeBody (k ())) codec runtime s mi
-   -}
+ -}
+
+------------------------------------------------------------------------
+
+eventLoop :: Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
+eventLoop node initialState codec runtime =
+  go (initialNodeState initialState)
+  where
+    go s = do
+      incoming <- runtime.receive
+      forM_ incoming $ \(time, message) -> do
+        case runNode node codec s message of
+          (s', outgoing, ()) -> do
+            runtime.send outgoing
+            go s'
