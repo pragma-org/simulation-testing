@@ -13,12 +13,16 @@ import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
 
+-- start snippet Node
 type Node s i o a = i -> NodeBody s i o a
 
 type Node_ s i o = Node s i o ()
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 
+-- end snippet
+
+-- start snippet NodeF
 data NodeF s i o x
   = Reply o (() -> x)
   | Send NodeId i (() -> x)
@@ -28,6 +32,8 @@ data NodeF s i o x
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
   | TimerMicros Int (() -> x)
+
+-- end snippet
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
@@ -93,8 +99,7 @@ syncRPC nodeId i failure = do
       (\o -> unNodeBody $ generic_ (DeliverVar varId o))
   generic (AwaitVar varId)
 
-type MessageId = Word64
-
+-- start snippet Message
 data Message a = Message
   { src :: NodeId
   , dest :: NodeId
@@ -104,22 +109,30 @@ data Message a = Message
   }
   deriving stock (Functor, Foldable, Traversable)
 
+type MessageId = Word64
+
+-- end snippet
+
+-- start snippet Runtime
 data Runtime = Runtime
   { send :: [Message Value] -> IO ()
   , receive :: IO [(Time, Message Value)]
-  -- , log :: Text -> m ()
-  -- , timeout ::
-  --     Microseconds
-  --     -> m [(Time, Message)]
-  --     -> m (Maybe [(Time, Message)])
-  -- , getCurrentTime :: m Time
-  -- , shutdown :: m ()
   }
 
+-- end snippet
+-- , log :: Text -> m ()
+-- , timeout ::
+--     Microseconds
+--     -> m [(Time, Message)]
+--     -> m (Maybe [(Time, Message)])
+-- , getCurrentTime :: m Time
+-- , shutdown :: m ()
+
+-- start snippet NodeState
 data NodeState s i o = NodeState
   { localState :: s
   , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
-  , nextMsgId :: MessageId
+  , nextMessageId :: MessageId
   , self :: NodeId
   , nextVarId :: VarId
   }
@@ -127,25 +140,38 @@ data NodeState s i o = NodeState
 initialNodeState :: s -> NodeState s i o
 initialNodeState s = NodeState s Map.empty 0 "uninitialised" 0
 
+-- end snippet
+
+-- start snippet Codec
 data Codec i o = Codec
   { decodeInput :: Value -> Either String i
   , encodeOutput :: o -> Value
   }
 
+-- end snippet
+
 ------------------------------------------------------------------------
 
+-- start snippet runNode
 runNode ::
   Node s i o a
   -> Codec i o
   -> NodeState s i o
   -> Message Value
-  -> (NodeState s i o, [Message Value], a)
-runNode node codec s mv = case mv.inReplyTo of
-  Nothing -> case traverse codec.decodeInput mv of
-    Right mi -> runNodeBody (void mv) (node mi.payload) codec s
-    Left _ -> undefined
-  Just msgId -> undefined
+  -> Either String (NodeState s i o, [Message Value], a)
+runNode node codec s mv = case traverse codec.decodeInput mv of
+  Right mi -> Right (runNodeBody (void mv) (node mi.payload) codec s)
+  Left err -> Left err
 
+-- end snippet
+
+-- runNode node codec s mv = case mv.inReplyTo of
+--   Nothing -> case traverse codec.decodeInput mv of
+--     Right mi -> runNodeBody (void mv) (node mi.payload) codec s
+--     Left _ -> undefined
+--   Just msgId -> undefined
+
+-- start snippet runNodeBody
 runNodeBody ::
   Message ()
   -> NodeBody s i o a
@@ -157,15 +183,17 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
     done x (s, messages) = (s, reverse messages, x)
 
     go (Reply o k) (s, acc) = do
+      let messageId = s.nextMessageId
       let message =
             Message
               { src = mv.dest
               , dest = mv.src
-              , msgId = undefined
+              , msgId = Just messageId
               , inReplyTo = mv.msgId
               , payload = codec.encodeOutput o
               }
-      k () (s, message : acc)
+      k () (s {nextMessageId = messageId + 1}, message : acc)
+    -- end snippet
     go (NewVar k) (s, acc) = do
       let varId = s.nextVarId
       k varId (s {nextVarId = varId + 1}, acc)
@@ -191,14 +219,20 @@ runNodeBody (Free (RPC nid i failure success k)) codec runtime s mi = do
 
 ------------------------------------------------------------------------
 
+-- start snippet eventLoop
 eventLoop :: Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
 eventLoop node initialState codec runtime =
   go (initialNodeState initialState)
   where
     go s = do
       incoming <- runtime.receive
-      forM_ incoming $ \(time, message) -> do
+      forM_ incoming $ \(_time, message) -> do
         case runNode node codec s message of
-          (s', outgoing, ()) -> do
+          Left err -> do
+            putStrLn ("Failed to parse input: " <> err)
+            go s
+          Right (s', outgoing, ()) -> do
             runtime.send outgoing
             go s'
+
+-- end snippet
