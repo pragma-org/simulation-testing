@@ -52,7 +52,7 @@ instance Functor (NodeF s i o) where
   fmap f (NewVar k) = NewVar (f . k)
   fmap f (DeliverVar varId var x) = DeliverVar varId var (f x)
   fmap f (AwaitVar varId k) = AwaitVar varId (f . k)
-  fmap f (After micros k) = After micros (f . k)
+  fmap f (After micros task k) = After micros (f task) (f . k)
 
 data RPCError = E
 
@@ -166,12 +166,12 @@ initialNodeState :: s -> NodeState s i o
 initialNodeState s =
   NodeState
     { localState = s
-    , rpcs = Map.empty
     , nextMessageId = 0
     , self = "uninitialised"
-    , nextVarId = 0
     }
 
+--    , nextVarId = 0
+--    , rpcs = Map.empty
 -- end snippet
 
 -- start snippet Codec
@@ -242,9 +242,9 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
     go (Put s' k) (s, acc) =
       k () (s {localState = s'}, acc)
     -- end snippet
-    go (NewVar k) (s, acc) = do
-      let varId = s.nextVarId
-      k varId (s {nextVarId = varId + 1}, acc)
+    --    go (NewVar k) (s, acc) = do
+    --      let varId = s.nextVarId
+    --      k varId (s {nextVarId = varId + 1}, acc)
     go (DeliverVar varId var x) acc = undefined
     go (AwaitVar varId k) acc = undefined
 
@@ -326,25 +326,22 @@ consoleRuntime = do
 -- end snippet
 
 -- start snippet pipeNodeHandle
-pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
-pipeNodeHandle hin hout processHandle =
-  NodeHandle
-    { handle = \_arrivalTime message -> do
-        LBS8.hPutStr hin (Json.encode message)
-        BS8.hPutStr hin "\n"
-        hFlush hin
-        line <- BS8.hGetLine hout
-        case Json.eitherDecodeStrict line of
-          Left err -> hPutStrLn stderr err >> return []
-          Right msg' -> return [msg']
-    , close = terminateProcess processHandle
-    }
-
-pipeSpawn :: FilePath -> [String] -> IO NodeHandle
-pipeSpawn fp args = do
+pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
+pipeNodeHandle fp args = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
       (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
-  return (pipeNodeHandle hin hout processHandle)
+  return
+    NodeHandle
+      { handle = \_arrivalTime message -> do
+          LBS8.hPutStr hin (Json.encode message)
+          BS8.hPutStr hin "\n"
+          hFlush hin
+          line <- BS8.hGetLine hout
+          case Json.eitherDecodeStrict line of
+            Left err -> hPutStrLn stderr err >> return []
+            Right msg' -> return [msg']
+      , close = terminateProcess processHandle
+      }
 
 -- end snippet

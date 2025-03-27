@@ -134,12 +134,12 @@ initialNodeState :: s -> NodeState s i o
 initialNodeState s =
   NodeState
     { localState = s
-    , rpcs = Map.empty
     , nextMessageId = 0
     , self = "uninitialised"
-    , nextVarId = 0
     }
 
+--    , nextVarId = 0
+--    , rpcs = Map.empty
 ```
 
 ``` haskell
@@ -279,26 +279,23 @@ data NodeHandle = NodeHandle
 ```
 
 ``` haskell
-pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
-pipeNodeHandle hin hout processHandle =
-  NodeHandle
-    { handle = \_arrivalTime message -> do
-        LBS8.hPutStr hin (Json.encode message)
-        BS8.hPutStr hin "\n"
-        hFlush hin
-        line <- BS8.hGetLine hout
-        case Json.eitherDecodeStrict line of
-          Left err -> hPutStrLn stderr err >> return []
-          Right msg' -> return [msg']
-    , close = terminateProcess processHandle
-    }
-
-pipeSpawn :: FilePath -> [String] -> IO NodeHandle
-pipeSpawn fp args = do
+pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
+pipeNodeHandle fp args = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
       (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
-  return (pipeNodeHandle hin hout processHandle)
+  return
+    NodeHandle
+      { handle = \_arrivalTime message -> do
+          LBS8.hPutStr hin (Json.encode message)
+          BS8.hPutStr hin "\n"
+          hFlush hin
+          line <- BS8.hGetLine hout
+          case Json.eitherDecodeStrict line of
+            Left err -> hPutStrLn stderr err >> return []
+            Right msg' -> return [msg']
+      , close = terminateProcess processHandle
+      }
 
 ```
 
@@ -310,7 +307,7 @@ blackboxTestWith testConfig binaryFilePath args workload = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath (args seed)
+          , spawn = pipeNodeHandle binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests testConfig deployment workload prng'

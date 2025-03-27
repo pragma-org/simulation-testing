@@ -123,23 +123,20 @@ return
     }
  -}
 
-pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
-pipeNodeHandle hin hout processHandle =
-  NodeHandle
-    { handle = \_arrivalTime msg -> do
-        BS8.hPutStr hin (encode jsonCodec msg)
-        BS8.hPutStr hin "\n"
-        hFlush hin
-        line <- BS8.hGetLine hout
-        case decode jsonCodec line of
-          Left err -> hPutStrLn stderr err >> return []
-          Right msg' -> return [msg']
-    , close = terminateProcess processHandle
-    }
-
-pipeSpawn :: FilePath -> [String] -> IO NodeHandle
-pipeSpawn fp args = do
+pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
+pipeNodeHandle fp args = do
   (Just hin, Just hout, _, processHandle) <-
     createProcess
       (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
-  return (pipeNodeHandle hin hout processHandle)
+  return
+    NodeHandle
+      { handle = \_arrivalTime msg -> do
+          BS8.hPutStr hin (encode jsonCodec msg)
+          BS8.hPutStr hin "\n"
+          hFlush hin
+          line <- BS8.hGetLine hout
+          case decode jsonCodec line of
+            Left err -> hPutStrLn stderr err >> return []
+            Right msg' -> return [msg']
+      , close = terminateProcess processHandle
+      }

@@ -291,7 +291,7 @@ blackboxTestWith testConfig binaryFilePath args workload = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath (args seed)
+          , spawn = pipeNodeHandle binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests testConfig deployment workload prng'
