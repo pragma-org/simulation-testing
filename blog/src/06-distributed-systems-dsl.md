@@ -93,8 +93,6 @@ However this is already enough to express our echo example:
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Codec}
 ```
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Runtime}
-```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeState}
 ```
@@ -108,15 +106,29 @@ However this is already enough to express our echo example:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNodeBody}
 ```
 
+## Event loop
+
+* Test deployment vs production deployment
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=eventLoop}
 ```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Runtime}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=consoleRuntime}
+```
+
+```haskell
+tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
+```
+
+## Interaction with simulator
 
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeHandle.hs snippet=NodeHandle}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=consoleRuntime}
-```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=pipeNodeHandle}
 ```
@@ -127,11 +139,6 @@ However this is already enough to express our echo example:
 With this we've got all code needed to actually run the tests for our echo
 example.
 
-* XXX: Show real deployment of same code using TCP runtime?
-
-```haskell
-tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
-```
 
 ## Conclusion and what's next
 

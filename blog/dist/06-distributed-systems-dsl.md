@@ -121,14 +121,6 @@ data Codec i o = Codec
 ```
 
 ``` haskell
-data Runtime = Runtime
-  { send :: [Message Value] -> IO ()
-  , receive :: IO [(Time, Message Value)]
-  }
-
-```
-
-``` haskell
 data NodeState s i o = NodeState
   { localState :: s
   , nextMessageId :: MessageId
@@ -202,6 +194,10 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
       k () (s {localState = s'}, acc)
 ```
 
+## Event loop
+
+- Test deployment vs production deployment
+
 ``` haskell
 eventLoop :: Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
 eventLoop node initialState codec runtime =
@@ -221,9 +217,9 @@ eventLoop node initialState codec runtime =
 ```
 
 ``` haskell
-data NodeHandle = NodeHandle
-  { handle :: Time -> Message -> IO [Message]
-  , close :: IO ()
+data Runtime = Runtime
+  { send :: [Message Value] -> IO ()
+  , receive :: IO [(Time, Message Value)]
   }
 
 ```
@@ -265,6 +261,20 @@ consoleRuntime = do
           stderr
           ("consoleRuntime: sent: " <> LBS8.toStrict (Json.encode message))
         BS8.hPutStrLn stdout (LBS8.toStrict (Json.encode message))
+
+```
+
+``` haskell
+tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
+```
+
+## Interaction with simulator
+
+``` haskell
+data NodeHandle = NodeHandle
+  { handle :: Time -> Message -> IO [Message]
+  , close :: IO ()
+  }
 
 ```
 
@@ -313,12 +323,6 @@ blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
 With this we've got all code needed to actually run the tests for our
 echo example.
-
-- XXX: Show real deployment of same code using TCP runtime?
-
-``` haskell
-tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
-```
 
 ## Conclusion and what's next
 
