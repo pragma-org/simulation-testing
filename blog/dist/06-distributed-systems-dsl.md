@@ -89,7 +89,7 @@ For now the node body can only express the ability to reply to an input,
 s. However this is already enough to express our echo example:
 
 ``` haskell
-echo :: Node state String String ()
+echo :: Node () String String ()
 echo input = let output = input in NodeBody (Free (Reply output Pure))
 
 ```
@@ -263,7 +263,17 @@ consoleRuntime = do
 ```
 
 ``` haskell
+testMain :: IO ()
+testMain = eventLoop echo () echoCodec =<< consoleRuntime
+
+```
+
+``` haskell
 tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
+
+prodMain :: Port -> Map NodeId Port -> IO ()
+prodMain port peers = eventLoop echo () echoCodec =<< tcpRuntime port peers
+
 ```
 
 ## Interaction with simulator
@@ -314,6 +324,9 @@ blackboxTestWith testConfig binaryFilePath args workload = do
 blackboxTest :: FilePath -> Workload -> IO Bool
 blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
+```
+
+``` haskell
 ```
 
 With this we've got all code needed to actually run the tests for our

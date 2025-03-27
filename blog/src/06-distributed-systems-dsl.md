@@ -119,9 +119,12 @@ However this is already enough to express our echo example:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=consoleRuntime}
 ```
 
-```haskell
-tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=testMain}
 ```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=prodMain}
+```
+
 
 ## Interaction with simulator
 
@@ -134,6 +137,9 @@ tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=blackboxTest}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=simulatorMain}
 ```
 
 With this we've got all code needed to actually run the tests for our echo

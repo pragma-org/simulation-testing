@@ -14,6 +14,7 @@ import Moskstraumen.FreeMonad
 import Moskstraumen.NodeHandle (NodeHandle (..), close, handle)
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Simulate
 import Moskstraumen.Time
 import Moskstraumen.VarId
 
@@ -113,7 +114,7 @@ syncRPC nodeId i failure = do
 ------------------------------------------------------------------------
 
 -- start snippet echo
-echo :: Node state String String ()
+echo :: Node () String String ()
 echo input = let output = input in NodeBody (Free (Reply output Pure))
 
 -- end snippet
@@ -326,6 +327,36 @@ consoleRuntime = do
 
 -- end snippet
 
+echoCodec :: Codec String String
+echoCodec =
+  Codec
+    { decodeInput = \value -> case Json.fromJSON value of
+        Json.Success input -> Right input
+        Json.Error err -> Left err
+    , encodeOutput = Json.toJSON
+    , encodeInput = Json.toJSON
+    }
+
+-- start snippet testMain
+testMain :: IO ()
+testMain = eventLoop echo () echoCodec =<< consoleRuntime
+
+-- end snippet
+
+type Port = Int
+
+-- start snippet prodMain
+tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
+-- end snippet
+tcpRuntime = undefined
+
+-- start snippet prodMain
+
+prodMain :: Port -> Map NodeId Port -> IO ()
+prodMain port peers = eventLoop echo () echoCodec =<< tcpRuntime port peers
+
+-- end snippet
+
 -- start snippet pipeNodeHandle
 pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
 pipeNodeHandle fp args = do
@@ -346,3 +377,11 @@ pipeNodeHandle fp args = do
       }
 
 -- end snippet
+
+-- start snippet simulatorMain
+simulatorMain :: IO Bool
+simulatorMain = blackboxTest "/path/to/test-main-binary" workload
+  where
+    -- end snippet
+
+    workload = undefined
