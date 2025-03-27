@@ -327,6 +327,9 @@ blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 ```
 
 ``` haskell
+simulatorMain :: IO Bool
+simulatorMain = blackboxTest "/path/to/test-main-binary" workload
+  where
 ```
 
 With this we've got all code needed to actually run the tests for our

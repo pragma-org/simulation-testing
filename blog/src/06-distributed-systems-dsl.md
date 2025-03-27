@@ -139,7 +139,7 @@ However this is already enough to express our echo example:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=blackboxTest}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=simulatorMain}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=simulatorMain}
 ```
 
 With this we've got all code needed to actually run the tests for our echo
