@@ -88,6 +88,9 @@ For now the node body can only express the ability to reply to an input.
 However this is already enough to express our echo example:
 
 ``` haskell
+echo :: Node state String String ()
+echo input = let output = input in NodeBody (Free (Reply output Pure))
+
 ```
 
 ## Semantics

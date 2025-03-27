@@ -111,8 +111,11 @@ syncRPC nodeId i failure = do
 
 ------------------------------------------------------------------------
 
+-- start snippet echo
 echo :: Node state String String ()
 echo input = let output = input in NodeBody (Free (Reply output Pure))
+
+-- end snippet
 
 ------------------------------------------------------------------------
 
