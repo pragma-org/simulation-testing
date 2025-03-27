@@ -109,7 +109,7 @@ node handle (if needed).
 A trace is merely a list of messages:
 
 ``` haskell
-type Trace = [Message]
+type Trace = [(Time, Message)]
 
 ```
 
@@ -144,20 +144,36 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        let (prng', prng'') = splitPrng world.prng
-        responses <- node.handle arrivalTime message
-        let (clientResponses, nodeMessages) =
-              partition (isClientNodeId . dest) responses
-            meanMicros = 20000 -- 20ms
-            nodeMessages' = generateRandomArrivalTimes arrivalTime meanMicros nodeMessages prng'
-        return
-          $ Left
-            World
-              { nodes = world.nodes
-              , messages = messages' <> nodeMessages'
-              , prng = prng''
-              , trace = world.trace ++ message : clientResponses
-              }
+        try (node.handle arrivalTime message) >>= \case
+          Left err -> do
+            putStrLn
+              "------------------------------------------------------------------------"
+            putStrLn "node.handle failed:"
+            error (displayException (err :: SomeException))
+          Right responses -> do
+            let (clientResponses, nodeMessages) =
+                  partition (isClientNodeId . dest) responses
+                meanMicros = 20000 -- 20ms
+                (prng', nodeMessages') =
+                  generateRandomArrivalTimes
+                    arrivalTime
+                    meanMicros
+                    nodeMessages
+                    world.prng
+            return
+              $ Left
+                World
+                  { nodes = world.nodes
+                  , messages = messages' <> nodeMessages'
+                  , prng = prng'
+                  , -- XXX: the arrival time for client responses is arbitrary
+                    trace =
+                      world.trace ++ (arrivalTime, message)
+                        : map
+                          ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                          )
+                          clientResponses
+                  }
 
 ```
 
@@ -211,22 +227,18 @@ Given the node count, a spawn function, a list of initial messages, and
 a PRNG, we can construct a fake "world" as follows:
 
 ``` haskell
-newWorld :: Deployment -> [Message] -> Prng -> IO World
+newWorld :: Deployment -> Heap Time Message -> Prng -> IO World
 newWorld deployment initialMessages prng = do
   let nodeIds =
         map
           (NodeId . ("n" <>) . Text.pack . show)
           [1 .. deployment.numberOfNodes]
-  nodeHandles <-
-    replicateM deployment.numberOfNodes deployment.spawn
-  let (prng', prng'') = splitPrng prng
-      meanMicros = 20000 -- 20ms
-      initialMessages' = generateRandomArrivalTimes epoch meanMicros initialMessages prng'
+  nodeHandles <- replicateM deployment.numberOfNodes deployment.spawn
   return
     World
       { nodes = Map.fromList (zip nodeIds nodeHandles)
-      , messages = initialMessages'
-      , prng = prng''
+      , messages = initialMessages
+      , prng = prng
       , trace = []
       }
 
@@ -246,6 +258,7 @@ data TestConfig = TestConfig
   { numberOfTests :: Int
   , numberOfNodes :: Int
   , replaySeed :: Maybe Int
+  , disableShrinking :: Bool
   }
 
 ```
@@ -257,6 +270,7 @@ defaultTestConfig =
     { numberOfTests = 100
     , numberOfNodes = 5
     , replaySeed = Nothing
+    , disableShrinking = False
     }
 
 ```
@@ -273,10 +287,23 @@ the notion of how client requests are generated and how traces are
 checked[^2]:
 
 ``` haskell
+
+data Property
+  = LTL (Form Message)
+  | TracePredicate ([Message] -> PropertyResult)
+
+data PropertyResult = Pass | Fail String
+
+(===) :: (Show a, Eq a) => a -> a -> PropertyResult
+x === y
+  | x == y = Pass
+  | otherwise = Fail (show x <> " /= " <> show y)
+
 data Workload = Workload
   { name :: Text
-  , generateMessage :: Gen Message
-  , property :: Form Message
+  , generate :: Gen [Message]
+  , property :: Property
+  , prettyFailure :: Maybe (IO Text, Message -> Text)
   }
 
 ```
@@ -284,25 +311,21 @@ data Workload = Workload
 Given the above we can write the main test loop:
 
 ``` haskell
-blackboxTestWith :: TestConfig -> FilePath -> Workload -> IO Bool
-blackboxTestWith testConfig binaryFilePath workload = do
+blackboxTestWith ::
+  TestConfig -> FilePath -> (Seed -> [String]) -> Workload -> IO Bool
+blackboxTestWith testConfig binaryFilePath args workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = pipeSpawn binaryFilePath seed
+          , spawn = pipeSpawn binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
-  result <- runTests deployment workload testConfig.numberOfTests prng'
-  case result of
-    Failure trace -> do
-      putStrLn ("Seed: " <> show seed)
-      print trace
-      return False
-    Success -> return True
+  result <- runTests testConfig deployment workload prng'
+  handleResult workload.prettyFailure result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
-blackboxTest = blackboxTestWith defaultTestConfig
+blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
 ```
 
@@ -314,49 +337,66 @@ The only thing that remains is to loop `numberOfTests` times, generating
 and executing the tests each time.
 
 ``` haskell
-data TestResult = Success | Failure Trace
+data TestResult = Success | Failure Trace Reason
 ```
 
 ``` haskell
 runTests ::
-  Deployment -> Workload -> NumberOfTests -> Prng -> IO TestResult
-runTests deployment workload numberOfTests0 initialPrng =
-  loop numberOfTests0 initialPrng
+  TestConfig
+  -> Deployment
+  -> Workload
+  -> Prng
+  -> IO TestResult
+runTests testConfig deployment workload initialPrng =
+  loop testConfig.numberOfTests initialPrng
   where
     loop :: NumberOfTests -> Prng -> IO TestResult
     loop 0 _prng = return Success
     loop n prng = do
-      let (prng', initialMessages) = generate 100 prng -- XXX: vary size over time...
-      let (prng'', prng''') = splitPrng prng'
-      result <- runTest deployment workload prng'' initialMessages
+      let size = 30 -- XXX: vary size over time...
+      let (prng', initialMessages) = generate size prng
+      let meanMicros = 20000 -- 20ms  -- XXX: make parameter of workload
+      let (prng'', initialMessages') =
+            generateRandomArrivalTimes epoch meanMicros initialMessages prng'
+      let (prng''', prng'''') = splitPrng prng''
+      let neighbours i = ["c1"] -- XXX: [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
+      let initMessages =
+            Heap.fromList
+              [ (epoch, makeInitMessage (makeNodeId i) (neighbours i))
+              | i <- [1 .. deployment.numberOfNodes]
+              ]
+      result <-
+        runTest deployment workload prng''' (initMessages <> initialMessages')
       case result of
-        Success -> loop (n - 1) prng'''
-        Failure _unShrunkTrace -> do
-          initialMessagesAndTrace <-
-            shrink
-              (fmap testResultToMaybe . runTest deployment workload prng)
-              (shrinkList (const []))
-              initialMessages
-          let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
-          return (Failure shrunkTrace)
+        Success -> loop (n - 1) prng''''
+        Failure unShrunkTrace reason -> do
+          if testConfig.disableShrinking
+            then return (Failure unShrunkTrace reason)
+            else do
+              putStrLn "Shrinking..."
+              initialMessagesAndTrace <-
+                shrink
+                  (fmap testResultToMaybe . runTest deployment workload prng)
+                  (map Heap.fromList . shrinkList (const []) . Heap.toList)
+                  (initMessages <> initialMessages') -- XXX: avoid shrinking initMessages?
+              let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
+              putStrLn
+                ( "Shrunk: "
+                    <> show (NonEmpty.length initialMessagesAndTrace)
+                )
+              return (Failure shrunkTrace reason)
 
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
-      let initMessages =
-            [ makeInitMessage (makeNodeId i) (map makeNodeId js)
-            | i <- [1 .. deployment.numberOfNodes]
-            , let js = [j | j <- [1 .. deployment.numberOfNodes], j /= i]
-            ]
-
-          (prng', initialMessages) =
-            Gen.runGen (Gen.listOf workload.generateMessage) prng size
+      let (prng', initialMessages) =
+            Gen.runGen workload.generate prng size
 
           messages :: [Message]
           messages =
             zipWith
               ( \message index -> message {body = message.body {msgId = Just index}}
               )
-              (initMessages <> initialMessages)
+              initialMessages
               [0 ..]
       in  (prng', messages)
 
@@ -366,18 +406,27 @@ Where running a single test creates a new fake world, simulates it and
 checks the trace:
 
 ``` haskell
-runTest :: Deployment -> Workload -> Prng -> [Message] -> IO TestResult
+runTest ::
+  Deployment -> Workload -> Prng -> Heap Time Message -> IO TestResult
 runTest deployment workload prng initialMessages = do
   world <-
     newWorld
       deployment
       initialMessages
       prng
-  resultingTrace <- runWorld world
-  traverse_ (.close) world.nodes
-  if sat workload.property resultingTrace emptyEnv
-    then return Success
-    else return (Failure resultingTrace)
+  resultingTrace <-
+    runWorld world `finally` traverse_ (.close) world.nodes
+  let propertyResult = case workload.property of
+        -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
+        LTL formula ->
+          if sat formula (map snd resultingTrace) emptyEnv
+            then Pass
+            else Fail "LTL formula failed"
+        TracePredicate predicate -> predicate (map snd resultingTrace)
+  case propertyResult of
+    Pass -> return Success
+    Fail reason -> do
+      return (Failure resultingTrace reason)
 
 ```
 

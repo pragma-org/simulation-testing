@@ -6,6 +6,8 @@ status: sketch
 
 # A domain-specific language for simulation testing distributed systems
 
+*Work in progress, please don't share, but do feel free to get involved!*
+
 In past posts we've built a simulator and a workload generator and checker for
 distributed systems. The assumption we made is that if the distributed system
 we are building is deterministic, then we can test it effectively. Where
@@ -70,130 +72,43 @@ expand the set of examples that we can implement.
 A node, in the distributed system, will be the basis for our language and is
 merely a function from some input to a "node body":
 
-```haskell
-type Node input output = input -> NodeBody output
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Node}
+```
 
-data NodeBody output = Reply output
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeF}
 ```
 
 For now the node body can only express the ability to reply to an input.
 However this is already enough to express our echo example:
 
-```haskell
-echo :: Node String String
-echo input = let output = input in Reply output
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=echo}
 ```
 
 ## Semantics
 
 
-
-```haskell
-data Effect output
-  = REPLY NodeId NodeId (Maybe MessageId) output
-
-runNode :: Node input output -> (Message -> input -> [Effect output])
-runNode node = \message input -> case node input of
-  Reply output -> [REPLY message.dst message.src message.body.msgId output]
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Message}
 ```
 
-```haskell
-runEffect :: Effect output -> ValidateMarshal input output -> Runtime -> IO ()
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Codec}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Runtime}
 ```
 
-```haskell
-data ValidateMarshal input output = ValidateMarshal
-  { validateInput :: Message -> Maybe input
-  , marshalOutput :: output -> (MessageKind, [(Field, Value)])
-  }
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNode}
 ```
 
-```haskell
-data Runtime = Runtime
-  { receive :: IO [Message]
-  , send :: Message -> IO ()
-  }
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNodeBody}
 ```
 
-```haskell
-eventLoop :: Node input output -> ValidateMarshal input output -> Runtime -> IO ()
-eventLoop node validateMarshal runtime = loop
-  where
-    loop = do
-      messages <- runtime.receive
-      let inputs = catMaybes (map validateMarshal.validateInput messages)
-          outputs = map (runNode node) inputs
-          messages' = map validateMarshal.marshalOutput outputs
-      mapM_ runtime.send messages'
-      loop
-```
-
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Codec.hs snippet=Codec}
-```
-
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Codec.hs snippet=jsonCodec}
-```
-
-```haskell
-consoleRuntime :: Codec -> IO (Runtime IO)
-consoleRuntime codec = do
-  hSetBuffering stdin LineBuffering
-  hSetBuffering stdout LineBuffering
-  hSetBuffering stderr LineBuffering
-  return
-    Runtime
-      { receive = consoleReceive
-      , send = consoleSend
-      }
-  where
-    consoleReceive :: IO [(Time, Message)]
-    consoleReceive = do
-      -- XXX: Batch and read several lines?
-      line <- BS8.hGetLine stdin
-      if BS8.null line
-        then return []
-        else do
-          BS8.hPutStrLn stderr ("recieve: " <> line)
-          case codec.decode line of
-            Right message -> do
-              return [message]
-            Left err ->
-              error
-                $ "consoleReceive: failed to decode message: "
-                ++ show err
-                ++ "\nline: "
-                ++ show line
-
-    consoleSend :: Message -> IO ()
-    consoleSend message = do
-      BS8.hPutStrLn stderr ("send: " <> codec.encode message)
-      BS8.hPutStrLn stdout (codec.encode message)
-```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeHandle.hs snippet=NodeHandle}
 ```
 
-```haskell
-pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
-pipeNodeHandle hin hout processHandle =
-  NodeHandle
-    { handle = \_arrivalTime msg -> do
-        BS8.hPutStr hin (encode jsonCodec msg)
-        BS8.hPutStr hin "\n"
-        hFlush hin
-        line <- BS8.hGetLine hout
-        case decode jsonCodec line of
-          Left err -> hPutStrLn stderr err >> return []
-          Right msg' -> return [msg']
-    , close = terminateProcess processHandle
-    }
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=consoleRuntime}
+```
 
-pipeSpawn :: FilePath -> [String] -> IO NodeHandle
-pipeSpawn fp args = do
-  (Just hin, Just hout, _, processHandle) <-
-    createProcess
-      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
-  return (pipeNodeHandle hin hout processHandle)
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=pipeNodeHandle}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=blackboxTest}
@@ -205,7 +120,7 @@ example.
 * XXX: Show real deployment of same code using TCP runtime?
 
 ```haskell
-tcpRuntime :: Port -> Map NodeId Port -> Codec -> IO (Runtime IO)
+tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
 ```
 
 ## Conclusion and what's next

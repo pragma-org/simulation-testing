@@ -2,10 +2,16 @@ module Moskstraumen.Node5 (module Moskstraumen.Node5) where
 
 import Control.Applicative
 import Data.Aeson
+import qualified Data.Aeson as Json
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import System.IO
+import System.Process
 
 import Moskstraumen.FreeMonad
+import Moskstraumen.NodeHandle (NodeHandle (..), close, handle)
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Time
@@ -13,10 +19,11 @@ import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
 
--- start snippet Node
-type Node s i o a = i -> NodeBody s i o a
-
 type Node_ s i o = Node s i o ()
+
+-- start snippet Node
+
+type Node s i o a = i -> NodeBody s i o a
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 
@@ -25,15 +32,16 @@ newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 -- start snippet NodeF
 data NodeF s i o x
   = Reply o (() -> x)
-  | Send NodeId i (() -> x)
+  | Get (s -> x)
+  | Put s (() -> x)
+  | -- end snippet
+    Send NodeId i (() -> x)
   | RPC NodeId i (RPCError -> x) (o -> x) ~x
   | Fail String
   | NewVar (VarId -> x)
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
   | TimerMicros Int (() -> x)
-
--- end snippet
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
@@ -70,6 +78,8 @@ instance Monad (NodeBody s i o) where
   return = pure
   NodeBody m >>= k = NodeBody (m >>= unNodeBody . k)
 
+------------------------------------------------------------------------
+
 generic ::
   ( (x -> Free f x)
     -> NodeF state input output (Free (NodeF state input output) a)
@@ -99,6 +109,13 @@ syncRPC nodeId i failure = do
       (\o -> unNodeBody $ generic_ (DeliverVar varId o))
   generic (AwaitVar varId)
 
+------------------------------------------------------------------------
+
+echo :: Node state String String ()
+echo input = let output = input in NodeBody (Free (Reply output Pure))
+
+------------------------------------------------------------------------
+
 -- start snippet Message
 data Message a = Message
   { src :: NodeId
@@ -107,7 +124,8 @@ data Message a = Message
   , inReplyTo :: Maybe MessageId
   , payload :: a
   }
-  deriving stock (Functor, Foldable, Traversable)
+  deriving stock (Generic, Functor, Foldable, Traversable)
+  deriving anyclass (FromJSON, ToJSON)
 
 type MessageId = Word64
 
@@ -131,14 +149,21 @@ data Runtime = Runtime
 -- start snippet NodeState
 data NodeState s i o = NodeState
   { localState :: s
-  , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
   , nextMessageId :: MessageId
+  , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
   , self :: NodeId
   , nextVarId :: VarId
   }
 
 initialNodeState :: s -> NodeState s i o
-initialNodeState s = NodeState s Map.empty 0 "uninitialised" 0
+initialNodeState s =
+  NodeState
+    { localState = s
+    , rpcs = Map.empty
+    , nextMessageId = 0
+    , self = "uninitialised"
+    , nextVarId = 0
+    }
 
 -- end snippet
 
@@ -193,6 +218,10 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
               , payload = codec.encodeOutput o
               }
       k () (s {nextMessageId = messageId + 1}, message : acc)
+    go (Get k) (s, acc) =
+      k s.localState (s, acc)
+    go (Put s' k) (s, acc) =
+      k () (s {localState = s'}, acc)
     -- end snippet
     go (NewVar k) (s, acc) = do
       let varId = s.nextVarId
@@ -234,5 +263,69 @@ eventLoop node initialState codec runtime =
           Right (s', outgoing, ()) -> do
             runtime.send outgoing
             go s'
+
+-- end snippet
+
+-- start snippet consoleRuntime
+consoleRuntime :: IO Runtime
+consoleRuntime = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  return
+    Runtime
+      { receive = consoleReceive
+      , send = consoleSend
+      }
+  where
+    consoleReceive :: IO [(Time, Message Value)]
+    consoleReceive = do
+      line <- BS8.hGetLine stdin
+      if BS8.null line
+        then return []
+        else do
+          BS8.hPutStrLn stderr ("consoleRuntime: recieved: " <> line)
+          case Json.eitherDecodeStrict line of
+            Right message -> do
+              now <- getCurrentTime
+              return [(now, message)]
+            Left err ->
+              error
+                $ "consoleRuntime: failed to decode message: "
+                ++ show err
+                ++ "\nline: "
+                ++ show line
+
+    consoleSend :: [Message Value] -> IO ()
+    consoleSend messages =
+      forM_ messages $ \message -> do
+        BS8.hPutStrLn
+          stderr
+          ("consoleRuntime: sent: " <> LBS8.toStrict (Json.encode message))
+        BS8.hPutStrLn stdout (LBS8.toStrict (Json.encode message))
+
+-- end snippet
+
+-- start snippet pipeNodeHandle
+pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
+pipeNodeHandle hin hout processHandle =
+  NodeHandle
+    { handle = \_arrivalTime message -> do
+        LBS8.hPutStr hin (Json.encode message)
+        BS8.hPutStr hin "\n"
+        hFlush hin
+        line <- BS8.hGetLine hout
+        case Json.eitherDecodeStrict line of
+          Left err -> hPutStrLn stderr err >> return []
+          Right msg' -> return [msg']
+    , close = terminateProcess processHandle
+    }
+
+pipeSpawn :: FilePath -> [String] -> IO NodeHandle
+pipeSpawn fp args = do
+  (Just hin, Just hout, _, processHandle) <-
+    createProcess
+      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
+  return (pipeNodeHandle hin hout processHandle)
 
 -- end snippet

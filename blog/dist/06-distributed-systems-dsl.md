@@ -1,5 +1,8 @@
 # A domain-specific language for simulation testing distributed systems
 
+*Work in progress, please don't share, but do feel free to get
+involved!*
+
 In past posts we've built a simulator and a workload generator and
 checker for distributed systems. The assumption we made is that if the
 distributed system we are building is deterministic, then we can test it
@@ -59,102 +62,106 @@ deterministic.
 
 ## Syntax
 
+We'll start of with a the bare minimum domain-specific language able to
+express the echo example, and then we'll build upon this and then in
+future posts we'll expand the set of examples that we can implement.
+
+A node, in the distributed system, will be the basis for our language
+and is merely a function from some input to a "node body":
+
 ``` haskell
-data NodeBody output = Reply output
 
-type Node input output = input -> NodeBody output
+type Node s i o a = i -> NodeBody s i o a
 
-echo :: Node String String
-echo input = let output = input in Reply output
+newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
+
+```
+
+``` haskell
+data NodeF s i o x
+  = Reply o (() -> x)
+  | Get (s -> x)
+  | Put s (() -> x)
+```
+
+For now the node body can only express the ability to reply to an input.
+However this is already enough to express our echo example:
+
+``` haskell
 ```
 
 ## Semantics
 
 ``` haskell
-runNode :: Node input output -> (input -> output)
-runNode node input = case node input of
-  Reply output -> output
+data Message a = Message
+  { src :: NodeId
+  , dest :: NodeId
+  , msgId :: Maybe MessageId
+  , inReplyTo :: Maybe MessageId
+  , payload :: a
+  }
+  deriving stock (Generic, Functor, Foldable, Traversable)
+  deriving anyclass (FromJSON, ToJSON)
+
+type MessageId = Word64
+
 ```
 
 ``` haskell
-data ValidateMarshal input output = ValidateMarshal
-  { validateInput :: Message -> Maybe input
-  , marshalOutput :: output -> Message
+data Codec i o = Codec
+  { decodeInput :: Value -> Either String i
+  , encodeOutput :: o -> Value
   }
+
 ```
 
 ``` haskell
 data Runtime = Runtime
-  { receive :: IO [Message]
-  , send :: Message -> IO ()
-  }
-```
-
-``` haskell
-eventLoop :: Node input output -> ValidateMarshal input output -> Runtime -> IO ()
-eventLoop node validateMarshal runtime = loop
-  where
-    loop = do
-      messages <- runtime.receive
-      let inputs = catMaybes (map validateMarshal.validateInput messages)
-          outputs = map (runNode node) inputs
-          messages' = map validateMarshal.marshalOutput outputs
-      mapM_ runtime.send messages'
-      loop
-```
-
-``` haskell
-data Codec = Codec
-  { decode :: ByteString -> Either String Message
-  , encode :: Message -> ByteString
+  { send :: [Message Value] -> IO ()
+  , receive :: IO [(Time, Message Value)]
   }
 
 ```
 
 ``` haskell
-jsonCodec :: Codec
-jsonCodec =
-  Codec
-    { decode = Json.eitherDecode . BS8.fromStrict
-    , encode = BS8.toStrict . Json.encode
-    }
+runNode ::
+  Node s i o a
+  -> Codec i o
+  -> NodeState s i o
+  -> Message Value
+  -> Either String (NodeState s i o, [Message Value], a)
+runNode node codec s mv = case traverse codec.decodeInput mv of
+  Right mi -> Right (runNodeBody (void mv) (node mi.payload) codec s)
+  Left err -> Left err
 
 ```
 
 ``` haskell
-consoleRuntime :: Codec -> IO (Runtime IO)
-consoleRuntime codec = do
-  hSetBuffering stdin LineBuffering
-  hSetBuffering stdout LineBuffering
-  hSetBuffering stderr LineBuffering
-  return
-    Runtime
-      { receive = consoleReceive
-      , send = consoleSend
-      }
+runNodeBody ::
+  Message ()
+  -> NodeBody s i o a
+  -> Codec i o
+  -> NodeState s i o
+  -> (NodeState s i o, [Message Value], a)
+runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
   where
-    consoleReceive :: IO [(Time, Message)]
-    consoleReceive = do
-      -- XXX: Batch and read several lines?
-      line <- BS8.hGetLine stdin
-      if BS8.null line
-        then return []
-        else do
-          BS8.hPutStrLn stderr ("recieve: " <> line)
-          case codec.decode line of
-            Right message -> do
-              return [message]
-            Left err ->
-              error
-                $ "consoleReceive: failed to decode message: "
-                ++ show err
-                ++ "\nline: "
-                ++ show line
+    done x (s, messages) = (s, reverse messages, x)
 
-    consoleSend :: Message -> IO ()
-    consoleSend message = do
-      BS8.hPutStrLn stderr ("send: " <> codec.encode message)
-      BS8.hPutStrLn stdout (codec.encode message)
+    go (Reply o k) (s, acc) = do
+      let messageId = s.nextMessageId
+      let message =
+            Message
+              { src = mv.dest
+              , dest = mv.src
+              , msgId = Just messageId
+              , inReplyTo = mv.msgId
+              , payload = codec.encodeOutput o
+              }
+      k () (s {nextMessageId = messageId + 1}, message : acc)
+    go (Get k) (s, acc) =
+      k s.localState (s, acc)
+    go (Put s' k) (s, acc) =
+      k () (s {localState = s'}, acc)
 ```
 
 ``` haskell
@@ -166,15 +173,55 @@ data NodeHandle = NodeHandle
 ```
 
 ``` haskell
+consoleRuntime :: IO Runtime
+consoleRuntime = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  return
+    Runtime
+      { receive = consoleReceive
+      , send = consoleSend
+      }
+  where
+    consoleReceive :: IO [(Time, Message Value)]
+    consoleReceive = do
+      line <- BS8.hGetLine stdin
+      if BS8.null line
+        then return []
+        else do
+          BS8.hPutStrLn stderr ("consoleRuntime: recieved: " <> line)
+          case Json.eitherDecodeStrict line of
+            Right message -> do
+              now <- getCurrentTime
+              return [(now, message)]
+            Left err ->
+              error
+                $ "consoleRuntime: failed to decode message: "
+                ++ show err
+                ++ "\nline: "
+                ++ show line
+
+    consoleSend :: [Message Value] -> IO ()
+    consoleSend messages =
+      forM_ messages $ \message -> do
+        BS8.hPutStrLn
+          stderr
+          ("consoleRuntime: sent: " <> LBS8.toStrict (Json.encode message))
+        BS8.hPutStrLn stdout (LBS8.toStrict (Json.encode message))
+
+```
+
+``` haskell
 pipeNodeHandle :: Handle -> Handle -> ProcessHandle -> NodeHandle
 pipeNodeHandle hin hout processHandle =
   NodeHandle
-    { handle = \_arrivalTime msg -> do
-        BS8.hPutStr hin (encode jsonCodec msg)
+    { handle = \_arrivalTime message -> do
+        LBS8.hPutStr hin (Json.encode message)
         BS8.hPutStr hin "\n"
         hFlush hin
         line <- BS8.hGetLine hout
-        case decode jsonCodec line of
+        case Json.eitherDecodeStrict line of
           Left err -> hPutStrLn stderr err >> return []
           Right msg' -> return [msg']
     , close = terminateProcess processHandle
@@ -186,6 +233,7 @@ pipeSpawn fp args = do
     createProcess
       (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
   return (pipeNodeHandle hin hout processHandle)
+
 ```
 
 ``` haskell
@@ -199,8 +247,8 @@ blackboxTestWith testConfig binaryFilePath args workload = do
           , spawn = pipeSpawn binaryFilePath (args seed)
           }
   let (prng', _prng'') = splitPrng prng
-  result <- runTests deployment workload testConfig.numberOfTests prng'
-  handleResult result seed
+  result <- runTests testConfig deployment workload prng'
+  handleResult workload.prettyFailure result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
 blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
@@ -213,7 +261,7 @@ echo example.
 - XXX: Show real deployment of same code using TCP runtime?
 
 ``` haskell
-tcpRuntime :: Port -> Map NodeId Port -> Codec -> IO (Runtime IO)
+tcpRuntime :: Port -> Map NodeId Port -> IO Runtime
 ```
 
 ## Conclusion and what's next
