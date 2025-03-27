@@ -138,8 +138,6 @@ initialNodeState s =
     , self = "uninitialised"
     }
 
---    , nextVarId = 0
---    , rpcs = Map.empty
 ```
 
 ``` haskell

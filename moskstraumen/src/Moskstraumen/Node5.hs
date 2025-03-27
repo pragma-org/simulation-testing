@@ -170,9 +170,10 @@ initialNodeState s =
     , self = "uninitialised"
     }
 
+-- end snippet
+
 --    , nextVarId = 0
 --    , rpcs = Map.empty
--- end snippet
 
 -- start snippet Codec
 data Codec i o = Codec
