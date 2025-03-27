@@ -165,6 +165,24 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
 ```
 
 ``` haskell
+eventLoop :: Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
+eventLoop node initialState codec runtime =
+  go (initialNodeState initialState)
+  where
+    go s = do
+      incoming <- runtime.receive
+      forM_ incoming $ \(_time, message) -> do
+        case runNode node codec s message of
+          Left err -> do
+            putStrLn ("Failed to parse input: " <> err)
+            go s
+          Right (s', outgoing, ()) -> do
+            runtime.send outgoing
+            go s'
+
+```
+
+``` haskell
 data NodeHandle = NodeHandle
   { handle :: Time -> Message -> IO [Message]
   , close :: IO ()

@@ -101,6 +101,9 @@ However this is already enough to express our echo example:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNodeBody}
 ```
 
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=eventLoop}
+```
+
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/NodeHandle.hs snippet=NodeHandle}
 ```
