@@ -34,14 +34,15 @@ data NodeF s i o x
   = Reply o (() -> x)
   | Get (s -> x)
   | Put s (() -> x)
+  | Send NodeId i (() -> x)
   | -- end snippet
-    Send NodeId i (() -> x)
-  | RPC NodeId i (RPCError -> x) (o -> x) ~x
+    RPC NodeId i (RPCError -> x) (o -> x) ~x
   | Fail String
   | NewVar (VarId -> x)
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
-  | TimerMicros Int (() -> x)
+  | After Int x (() -> x)
+  | At Time x (() -> x)
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
@@ -51,7 +52,7 @@ instance Functor (NodeF s i o) where
   fmap f (NewVar k) = NewVar (f . k)
   fmap f (DeliverVar varId var x) = DeliverVar varId var (f x)
   fmap f (AwaitVar varId k) = AwaitVar varId (f . k)
-  fmap f (TimerMicros micros k) = TimerMicros micros (f . k)
+  fmap f (After micros k) = After micros (f . k)
 
 data RPCError = E
 
@@ -153,11 +154,14 @@ data Runtime = Runtime
 data NodeState s i o = NodeState
   { localState :: s
   , nextMessageId :: MessageId
-  , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
   , self :: NodeId
-  , nextVarId :: VarId
   }
 
+-- end snippet
+-- , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
+-- , nextVarId :: VarId
+
+-- start snippet initialNodeState
 initialNodeState :: s -> NodeState s i o
 initialNodeState s =
   NodeState
@@ -174,6 +178,7 @@ initialNodeState s =
 data Codec i o = Codec
   { decodeInput :: Value -> Either String i
   , encodeOutput :: o -> Value
+  , encodeInput :: i -> Value
   }
 
 -- end snippet
@@ -219,6 +224,17 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
               , msgId = Just messageId
               , inReplyTo = mv.msgId
               , payload = codec.encodeOutput o
+              }
+      k () (s {nextMessageId = messageId + 1}, message : acc)
+    go (Send nodeId i k) (s, acc) = do
+      let messageId = s.nextMessageId
+      let message =
+            Message
+              { src = s.self
+              , dest = nodeId
+              , msgId = Just messageId
+              , inReplyTo = Nothing
+              , payload = codec.encodeInput i
               }
       k () (s {nextMessageId = messageId + 1}, message : acc)
     go (Get k) (s, acc) =

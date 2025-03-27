@@ -78,7 +78,7 @@ merely a function from some input to a "node body":
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeF}
 ```
 
-For now the node body can only express the ability to reply to an input.
+For now the node body can only express the ability to reply to an input, s.
 However this is already enough to express our echo example:
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=echo}
@@ -94,6 +94,12 @@ However this is already enough to express our echo example:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Codec}
 ```
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Runtime}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeState}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=initialNodeState}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNode}

@@ -82,10 +82,11 @@ data NodeF s i o x
   = Reply o (() -> x)
   | Get (s -> x)
   | Put s (() -> x)
+  | Send NodeId i (() -> x)
 ```
 
-For now the node body can only express the ability to reply to an input.
-However this is already enough to express our echo example:
+For now the node body can only express the ability to reply to an input,
+s. However this is already enough to express our echo example:
 
 ``` haskell
 echo :: Node state String String ()
@@ -114,6 +115,7 @@ type MessageId = Word64
 data Codec i o = Codec
   { decodeInput :: Value -> Either String i
   , encodeOutput :: o -> Value
+  , encodeInput :: i -> Value
   }
 
 ```
@@ -123,6 +125,28 @@ data Runtime = Runtime
   { send :: [Message Value] -> IO ()
   , receive :: IO [(Time, Message Value)]
   }
+
+```
+
+``` haskell
+data NodeState s i o = NodeState
+  { localState :: s
+  , nextMessageId :: MessageId
+  , self :: NodeId
+  }
+
+```
+
+``` haskell
+initialNodeState :: s -> NodeState s i o
+initialNodeState s =
+  NodeState
+    { localState = s
+    , rpcs = Map.empty
+    , nextMessageId = 0
+    , self = "uninitialised"
+    , nextVarId = 0
+    }
 
 ```
 
@@ -159,6 +183,17 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
               , msgId = Just messageId
               , inReplyTo = mv.msgId
               , payload = codec.encodeOutput o
+              }
+      k () (s {nextMessageId = messageId + 1}, message : acc)
+    go (Send nodeId i k) (s, acc) = do
+      let messageId = s.nextMessageId
+      let message =
+            Message
+              { src = s.self
+              , dest = nodeId
+              , msgId = Just messageId
+              , inReplyTo = Nothing
+              , payload = codec.encodeInput i
               }
       k () (s {nextMessageId = messageId + 1}, message : acc)
     go (Get k) (s, acc) =
