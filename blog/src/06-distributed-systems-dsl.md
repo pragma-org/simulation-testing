@@ -70,7 +70,7 @@ nodes](https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/head
 
 <img
 src="https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/heads/main/blog/image/node.svg"
-alt="Node event loop zoomed in" width="300"/>
+alt="Node event loop zoomed in" width="800px"/>
 
 ## Syntax
 
