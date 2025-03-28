@@ -62,8 +62,11 @@ deterministic.
 
 ## Big picture
 
-![Simulator interacting with nodes](image/workload_and_simulator.svg)
-![Node event loop](image/node.svg)
+![Simulator interacting with
+nodes](https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/heads/main/blog/image/workload_and_simulator.svg)
+
+![Node event
+loop](https://raw.githubusercontent.com/pragma-org/simulation-testing/refs/heads/main/blog/image/node.svg)
 
 ## Syntax
 
