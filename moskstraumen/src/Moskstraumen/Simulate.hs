@@ -7,6 +7,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
+import System.Timeout
 import Text.Printf
 
 import Moskstraumen.Codec
@@ -97,13 +98,15 @@ stepWorld world = case Heap.pop world.messages of
     case Map.lookup message.dest world.nodes of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
-        try (node.handle arrivalTime message) >>= \case
-          Left err -> do
+        timeout 5_000_000 (try (node.handle arrivalTime message)) >>= \case
+          Nothing ->
+            error ("stepWorld: timeout when handling: " <> show message)
+          Just (Left err) -> do
             putStrLn
               "------------------------------------------------------------------------"
             putStrLn "node.handle failed:"
             error (displayException (err :: SomeException))
-          Right responses -> do
+          Just (Right responses) -> do
             let (clientResponses, nodeMessages) =
                   partition (isClientNodeId . dest) responses
                 meanMicros = 20000 -- 20ms
