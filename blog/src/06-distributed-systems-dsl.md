@@ -63,6 +63,11 @@ of distributed systems.
 As pointed out eariler, they key difference between what we are about to do and
 Maelstrom is that our workload generator and runtime will be deterministic.
 
+## Big picture
+
+![Simulator interacting with nodes](image/workload_and_simulator.svg)
+![Node event loop](image/node.svg)
+
 ## Syntax
 
 We'll start of with a the bare minimum domain-specific language able to express
@@ -140,6 +145,9 @@ However this is already enough to express our echo example:
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=simulatorMain}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=Deployment}
 ```
 
 With this we've got all code needed to actually run the tests for our echo
