@@ -24,7 +24,7 @@ type Node_ s i o = Node s i o ()
 
 -- start snippet Node
 
-type Node s i o a = i -> NodeBody s i o a
+newtype Node s i o a = Node {unNode :: i -> NodeBody s i o a}
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 
@@ -115,7 +115,10 @@ syncRPC nodeId i failure = do
 
 -- start snippet echo
 echo :: Node () String String ()
-echo input = let output = input in NodeBody (Free (Reply output Pure))
+echo = Node $ \input -> let output = input in reply output
+
+reply :: o -> NodeBody s i o ()
+reply output = NodeBody (Free (Reply output Pure))
 
 -- end snippet
 
@@ -195,7 +198,7 @@ runNode ::
   -> Message Value
   -> Either String (NodeState s i o, [Message Value], a)
 runNode node codec s mv = case traverse codec.decodeInput mv of
-  Right mi -> Right (runNodeBody (void mv) (node mi.payload) codec s)
+  Right mi -> Right (runNodeBody (void mv) (unNode node mi.payload) codec s)
   Left err -> Left err
 
 -- end snippet
