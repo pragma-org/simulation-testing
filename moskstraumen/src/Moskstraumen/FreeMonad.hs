@@ -8,9 +8,14 @@ data Free f x
   = Pure x
   | Free (f (Free f x))
 
+type Alg f x = f x -> x
+
+generic' :: ((x -> Free f x) -> g (Free g y)) -> Free g y
+generic' op = Free (op Pure)
+
 iterM ::
   (Monad m, Functor f) =>
-  (f (m a) -> m a)
+  Alg f (m a)
   -> (x -> m a)
   -> Free f x
   -> m a

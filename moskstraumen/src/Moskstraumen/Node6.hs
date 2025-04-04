@@ -1,12 +1,17 @@
 module Moskstraumen.Node6 (module Moskstraumen.Node6) where
 
-import Control.Concurrent
+import Control.Applicative
+import Control.Concurrent hiding (yield)
 import Control.Concurrent.STM
 import Control.Exception
+import Data.Either
 import Data.IORef
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as Text
+import Debug.Trace
 import System.IO.Unsafe
+import System.Timeout
 
 import Moskstraumen.FreeMonad
 import Moskstraumen.NodeId
@@ -14,33 +19,126 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
-newtype Node s i o = Node (i -> NodeBody s i o)
+newtype Node s i o = Node (i -> NodeBody s i o ())
 
-newtype NodeBody s i o = NodeBody (Free (NodeBodyF s i o) o)
+newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeBodyF s i o) a}
 
 data NodeBodyF s i o x
-  = Reply o ~x
+  = Yield o (() -> x)
   | Get (s -> x)
   | Put s ~x
   | Send NodeId i ~x
+  | AsyncIO (IO ()) (() -> x) (() -> x)
+  deriving (Functor)
 
-newtype StageId = StageId Text
+yield :: o -> NodeBody s i o ()
+yield o = NodeBody (generic' (Yield o))
+
+asyncIO :: IO () -> (() -> NodeBody s i o ()) -> NodeBody s i o ()
+asyncIO io k = NodeBody (generic' (AsyncIO io (unNodeBody . k)))
+
+data Effect = DoIO StageId (IO ()) CallbackId
+
+instance Show Effect where
+  show (DoIO stageId _io callbackId) =
+    "DoIO "
+      <> Text.unpack (unStageId stageId)
+      <> " <io> "
+      <> show callbackId
+
+type CallbackId = Word
+
+data NodeState s o = NodeState
+  { localState :: s
+  , callbacks :: Map CallbackId (NodeState s o)
+  , outputs :: [o]
+  , effects :: [Effect]
+  , nextCallbackId :: Word
+  }
+
+instance (Show s, Show o) => Show (NodeState s o) where
+  show ns =
+    unlines
+      [ "NodeState"
+      , "  { localState     = " <> show ns.localState
+      , "  , callbacks      = " <> show ns.callbacks
+      , "  , outputs        = " <> show ns.outputs
+      , "  , effects        = " <> show ns.effects
+      , "  , nextCallbackId = " <> show ns.nextCallbackId
+      , "  }"
+      ]
+
+initialNodeState :: s -> NodeState s o
+initialNodeState initialState =
+  NodeState
+    { localState = initialState
+    , callbacks = Map.empty
+    , outputs = []
+    , effects = []
+    , nextCallbackId = 0
+    }
+
+data Callback = Callback CallbackId
+  deriving stock (Show)
+
+runNode ::
+  forall s i o.
+  (Show s, Show o) =>
+  StageId
+  -> Node s i o
+  -> NodeState s o
+  -> Either Callback i
+  -> NodeState s o
+runNode _stageId (Node node) ns0 (Left (Callback callbackId)) =
+  case Map.lookup callbackId ns0.callbacks of
+    Nothing ->
+      error
+        ( "runNode: got unexpected callback: " <> show (callbackId, ns0.callbacks)
+        )
+    Just ns ->
+      -- trace
+      --  "[runNode] callback"
+      (ns {callbacks = Map.delete callbackId ns0.callbacks} :: NodeState s o)
+runNode stageId (Node node) ns0 (Right i) = case node i of
+  NodeBody body -> iterM go leaf body ns0 {outputs = [], effects = []}
+    where
+      leaf :: () -> NodeState s o -> NodeState s o
+      leaf () ns = ns
+
+      go :: Alg (NodeBodyF s i o) (NodeState s o -> NodeState s o)
+      go (Yield o k) ns = k () ns {outputs = o : outputs ns}
+      go (Get k) ns = k ns.localState ns
+      go (Put s' k) ns = k ns {localState = s'}
+      go (Send nodeId i ih) _ = undefined
+      go (AsyncIO io k ih) ns =
+        let callbackId = ns.nextCallbackId
+        in  ih
+              ()
+              ns
+                { callbacks = Map.insert callbackId (k () ns) ns.callbacks
+                , effects = DoIO stageId io callbackId : ns.effects
+                , nextCallbackId = callbackId + 1
+                }
+
+------------------------------------------------------------------------
+
+newtype StageId = StageId {unStageId :: Text}
   deriving newtype (Eq, Ord, IsString)
 
 data Deployment i o = Deployment
-  { transformer :: Queue i -> IO (Queue o, StageHandles)
+  { transformer :: Queue i -> Queue Effect -> IO (Queue o, StageHandles)
   }
 
 type StageHandles = Map StageId StageHandle
 
 data StageHandle = StageHandle
   { pid :: ThreadId
-  , stageStateVar :: TVar StageState
-  , inbox :: Some TBQueue
-  -- , control :: Queue Command
-  -- , observe :: Queue Response
-  -- , errors :: Queue SomeException
-  -- , effects :: Queue (Message Value)
+  , stageStateVar :: TMVar StageState
+  , source :: Some TBQueue
+  , -- , control :: Queue Command
+    -- , observe :: Queue Response
+    -- , errors :: Queue SomeException
+    callbacks :: Queue Callback
   }
 
 data Some f = forall a. Some (f a)
@@ -50,6 +148,7 @@ data StageState
   | Running
   | Stopped
   | Step
+  deriving stock (Eq, Show)
 
 ------------------------------------------------------------------------
 
@@ -69,14 +168,16 @@ writeQueue q x = atomically (writeTBQueue q x)
 idDeployment :: Deployment i i
 idDeployment =
   Deployment
-    { transformer = \qi -> return (qi, Map.empty)
+    { transformer = \qi _qe -> return (qi, Map.empty)
     }
 
 composeDeployment :: Deployment i j -> Deployment j k -> Deployment i k
 composeDeployment d1 d2 =
   Deployment
-    { transformer = \qi ->
-        d1.transformer qi >>= \(qj, m) -> d2.transformer qj >>= \(qk, m') -> return (qk, m <> m')
+    { transformer = \qi qe -> do
+        (qj, m) <- d1.transformer qi qe
+        (qk, m') <- d2.transformer qj qe
+        return (qk, m <> m')
     }
 
 ------------------------------------------------------------------------
@@ -84,78 +185,187 @@ composeDeployment d1 d2 =
 deployFun :: StageId -> (i -> o) -> Deployment i o
 deployFun stageId f =
   Deployment
-    { transformer = \qi -> do
+    { transformer = \qi qe -> do
         qo <- newQueue
-        stageStateVar <- newTVarIO Paused
+        qc <- newQueue
+        stageStateVar <- newEmptyTMVarIO
         pid <- forkIO
           $ forever
           $ atomically
           $ do
-            stageState <- readTVar stageStateVar
+            stageState <- takeTMVar stageStateVar
             case stageState of
-              Paused -> retry
               Running -> do
                 i <- readTBQueue qi
                 let o = f i
                 writeTBQueue qo o
+                writeTMVar stageStateVar Running
               Step -> do
                 i <- readTBQueue qi
                 let o = f i
                 writeTBQueue qo o
-                writeTVar stageStateVar Paused
         return
-          (qo, Map.singleton stageId (StageHandle pid stageStateVar (Some qi)))
+          (qo, Map.singleton stageId (StageHandle pid stageStateVar (Some qi) qc))
     }
 
-deployNode :: StageId -> Node s i o -> s -> IO (Deployment i o)
-deployNode stageId node initialState = do
-  source <- newTBQueueIO 128
-  sink <- newTBQueueIO 128
-  pid <- forkIO $ forever $ do
-    undefined
-
-  undefined
+deployNode ::
+  (Show s, Show i, Show o) => StageId -> Node s i o -> s -> Deployment i o
+deployNode stageId node initialState =
+  Deployment
+    { transformer = \qi qe -> do
+        qo <- newQueue
+        qc <- newQueue
+        stageStateVar <- newEmptyTMVarIO
+        let loop ns = do
+              ns' <- atomically $ do
+                stageState <- takeTMVar stageStateVar
+                -- traceM (show stageState)
+                eci <- (Left <$> readTBQueue qc) <|> (Right <$> readTBQueue qi)
+                -- traceM (show eci)
+                let ns' = runNode stageId node ns eci
+                -- traceM ("[deployNode] " <> show ns')
+                forM_ ns'.outputs $ \o -> do
+                  -- traceM ("[deployNode] writing output: " <> show o)
+                  writeTBQueue qo o
+                forM_ ns'.effects $ \e -> do
+                  -- traceM ("[deployNode] writing effect: " <> show e)
+                  writeTBQueue qe e
+                -- len <- lengthTBQueue qe
+                -- traceM $ "[deployNode] effects queue length: " <> show len
+                return ns'
+              loop ns'
+        pid <-
+          forkIO
+            $ loop
+              ( NodeState
+                  { localState = initialState
+                  , callbacks = Map.empty
+                  , outputs = []
+                  , effects = []
+                  , nextCallbackId = 0
+                  }
+              )
+        return
+          (qo, Map.singleton stageId (StageHandle pid stageStateVar (Some qi) qc))
+    }
 
 ------------------------------------------------------------------------
 
 step :: StageId -> StageHandles -> IO ()
 step stageId stageHandles = case Map.lookup stageId stageHandles of
   Nothing -> error "step: no such stage id"
-  Just stageHandle -> atomically (writeTVar stageHandle.stageStateVar Step)
+  Just stageHandle -> atomically (putTMVar stageHandle.stageStateVar Step)
 
 inputLen :: StageId -> StageHandles -> IO Int
 inputLen stageId stageHandles = case Map.lookup stageId stageHandles of
   Nothing -> error "inputLen: no such stage id"
-  Just stageHandle -> case stageHandle.inbox of
+  Just stageHandle -> case stageHandle.source of
     Some q -> atomically (fromIntegral <$> lengthTBQueue q)
 
 shutdown :: StageHandles -> IO ()
 shutdown = traverse_ (\stageHandle -> killThread stageHandle.pid)
+
+writeCallback :: Callback -> StageId -> StageHandles -> IO ()
+writeCallback callback stageId stageHandles = case Map.lookup stageId stageHandles of
+  Nothing -> error "writeCallback: no such stage id"
+  Just stageHandle -> do
+    -- putStrLn
+    --   $ "[writeCallback]: writing callback to: "
+    --   <> Text.unpack (unStageId stageId)
+    atomically (writeTBQueue stageHandle.callbacks callback)
 
 ------------------------------------------------------------------------
 
 testDeployment :: [i] -> Deployment i o -> IO [o]
 testDeployment inputs deployment = do
   qi <- newQueue
+  qe <- newQueue
+  qc <- newQueue -- XXX: unused
   mapM_ (atomically . writeTBQueue qi) inputs
-  (qo, stageHandles) <- deployment.transformer qi
+  (qo, stageHandles) <- deployment.transformer qi qe
+  effectsPid <- forkIO $ forever $ do
+    -- putStrLn "[effects] waiting for effects"
+    me <- timeout 1000000 $ atomically (readTBQueue qe)
+    case me of
+      Nothing -> do
+        -- putStrLn "[effects] timeout"
+        -- len <- atomically (lengthTBQueue qe)
+        -- putStrLn $ "[effects] effects queue length: " <> show len
+        return ()
+      Just (DoIO stageId io callbackId) -> do
+        -- traceM "[effects] performing effect:"
+        _ <- io
+        writeCallback (Callback callbackId) stageId stageHandles
+  _effectsStateVar <- newTMVarIO Running
+
   traverse_
-    ( \stageHandle -> atomically (writeTVar stageHandle.stageStateVar Running)
+    ( \stageHandle -> atomically (writeTMVar stageHandle.stageStateVar Running)
     )
     stageHandles
   replicateM (length inputs) (atomically (readTBQueue qo))
-    `finally` shutdown stageHandles
+    `finally` shutdown
+      ( stageHandles
+          <> Map.singleton
+            "effects"
+            (StageHandle effectsPid _effectsStateVar (Some qe) qc)
+      )
 
 testDeployment' :: (Show o) => [i] -> Deployment i o -> IO StageHandles
 testDeployment' inputs deployment = do
   qi <- newQueue
+  qe <- newQueue
+  qc <- newQueue -- XXX: unused
   mapM_ (atomically . writeTBQueue qi) inputs
-  (qo, stageHandles) <- deployment.transformer qi
+  (qo, stageHandles) <- deployment.transformer qi qe
+  effectsPid <- forkIO $ forever $ do
+    e <- atomically (readTBQueue qe)
+    case e of
+      DoIO stageId io callbackId -> do
+        -- traceM ("[effects] DoIO: " <> Text.unpack (unStageId stageId))
+        _ <- io
+        writeCallback (Callback callbackId) stageId stageHandles
+
+  sinkStateVar <- newEmptyTMVarIO
   pid <- forkIO $ replicateM_ (length inputs) $ do
+    state <- atomically (takeTMVar sinkStateVar)
     o <- atomically (readTBQueue qo)
+    putStr "[sink] "
     print o
-  sinkStateVar <- newTVarIO Running
+    case state of
+      Step -> return ()
+      Running -> atomically (writeTMVar sinkStateVar Running)
+  _effectsStateVar <- newTMVarIO Running
   return
-    ( Map.singleton "sink" (StageHandle pid sinkStateVar (Some qi))
+    ( Map.singleton "sink" (StageHandle pid sinkStateVar (Some qi) qc)
+        <> Map.singleton
+          "effects"
+          (StageHandle effectsPid _effectsStateVar (Some qe) qc)
         <> stageHandles
     )
+
+------------------------------------------------------------------------
+
+echoLog :: Node () Int Int
+echoLog = Node $ \i -> asyncIO (print (show i)) (\_ -> yield i)
+
+s :: NodeState () Int
+s = runNode "echoLog" echoLog (initialNodeState ()) (Right 1)
+
+t :: IO ()
+t = do
+  h <- testDeployment' [1, 2, 3] (deployNode "echoLog" echoLog ())
+  -- print =<< inputLen "echoLog" h
+  step "echoLog" h
+  step "echoLog" h
+  step "sink" h
+  threadDelay 100000
+  step "echoLog" h
+  step "echoLog" h
+  threadDelay 100000
+  step "sink" h
+  step "echoLog" h
+  threadDelay 100000
+  step "echoLog" h
+  step "sink" h
+  threadDelay 100000
+  shutdown h
