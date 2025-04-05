@@ -3,10 +3,11 @@
 *Work in progress, please don't share, but do feel free to get
 involved!*
 
-In past posts we've built a simulator and a workload generator and
-checker for distributed systems. The assumption we made is that if the
-distributed system we are building is deterministic, then we can test it
-effectively. Where effectively means:
+In past posts we've built a
+[simulator](dist/04-simulation-testing-main-loop.md) and a workload
+generator and checker for distributed systems. The assumption we made is
+that if the distributed system we are building is deterministic, then we
+can test it effectively. Where effectively means:
 
 1.  It's fast, because we can simulate the passage of time and thus not
     have to wait for timeouts;
@@ -84,7 +85,7 @@ and is merely a function from some input to a "node body":
 
 ``` haskell
 
-type Node s i o a = i -> NodeBody s i o a
+newtype Node s i o a = Node {unNode :: i -> NodeBody s i o a}
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 
@@ -103,7 +104,10 @@ s. However this is already enough to express our echo example:
 
 ``` haskell
 echo :: Node () String String ()
-echo input = let output = input in NodeBody (Free (Reply output Pure))
+echo = Node $ \input -> let output = input in reply output
+
+reply :: o -> NodeBody s i o ()
+reply output = NodeBody (Free (Reply output Pure))
 
 ```
 
@@ -161,7 +165,7 @@ runNode ::
   -> Message Value
   -> Either String (NodeState s i o, [Message Value], a)
 runNode node codec s mv = case traverse codec.decodeInput mv of
-  Right mi -> Right (runNodeBody (void mv) (node mi.payload) codec s)
+  Right mi -> Right (runNodeBody (void mv) (unNode node mi.payload) codec s)
   Left err -> Left err
 
 ```
@@ -207,6 +211,8 @@ runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
 
 ## Event loop
 
+- Criteria: maximal overlap between code that's tested and deployed to
+  production
 - Test deployment vs production deployment
 
 ``` haskell

@@ -224,8 +224,9 @@ There were a couple of things we had to leave out from the code:
 
 This is what we'll turn our attention to next. Probably tackling point 1-3 in
 one or two posts. For point 4 we need a bit more context, in particular we need
-to introduce the deterministic event loop on top of which nodes are running
-(the node handle will be connected to the event loop).
+to introduce the [deterministic event loop](dist/06-distributed-systems-dsl.md)
+on top of which nodes are running (the node handle will be connected to the
+event loop).
 
 
 [^1]: For now I hope you can imagine something like: don't reply to the client

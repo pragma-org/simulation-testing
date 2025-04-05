@@ -8,10 +8,11 @@ status: sketch
 
 *Work in progress, please don't share, but do feel free to get involved!*
 
-In past posts we've built a simulator and a workload generator and checker for
-distributed systems. The assumption we made is that if the distributed system
-we are building is deterministic, then we can test it effectively. Where
-effectively means:
+In past posts we've built a
+[simulator](dist/04-simulation-testing-main-loop.md) and a workload generator
+and checker for distributed systems. The assumption we made is that if the
+distributed system we are building is deterministic, then we can test it
+effectively. Where effectively means:
 
   1. It's fast, because we can simulate the passage of time and thus not have
      to wait for timeouts; 
@@ -121,6 +122,7 @@ However this is already enough to express our echo example:
 
 ## Event loop
 
+* Criteria: maximal overlap between code that's tested and deployed to production
 * Test deployment vs production deployment
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=eventLoop}
