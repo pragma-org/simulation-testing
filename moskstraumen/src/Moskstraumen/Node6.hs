@@ -22,6 +22,7 @@ import Moskstraumen.Prelude
 newtype Node s i o = Node (i -> NodeBody s i o ())
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeBodyF s i o) a}
+  deriving newtype (Functor, Applicative, Monad)
 
 data NodeBodyF s i o x
   = Yield o (() -> x)
@@ -224,14 +225,14 @@ deployNode stageId node initialState =
                 -- traceM (show eci)
                 let ns' = runNode stageId node ns eci
                 -- traceM ("[deployNode] " <> show ns')
-                forM_ ns'.outputs $ \o -> do
-                  -- traceM ("[deployNode] writing output: " <> show o)
-                  writeTBQueue qo o
                 forM_ ns'.effects $ \e -> do
                   -- traceM ("[deployNode] writing effect: " <> show e)
                   writeTBQueue qe e
                 -- len <- lengthTBQueue qe
                 -- traceM $ "[deployNode] effects queue length: " <> show len
+                forM_ ns'.outputs $ \o -> do
+                  -- traceM ("[deployNode] writing output: " <> show o)
+                  writeTBQueue qo o
                 return ns'
               loop ns'
         pid <-
@@ -302,6 +303,8 @@ testDeployment inputs deployment = do
     ( \stageHandle -> atomically (writeTMVar stageHandle.stageStateVar Running)
     )
     stageHandles
+  -- XXX: if multiple yields are used then we can't just read length input many
+  -- times... Read until EndOfStream token?
   replicateM (length inputs) (atomically (readTBQueue qo))
     `finally` shutdown
       ( stageHandles
@@ -317,16 +320,22 @@ testDeployment' inputs deployment = do
   qc <- newQueue -- XXX: unused
   mapM_ (atomically . writeTBQueue qi) inputs
   (qo, stageHandles) <- deployment.transformer qi qe
+  effectsStateVar <- newEmptyTMVarIO
   effectsPid <- forkIO $ forever $ do
+    state <- atomically (takeTMVar effectsStateVar)
     e <- atomically (readTBQueue qe)
     case e of
       DoIO stageId io callbackId -> do
         -- traceM ("[effects] DoIO: " <> Text.unpack (unStageId stageId))
         _ <- io
         writeCallback (Callback callbackId) stageId stageHandles
+    case state of
+      Step -> return ()
+      Running -> atomically (writeTMVar effectsStateVar Running)
 
   sinkStateVar <- newEmptyTMVarIO
-  pid <- forkIO $ replicateM_ (length inputs) $ do
+  pid <- forkIO $ forever $ do
+    -- replicateM_ (length inputs) $ do
     state <- atomically (takeTMVar sinkStateVar)
     o <- atomically (readTBQueue qo)
     putStr "[sink] "
@@ -334,22 +343,18 @@ testDeployment' inputs deployment = do
     case state of
       Step -> return ()
       Running -> atomically (writeTMVar sinkStateVar Running)
-  _effectsStateVar <- newTMVarIO Running
   return
     ( Map.singleton "sink" (StageHandle pid sinkStateVar (Some qi) qc)
         <> Map.singleton
           "effects"
-          (StageHandle effectsPid _effectsStateVar (Some qe) qc)
+          (StageHandle effectsPid effectsStateVar (Some qe) qc)
         <> stageHandles
     )
 
 ------------------------------------------------------------------------
 
 echoLog :: Node () Int Int
-echoLog = Node $ \i -> asyncIO (print (show i)) (\_ -> yield i)
-
-s :: NodeState () Int
-s = runNode "echoLog" echoLog (initialNodeState ()) (Right 1)
+echoLog = Node $ \i -> asyncIO (print (show i)) (\_ -> yield i >> yield i)
 
 t :: IO ()
 t = do
@@ -357,15 +362,18 @@ t = do
   -- print =<< inputLen "echoLog" h
   step "echoLog" h
   step "echoLog" h
+  step "effects" h
   step "sink" h
-  threadDelay 100000
-  step "echoLog" h
-  step "echoLog" h
-  threadDelay 100000
   step "sink" h
   step "echoLog" h
-  threadDelay 100000
   step "echoLog" h
+  step "effects" h
+  step "sink" h
+  step "sink" h
+  step "echoLog" h
+  step "echoLog" h
+  step "effects" h
+  step "sink" h
   step "sink" h
   threadDelay 100000
   shutdown h
