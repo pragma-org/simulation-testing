@@ -25,6 +25,7 @@ library
   import:             warnings
   exposed-modules:
     Moskstraumen.AwaitNode
+    Moskstraumen.AwaitNode3
     Moskstraumen.Codec
     Moskstraumen.Effect
     Moskstraumen.Error
