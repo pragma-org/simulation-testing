@@ -1,6 +1,6 @@
 {-# LANGUAGE Rank2Types #-}
 
-module Moskstraumen.AwaitNode3 (module Moskstraumen.AwaitNode3) where
+module Moskstraumen.Experiment.AwaitNode3 (module Moskstraumen.Experiment.AwaitNode3) where
 
 import Control.Concurrent.STM
 import Data.Char (toUpper)

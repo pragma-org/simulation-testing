@@ -24,8 +24,6 @@ common warnings
 library
   import:             warnings
   exposed-modules:
-    Moskstraumen.AwaitNode
-    Moskstraumen.AwaitNode3
     Moskstraumen.Codec
     Moskstraumen.Effect
     Moskstraumen.Error
@@ -36,6 +34,10 @@ library
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
     Moskstraumen.Example.Raft
+    Moskstraumen.Experiment.AwaitNode
+    Moskstraumen.Experiment.AwaitNode3
+    Moskstraumen.Experiment.Node5
+    Moskstraumen.Experiment.PipelineNode
     Moskstraumen.FakeTime
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
@@ -44,8 +46,6 @@ library
     Moskstraumen.Marshal
     Moskstraumen.Message
     Moskstraumen.Node4
-    Moskstraumen.Node5
-    Moskstraumen.Node6
     Moskstraumen.NodeHandle
     Moskstraumen.NodeId
     Moskstraumen.Parse

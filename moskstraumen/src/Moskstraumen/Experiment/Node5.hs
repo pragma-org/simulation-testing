@@ -1,4 +1,4 @@
-module Moskstraumen.Node5 (module Moskstraumen.Node5) where
+module Moskstraumen.Experiment.Node5 (module Moskstraumen.Experiment.Node5) where
 
 import Control.Applicative
 import Data.Aeson

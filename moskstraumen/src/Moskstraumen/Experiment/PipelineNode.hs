@@ -1,4 +1,4 @@
-module Moskstraumen.Node6 (module Moskstraumen.Node6) where
+module Moskstraumen.Experiment.PipelineNode (module Moskstraumen.Experiment.PipelineNode) where
 
 import Control.Applicative
 import Control.Concurrent hiding (yield)

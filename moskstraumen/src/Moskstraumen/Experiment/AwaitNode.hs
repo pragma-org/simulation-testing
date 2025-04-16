@@ -2,7 +2,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
-module Moskstraumen.AwaitNode (module Moskstraumen.AwaitNode) where
+module Moskstraumen.Experiment.AwaitNode (module Moskstraumen.Experiment.AwaitNode) where
 
 import Control.Concurrent.STM
 import Data.Map.Strict (Map)
