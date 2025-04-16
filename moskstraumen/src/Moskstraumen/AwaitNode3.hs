@@ -222,21 +222,6 @@ f >>> g = do
       -- traceM ("yield js: " <> show js')
       (mapM_ yield js' >> k i) >>> g
 
-runNode' ::
-  (Show i, Show o) => Node s (Is i) o () -> [i] -> s -> [o] -> (s, [o])
-runNode' node = go
-  where
-    go [] s os = (s, os)
-    go (i : is) s os =
-      -- trace ("runNode', i: " <> show i <> ", is: " <> show is) $
-      case runNode node (NodeState s) of
-        Done (NodeState s') os' ->
-          -- trace ("runNode', done, os': " <> show os')
-          (s', os ++ os')
-        Awaiting [(NodeState s', Cont Refl k)] os' ->
-          id -- trace ("runNode' awaiting...")
-            $ runNode' (k i) is s' (os ++ os')
-
 echo :: Int -> Node () (Is String) String ()
 echo i = do
   -- traceM $ "echo: " <> show i
@@ -251,13 +236,19 @@ upper i = do
   -- traceM $ "upper, got: " <> show i <> " " <> s
   yield (map toUpper s)
 
+dup :: Node () (Is a) a ()
+dup = do
+  x <- awaits Refl
+  yield x
+  yield x
+
 testCompose :: IO ()
 testCompose = do
   q <- queueFromList ["foo", "bar" :: String]
   let fis :: Is String i -> TBQueue i
       fis Refl = q
   rt <- testRuntime fis
-  eventLoop (upper 1 >>> echo 2) ((), ()) rt
+  eventLoop (upper 1 >>> echo 2 >>> dup) (((), ()), ()) rt
 
 t :: IO ()
 t = testCompose
