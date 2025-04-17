@@ -242,6 +242,11 @@ dup = do
   yield x
   yield x
 
+-- >>> testCompose
+-- "FOO"
+-- "FOO"
+-- "BAR"
+-- "BAR"
 testCompose :: IO ()
 testCompose = do
   q <- queueFromList ["foo", "bar" :: String]
