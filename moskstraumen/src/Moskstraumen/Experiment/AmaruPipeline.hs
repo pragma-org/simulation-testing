@@ -28,7 +28,7 @@ type Stage state input m output
 ------------------------------------------------------------------------
 
 -- crates/amaru/src/stages/pull.rs
-recvHeader :: Stage () void IO PullEvent
+recvHeader :: Stage () void Network PullEvent
 
 -- crates/amaru/src/stages/consensus/header.rs
 validateHeader :: Stage Store PullEvent IO (HeaderHash, Header)
@@ -50,5 +50,5 @@ validateBlock :: Stage () ValidateBlockEvent _ BlockValidationResult
 -- Not implemented yet.
 storeBlock :: Stage Store _ IO ()
 
--- crates/amaru/src/stages/consensus/chain_forward.rs
-updateFollowers :: Stage _ BlockValidationResult _
+-- crates/amaru/src/stages/consensus/forward_chain.rs
+forwardChain :: Stage _ (NewPeer + BlockValidationResult) Network ()
