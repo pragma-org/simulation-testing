@@ -155,7 +155,7 @@ data Runtime = Runtime
 -- , shutdown :: m ()
 
 -- start snippet NodeState
-data NodeState s i o = NodeState
+data NodeState s = NodeState
   { localState :: s
   , nextMessageId :: MessageId
   , self :: NodeId
@@ -166,7 +166,7 @@ data NodeState s i o = NodeState
 -- , nextVarId :: VarId
 
 -- start snippet initialNodeState
-initialNodeState :: s -> NodeState s i o
+initialNodeState :: s -> NodeState s
 initialNodeState s =
   NodeState
     { localState = s
@@ -194,9 +194,9 @@ data Codec i o = Codec
 runNode ::
   Node s i o a
   -> Codec i o
-  -> NodeState s i o
+  -> NodeState s
   -> Message Value
-  -> Either String (NodeState s i o, [Message Value], a)
+  -> Either String (NodeState s, [Message Value], a)
 runNode node codec s mv = case traverse codec.decodeInput mv of
   Right mi -> Right (runNodeBody (void mv) (unNode node mi.payload) codec s)
   Left err -> Left err
@@ -214,8 +214,8 @@ runNodeBody ::
   Message ()
   -> NodeBody s i o a
   -> Codec i o
-  -> NodeState s i o
-  -> (NodeState s i o, [Message Value], a)
+  -> NodeState s
+  -> (NodeState s, [Message Value], a)
 runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
   where
     done x (s, messages) = (s, reverse messages, x)

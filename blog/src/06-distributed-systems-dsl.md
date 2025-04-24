@@ -86,38 +86,38 @@ expand the set of examples that we can implement.
 A node, in the distributed system, will be the basis for our language and is
 merely a function from some input to a "node body":
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Node}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=Node}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeF}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=NodeF}
 ```
 
 For now the node body can only express the ability to reply to an input, s.
 However this is already enough to express our echo example:
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=echo}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=echo}
 ```
 
 
 ## Semantics
 
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Message}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=Message}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Codec}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=Codec}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=NodeState}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=NodeState}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=initialNodeState}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=initialNodeState}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNode}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=runNode}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=runNodeBody}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=runNodeBody}
 ```
 
 ## Event loop
@@ -125,19 +125,19 @@ However this is already enough to express our echo example:
 * Criteria: maximal overlap between code that's tested and deployed to production
 * Test deployment vs production deployment
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=eventLoop}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=eventLoop}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=Runtime}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=Runtime}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=consoleRuntime}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=consoleRuntime}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=testMain}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=testMain}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=prodMain}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=prodMain}
 ```
 
 
@@ -148,13 +148,13 @@ However this is already enough to express our echo example:
 ```
 
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=pipeNodeHandle}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=pipeNodeHandle}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=blackboxTest}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Node5.hs snippet=simulatorMain}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node5.hs snippet=simulatorMain}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate.hs snippet=Deployment}
