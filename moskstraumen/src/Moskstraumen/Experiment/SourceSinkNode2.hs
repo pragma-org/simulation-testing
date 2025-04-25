@@ -86,16 +86,17 @@ identity = do
   yield a
 
 infixr 1 >>>
-(>>>) :: Node s (Is a) b () -> Node s (Is b) c () -> Node s (Is a) c ()
+
+(>>>) :: Node s k b () -> Node s (Is b) c () -> Node s k c ()
 f >>> g = case runNode g of
   Stop -> stop
   Yield c k -> yield c >> (f >>> k ())
   Await Refl k -> case runNode f of
     Stop -> stop
     Yield b k' -> k' () >>> k b
-    Await Refl k' -> do
-      a <- await
-      k' a >>> g
+    Await p k' -> do
+      i <- awaits p
+      k' i >>> g
     LiftIO io k' -> do
       x <- liftIO io
       k' x >>> (await >>= k)
