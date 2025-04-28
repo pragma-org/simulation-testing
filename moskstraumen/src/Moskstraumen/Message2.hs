@@ -65,18 +65,31 @@ data Message a = Message
   }
   deriving stock (Show, Functor)
 
-decodeMaelstromBody ::
-  (FromJSON a) => Value -> Parser (MaelstromBody a)
-decodeMaelstromBody = withObject "MaelstromBody" $ \v ->
+aesonOptions :: Json.Options
+aesonOptions =
+  Json.defaultOptions
+    { Json.sumEncoding = Json.defaultTaggedObject {Json.tagFieldName = "type"}
+    , Json.tagSingleConstructors = True
+    , Json.constructorTagModifier = map toLower
+    , Json.omitNothingFields = True
+    }
+
+parseMaelstromBody ::
+  (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
+  Value
+  -> Parser (MaelstromBody a)
+parseMaelstromBody = withObject "MaelstromBody" $ \v ->
   MaelstromBody
     <$> v
     .:? "msg_id"
     <*> v
     .:? "in_reply_to"
-    <*> parseJSON (Object (Json.delete "in_reply_to" (Json.delete "msg_id" v)))
+    <*> Json.genericParseJSON
+      aesonOptions
+      (Object (Json.delete "in_reply_to" (Json.delete "msg_id" v)))
 
 maelstromBodyToJSON ::
-  (Generic a, Json.GToJSON' Value Json.Zero (Rep a), ToJSON a) =>
+  (Generic a, ToJSON a, Json.GToJSON' Value Json.Zero (Rep a)) =>
   MaelstromBody a
   -> Value
 maelstromBodyToJSON mbody =
@@ -86,22 +99,20 @@ maelstromBodyToJSON mbody =
       , ("in_reply_to", Json.toJSON mbody.in_reply_to)
       ]
     <> case Json.genericToJSON
-      Json.defaultOptions
-        { Json.sumEncoding = Json.defaultTaggedObject {Json.tagFieldName = "type"}
-        , Json.tagSingleConstructors = True
-        , Json.constructorTagModifier = map toLower
-        , Json.omitNothingFields = True
-        }
+      aesonOptions
       mbody.payload of
       Json.Object kvs -> kvs
       _otherwise ->
         error
           "maelstromBodyToJSON: impossible, toJSON on payload will always be an object"
 
-parseMessage :: (FromJSON a) => Value -> Either String (Message a)
+parseMessage ::
+  (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
+  Value
+  -> Either String (Message a)
 parseMessage = Json.parseEither $ \value -> do
   msg <- Json.parseJSON value :: Parser (MaelstromMessage Value)
-  body <- decodeMaelstromBody msg.body
+  body <- parseMaelstromBody msg.body
   return
     Message
       { src = msg.src
@@ -111,7 +122,10 @@ parseMessage = Json.parseEither $ \value -> do
       , body = body.payload
       }
 
-decodeMessage :: (FromJSON a) => ByteString -> Either String (Message a)
+decodeMessage ::
+  (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
+  ByteString
+  -> Either String (Message a)
 decodeMessage bs = do
   value <- Json.eitherDecode bs
   parseMessage value
@@ -136,7 +150,9 @@ encodeMessage message =
 
 ------------------------------------------------------------------------
 
-data Echo = Echo {echo :: Text}
+data Echo
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Echo {echo :: Text}
   deriving stock (Generic, Show)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -149,3 +165,11 @@ t = do
     Right echo -> do
       print echo
       print $ encodeMessage echo
+
+  let bs' =
+        "{\"id\":0,\"src\":\"c0\",\"dest\":\"n1\",\"body\":{\"type\":\"init\",\"node_id\":\"n1\",\"node_ids\":[\"n1\"],\"msg_id\":1}}"
+  case decodeMessage bs' :: Either String (Message Echo) of
+    Left err -> error err
+    Right init0 -> do
+      print init0
+      print $ encodeMessage init0

@@ -78,23 +78,38 @@ stdinSource = do
 source :: (Foldable f) => f a -> Source () a
 source = mapM_ yield
 
+debugEnabled :: Bool
+debugEnabled = False
+
+debug :: BS8.ByteString -> Node s i o ()
+debug bs
+  | debugEnabled = liftIO $ BS8.hPutStrLn stderr bs
+  | otherwise = return ()
+
 stdinBS :: Source s ByteString
 stdinBS = do
+  debug "stdinBS: awaiting getline"
   bs <- liftIO BS8.getLine
+  debug ("stdinBS: getLine: " <> bs)
   if BS8.null bs
-    then stop
-    else yield (LBS.fromStrict bs)
+    then do
+      debug "stdinBS: stop"
+      stop
+    else do
+      yield (LBS.fromStrict bs)
 
 type Sink s k = Node s k Void ()
 
-stdoutSink :: (Show a) => Sink s (Is a)
-stdoutSink = do
+stdoutShow :: (Show a) => Sink s (Is a)
+stdoutShow = do
   s <- await
   liftIO (print s)
 
 stdoutBS :: Sink s (Is ByteString)
 stdoutBS = do
+  debug "stdoutBS: awaiting..."
   bs <- await
+  debug $ "stdoutBS: got: " <> (LBS8.toStrict bs)
   liftIO (LBS8.hPutStrLn stdout bs)
 
 ------------------------------------------------------------------------
@@ -170,16 +185,18 @@ run n = go
     go s = case runNode n of
       Stop -> return (s, [])
       Yield o k -> liftM (fmap (o :)) (run (k ()) s)
-      Await _p _k -> error "run: await"
+      Await _p _k -> return (s, [])
       LiftIO io k -> do
         x <- io
         run (k x) s
       Get k -> run (k s) s
       Put s' k -> run (k ()) s'
 
-run_ :: Node s k o () -> s -> IO ()
+run_ :: (Show o) => Node s k o () -> s -> IO ()
 run_ node s = do
-  _ <- run node s
+  (_s', _os) <- run node s
+  -- hPutStrLn stderr ("run_: one step complete: " <> show os)
+  -- run_ node s'
   return ()
 
 ------------------------------------------------------------------------
@@ -187,13 +204,15 @@ run_ node s = do
 test :: IO ()
 test =
   run_
-    (forever stdinSource >>> forever identity >>> forever stdoutSink)
+    (forever stdinSource >>> forever identity >>> forever stdoutShow)
     ()
 
 test2 :: IO ()
 test2 = do
   run_
-    ( source ["foo", "bar", "baz"] >>> forever identity >>> forever stdoutSink
+    ( source ["foo" :: String, "bar", "baz"]
+        >>> forever identity
+        >>> forever stdoutShow
     )
     ()
 
@@ -202,15 +221,27 @@ t = test2
 
 ------------------------------------------------------------------------
 
-data Echo = Echo {echo :: String}
+data Echo
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Echo {echo :: String}
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
-jsonDecode :: (FromJSON i) => Node s (Is ByteString) (Message i) ()
+data EchoOk
+  = Init_Ok
+  | Echo_Ok {echo :: String}
+  deriving stock (Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+jsonDecode ::
+  (Generic i, FromJSON i, Json.GFromJSON Json.Zero (Rep i)) =>
+  Node s (Is ByteString) (Message i) ()
 jsonDecode = do
   bs <- await
   case decodeMessage bs of
-    Left err -> error err
+    Left err ->
+      error
+        ("Failed trying to parse: '" <> LBS8.unpack bs <> "'\nError: " <> err)
     Right msg -> yield msg
 
 jsonEncode ::
@@ -240,17 +271,29 @@ auto f = do
   i <- await
   yield (f i)
 
-echoNode :: Node s (Is Echo) Echo ()
-echoNode = identity
+echoNode :: Node s (Is Echo) EchoOk ()
+echoNode = do
+  await >>= \case
+    Init {} -> yield Init_Ok
+    Echo s -> yield (Echo_Ok s)
 
 echo' :: Node MessageId k Void ()
 echo' =
-  stdinBS
-    >>> jsonDecode
-    >>> ((auto body >>> echoNode) &&& auto void)
-    >>> reply
-    >>> jsonEncode
-    >>> stdoutBS
+  forever stdinBS
+    >>> forever jsonDecode
+    >>> forever
+      ((forever (auto body) >>> forever echoNode) &&& forever (auto void))
+    >>> forever reply
+    >>> forever jsonEncode
+    >>> forever stdoutBS
 
 libMain :: IO ()
-libMain = run_ echo' 0
+libMain = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  run_ echo' 0
+
+-- {"id":0,"src":"c0","dest":"n1","body":{"type":"init","node_id":"n1","node_ids":["n1"],"msg_id":1}}
+--
+-- {"id":94,"src":"c2","dest":"n1","body":{"echo":"Please echo 16","type":"echo","msg_id":47}}
