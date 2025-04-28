@@ -193,11 +193,7 @@ run n = go
       Put s' k -> run (k ()) s'
 
 run_ :: (Show o) => Node s k o () -> s -> IO ()
-run_ node s = do
-  (_s', _os) <- run node s
-  -- hPutStrLn stderr ("run_: one step complete: " <> show os)
-  -- run_ node s'
-  return ()
+run_ node s = void (run node s)
 
 ------------------------------------------------------------------------
 
@@ -293,7 +289,3 @@ libMain = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
   run_ echo' 0
-
--- {"id":0,"src":"c0","dest":"n1","body":{"type":"init","node_id":"n1","node_ids":["n1"],"msg_id":1}}
---
--- {"id":94,"src":"c2","dest":"n1","body":{"echo":"Please echo 16","type":"echo","msg_id":47}}
