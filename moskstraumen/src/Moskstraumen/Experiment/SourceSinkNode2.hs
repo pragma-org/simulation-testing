@@ -1,10 +1,21 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE Rank2Types #-}
 
 module Moskstraumen.Experiment.SourceSinkNode2 (module Moskstraumen.Experiment.SourceSinkNode2) where
 
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Json
+import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Void
+import GHC.Generics (Rep)
+import System.IO
 
 import Moskstraumen.FreeMonad
+import Moskstraumen.Message2
+import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
@@ -33,7 +44,7 @@ data Is a b where
   Refl :: Is a a
 
 await :: Node s (Is i) o i
-await = generic' (Await Refl)
+await = awaits Refl
 
 awaits :: k i -> Node s k o i
 awaits ki = generic' (Await ki)
@@ -60,10 +71,19 @@ type Source s o = forall k. Node s k o ()
 stdinSource :: Source () String
 stdinSource = do
   s <- liftIO (putStr "input> " >> getLine)
-  yield s
+  if null s
+    then stop
+    else yield s
 
 source :: (Foldable f) => f a -> Source () a
 source = mapM_ yield
+
+stdinBS :: Source s ByteString
+stdinBS = do
+  bs <- liftIO BS8.getLine
+  if BS8.null bs
+    then stop
+    else yield (LBS.fromStrict bs)
 
 type Sink s k = Node s k Void ()
 
@@ -71,6 +91,11 @@ stdoutSink :: (Show a) => Sink s (Is a)
 stdoutSink = do
   s <- await
   liftIO (print s)
+
+stdoutBS :: Sink s (Is ByteString)
+stdoutBS = do
+  bs <- await
+  liftIO (LBS8.hPutStrLn stdout bs)
 
 ------------------------------------------------------------------------
 
@@ -100,22 +125,57 @@ f >>> g = case runNode g of
     LiftIO io k' -> do
       x <- liftIO io
       k' x >>> (await >>= k)
+    Get k' -> do
+      s <- get
+      k' s >>> g
+    Put s' k' -> do
+      put s'
+      k' () >>> g
   LiftIO io k -> do
     x <- liftIO io
     f >>> k x
-  Get k -> error "ge"
-  Put s' k -> error "pu"
+  Get k -> do
+    s <- get
+    f >>> k s
+  Put s' k -> do
+    put s'
+    f >>> k ()
 
-run :: Node s k o () -> s -> IO [o]
+-- XXX: Shared state doesn't make sense here?
+(&&&) ::
+  Node s (Is a) b () -> Node s (Is a) c () -> Node s (Is a) (b, c) ()
+f &&& g = do
+  i <- await
+  s <- get
+  (_s', bs) <- liftIO (run' f [i] s)
+  (_s', cs) <- liftIO (run' g [i] s)
+  zipWithM_ (\b c -> yield (b, c)) bs cs
+
+-- XXX: run . supply?
+run' :: Node s (Is i) o () -> [i] -> s -> IO (s, [o])
+run' node [] s = run node s
+run' node (i : is) s = case runNode node of
+  Stop -> return (s, [])
+  Yield o k -> liftM (fmap (o :)) (run' (k ()) (i : is) s)
+  Await Refl k -> run' (k i) is s
+  LiftIO io k -> do
+    x <- io
+    run' (k x) (i : is) s
+  Get k -> run' (k s) (i : is) s
+  Put s' k -> run' (k ()) (i : is) s'
+
+run :: Node s k o () -> s -> IO (s, [o])
 run n = go
   where
     go s = case runNode n of
-      Stop -> return []
-      Yield o k -> liftM (o :) (run (k ()) s)
+      Stop -> return (s, [])
+      Yield o k -> liftM (fmap (o :)) (run (k ()) s)
       Await _p _k -> error "run: await"
       LiftIO io k -> do
         x <- io
         run (k x) s
+      Get k -> run (k s) s
+      Put s' k -> run (k ()) s'
 
 run_ :: Node s k o () -> s -> IO ()
 run_ node s = do
@@ -139,3 +199,58 @@ test2 = do
 
 t :: IO ()
 t = test2
+
+------------------------------------------------------------------------
+
+data Echo = Echo {echo :: String}
+  deriving stock (Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+jsonDecode :: (FromJSON i) => Node s (Is ByteString) (Message i) ()
+jsonDecode = do
+  bs <- await
+  case decodeMessage bs of
+    Left err -> error err
+    Right msg -> yield msg
+
+jsonEncode ::
+  (Generic o, ToJSON o, Json.GToJSON' Json.Value Json.Zero (Rep o)) =>
+  Node s (Is (Message o)) ByteString ()
+jsonEncode = do
+  o <- await
+  yield (encodeMessage o)
+
+reply :: Node MessageId (Is (a, Message ())) (Message a) ()
+reply = do
+  (x, msg) <- await
+  nextMessageId <- get
+  put (nextMessageId + 1)
+  yield
+    ( msg
+        { src = msg.dest
+        , dest = msg.src
+        , msgId = Just nextMessageId
+        , inReplyTo = msg.msgId
+        , body = x
+        }
+    )
+
+auto :: (i -> o) -> Node s (Is i) o ()
+auto f = do
+  i <- await
+  yield (f i)
+
+echoNode :: Node s (Is Echo) Echo ()
+echoNode = identity
+
+echo' :: Node MessageId k Void ()
+echo' =
+  stdinBS
+    >>> jsonDecode
+    >>> ((auto body >>> echoNode) &&& auto void)
+    >>> reply
+    >>> jsonEncode
+    >>> stdoutBS
+
+libMain :: IO ()
+libMain = run_ echo' 0

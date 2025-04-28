@@ -47,3 +47,23 @@ instance (Functor f) => Monad (Free f) where
   return = pure
   Pure x >>= k = k x
   Free m >>= k = Free (fmap (>>= k) m)
+
+------------------------------------------------------------------------
+
+-- https://hackage.haskell.org/package/kan-extensions
+data Coyoneda f a where
+  Coyoneda :: (b -> a) -> f b -> Coyoneda f a
+
+instance Functor (Coyoneda f) where
+  fmap f (Coyoneda g fb) = Coyoneda (f . g) fb
+
+genericCoyoneda ::
+  ((x -> Free f x) -> g (Free (Coyoneda g) y)) -> Free (Coyoneda g) y
+genericCoyoneda op = Free (Coyoneda id (op Pure))
+
+data OpF x = forall a. ExampleLiftIO (IO a) (a -> x)
+
+type Op a = Free (Coyoneda OpF) a
+
+coyonedaLiftIO :: IO a -> Op a
+coyonedaLiftIO io = genericCoyoneda (ExampleLiftIO io)

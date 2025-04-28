@@ -49,6 +49,7 @@ library
     Moskstraumen.LinearTemporalLogic
     Moskstraumen.Marshal
     Moskstraumen.Message
+    Moskstraumen.Message2
     Moskstraumen.Node4
     Moskstraumen.NodeHandle
     Moskstraumen.NodeId
