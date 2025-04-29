@@ -42,6 +42,7 @@ library
     Moskstraumen.Experiment.PipelineNode
     Moskstraumen.Experiment.SourceSinkNode
     Moskstraumen.Experiment.SourceSinkNode2
+    Moskstraumen.Experiment.SourceSinkNode3
     Moskstraumen.FakeTime
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
