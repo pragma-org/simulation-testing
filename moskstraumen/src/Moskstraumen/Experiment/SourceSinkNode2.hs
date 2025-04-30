@@ -166,18 +166,27 @@ f &&& g = do
   (_s', cs) <- liftIO (run' g [i] s)
   zipWithM_ (\b c -> yield (b, c)) bs cs
 
--- XXX: run . supply?
+supply ::
+  forall f s i o.
+  (Foldable f) =>
+  f i
+  -> Node s (Is i) o ()
+  -> Node s (Is i) o ()
+supply = foldr go id
+  where
+    go ::
+      i
+      -> (Node s (Is i) o () -> Node s (Is i) o ())
+      -> Node s (Is i) o ()
+      -> Node s (Is i) o ()
+    go i r n = case runNode n of
+      Stop -> stop
+      Await Refl k -> r (k i)
+      Yield o k -> yield o >> go i r (k ())
+      LiftIO io k -> liftIO io >>= \x -> go i r (k x)
+
 run' :: Node s (Is i) o () -> [i] -> s -> IO (s, [o])
-run' node [] s = run node s
-run' node (i : is) s = case runNode node of
-  Stop -> return (s, [])
-  Yield o k -> liftM (fmap (o :)) (run' (k ()) (i : is) s)
-  Await Refl k -> run' (k i) is s
-  LiftIO io k -> do
-    x <- io
-    run' (k x) (i : is) s
-  Get k -> run' (k s) (i : is) s
-  Put s' k -> run' (k ()) (i : is) s'
+run' node is s = run (supply is node) s
 
 run :: Node s k o () -> s -> IO (s, [o])
 run n = go

@@ -231,7 +231,12 @@ f &&& g = do
 
 (***) ::
   Node s (Is a) c () -> Node s (Is b) d () -> Node s (Is (a, b)) (c, d) ()
-f *** g = undefined
+f *** g = do
+  (a, b) <- await
+  s <- get
+  (_s', cs) <- liftIO (run' f [a] s)
+  (_s', ds) <- liftIO (run' g [b] s)
+  zipWithM_ (\c d -> yield (c, d)) cs ds
 
 (|||) ::
   Node (NodeState s) (Is a) c ()
@@ -261,18 +266,8 @@ supply = foldr go id
       Yield o k -> yield o >> go i r (k ())
       LiftIO io k -> liftIO io >>= \x -> go i r (k x)
 
--- XXX: run . supply?
 run' :: Node s (Is i) o () -> [i] -> s -> IO (s, [o])
-run' node [] s = run node s
-run' node (i : is) s = case runNode node of
-  Stop -> return (s, [])
-  Yield o k -> liftM (fmap (o :)) (run' (k ()) (i : is) s)
-  Await Refl k -> run' (k i) is s
-  LiftIO io k -> do
-    x <- io
-    run' (k x) (i : is) s
-  Get k -> run' (k s) (i : is) s
-  Put s' k -> run' (k ()) (i : is) s'
+run' node is s = run (supply is node) s
 
 run :: Node s k o () -> s -> IO (s, [o])
 run n = go
