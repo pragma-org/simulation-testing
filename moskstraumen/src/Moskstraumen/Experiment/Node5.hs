@@ -157,7 +157,6 @@ data Runtime = Runtime
 -- start snippet NodeState
 data NodeState s = NodeState
   { localState :: s
-  , nextMessageId :: MessageId
   , self :: NodeId
   }
 
@@ -170,7 +169,6 @@ initialNodeState :: s -> NodeState s
 initialNodeState s =
   NodeState
     { localState = s
-    , nextMessageId = 0
     , self = "uninitialised"
     }
 
@@ -191,61 +189,39 @@ data Codec i o = Codec
 ------------------------------------------------------------------------
 
 -- start snippet runNode
+data Effect i o = SEND NodeId i | REPLY o
+
 runNode ::
   Node s i o a
-  -> Codec i o
   -> NodeState s
-  -> Message Value
-  -> Either String (NodeState s, [Message Value], a)
-runNode node codec s mv = case traverse codec.decodeInput mv of
-  Right mi -> Right (runNodeBody (void mv) (unNode node mi.payload) codec s)
-  Left err -> Left err
+  -> i
+  -> (NodeState s, [Effect i o], a)
+runNode node s i = runNodeBody (unNode node i) s
 
 -- end snippet
 
--- runNode node codec s mv = case mv.inReplyTo of
---   Nothing -> case traverse codec.decodeInput mv of
---     Right mi -> runNodeBody (void mv) (node mi.payload) codec s
---     Left _ -> undefined
---   Just msgId -> undefined
+--
 
 -- start snippet runNodeBody
 runNodeBody ::
-  Message ()
-  -> NodeBody s i o a
-  -> Codec i o
+  forall s i o a.
+  NodeBody s i o a
   -> NodeState s
-  -> (NodeState s, [Message Value], a)
-runNodeBody mv (NodeBody m) codec s = iterM go done m (s, [])
+  -> (NodeState s, [Effect i o], a)
+runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
   where
-    done x (s, messages) = (s, reverse messages, x)
+    done ::
+      a -> (NodeState s, [Effect i o]) -> (NodeState s, [Effect i o], a)
+    done x (ns, messages) = (ns, reverse messages, x)
 
-    go (Reply o k) (s, acc) = do
-      let messageId = s.nextMessageId
-      let message =
-            Message
-              { src = mv.dest
-              , dest = mv.src
-              , msgId = Just messageId
-              , inReplyTo = mv.msgId
-              , payload = codec.encodeOutput o
-              }
-      k () (s {nextMessageId = messageId + 1}, message : acc)
-    go (Send nodeId i k) (s, acc) = do
-      let messageId = s.nextMessageId
-      let message =
-            Message
-              { src = s.self
-              , dest = nodeId
-              , msgId = Just messageId
-              , inReplyTo = Nothing
-              , payload = codec.encodeInput i
-              }
-      k () (s {nextMessageId = messageId + 1}, message : acc)
-    go (Get k) (s, acc) =
-      k s.localState (s, acc)
-    go (Put s' k) (s, acc) =
-      k () (s {localState = s'}, acc)
+    go ::
+      Alg
+        (NodeF s i o)
+        ((NodeState s, [Effect i o]) -> (NodeState s, [Effect i o], a))
+    go (Reply o k) (ns, acc) = k () (ns, REPLY o : acc)
+    go (Send nodeId i k) (s, acc) = k () (ns, SEND nodeId i : acc)
+    go (Get k) (s, acc) = k s.localState (s, acc)
+    go (Put s' k) (s, acc) = k () (s {localState = s'}, acc)
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
@@ -273,20 +249,74 @@ runNodeBody (Free (RPC nid i failure success k)) codec runtime s mi = do
 ------------------------------------------------------------------------
 
 -- start snippet eventLoop
-eventLoop :: Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
+data EventLoopState = EventLoopState
+  { nextMessageId :: Word64
+  }
+
+initialEventLoopState :: EventLoopState
+initialEventLoopState =
+  EventLoopState
+    { nextMessageId = 0
+    }
+
+eventLoop ::
+  forall s i o. Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
 eventLoop node initialState codec runtime =
-  go (initialNodeState initialState)
+  go (initialNodeState initialState) initialEventLoopState
   where
-    go s = do
+    go :: NodeState s -> EventLoopState -> IO ()
+    go ns es = do
       incoming <- runtime.receive
-      forM_ incoming $ \(_time, message) -> do
-        case runNode node codec s message of
+      forM_ incoming $ \(_time, message) ->
+        case traverse codec.decodeInput message of
           Left err -> do
             putStrLn ("Failed to parse input: " <> err)
-            go s
-          Right (s', outgoing, ()) -> do
-            runtime.send outgoing
-            go s'
+            go ns es
+          Right mi ->
+            case runNode node ns mi.payload of
+              (ns', effects, ()) -> do
+                let (es', outgoing) = handleEffects codec (void mi) ns' es effects
+                runtime.send outgoing
+                go ns' es'
+
+handleEffects ::
+  forall i o s.
+  Codec i o
+  -> Message ()
+  -> NodeState s
+  -> EventLoopState
+  -> [Effect i o]
+  -> (EventLoopState, [Message Value])
+handleEffects codec incoming ns = go []
+  where
+    go ::
+      [Message Value]
+      -> EventLoopState
+      -> [Effect i o]
+      -> (EventLoopState, [Message Value])
+    go acc es [] = (es, reverse acc)
+    go acc es (SEND nodeId i : effects) = do
+      let messageId = es.nextMessageId
+      let message =
+            Message
+              { src = ns.self
+              , dest = nodeId
+              , msgId = Just messageId
+              , inReplyTo = Nothing
+              , payload = codec.encodeInput i
+              }
+      go (message : acc) es {nextMessageId = messageId + 1} effects
+    go acc es (REPLY o : effects) = do
+      let messageId = es.nextMessageId
+      let message =
+            Message
+              { src = ns.self
+              , dest = incoming.src
+              , msgId = Just messageId
+              , inReplyTo = incoming.msgId
+              , payload = codec.encodeOutput o
+              }
+      go (message : acc) es {nextMessageId = messageId + 1} effects
 
 -- end snippet
 
