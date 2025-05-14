@@ -20,6 +20,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Data.Typeable (Typeable, cast)
 import Data.Void
+import Debug.Trace
 import GHC.Generics (Rep)
 import System.IO
 
@@ -33,8 +34,8 @@ import Moskstraumen.Prelude
 type Node s k o a = Free (NodeF s k o) a
 
 data NodeF s k o x
-  = forall i. Await (k i) (i -> x)
-  | Yield o (() -> x)
+  = forall i. Await (Maybe (k i)) (Either i (NodeId, Json.Value) -> x)
+  | Yield (Either o (NodeId, Json.Value)) (() -> x)
   | Get (s -> x)
   | Put s (() -> x)
   | forall a. LiftIO (IO a) (a -> x)
@@ -62,10 +63,22 @@ await :: Node s (Is i) o i
 await = awaits Refl
 
 awaits :: k i -> Node s k o i
-awaits ki = generic' (Await ki)
+awaits ki = Free (Await (Just ki) (Pure . either id (const (error "awaits"))))
+
+await' :: Node s (Is i) o (Either i (NodeId, Json.Value))
+await' = awaits' (Just Refl)
+
+awaits' :: Maybe (k i) -> Node s k o (Either i (NodeId, Json.Value))
+awaits' p = generic' (Await p)
 
 yield :: o -> Node s i o ()
-yield o = generic' (Yield o)
+yield o = generic' (Yield (Left o))
+
+send :: NodeId -> Json.Value -> Node s i o ()
+send nodeId value = generic' (Yield (Right (nodeId, value)))
+
+yield' :: Either o (NodeId, Json.Value) -> Node s i o ()
+yield' o = generic' (Yield o)
 
 get :: Node s i o s
 get = generic' Get
@@ -92,17 +105,19 @@ rpc ::
   -> (o -> Node s (Is i) o ())
   -> Node s (Is i) o ()
 rpc nodeId input failure success =
-  generic'
-    ( RPC
-        nodeId
-        (Json.toJSON input)
-        failure
-        ( \value -> case Json.fromJSON value of
-            Json.Success o -> success o
-            Json.Error err -> failure err
-        )
-    )
+  send nodeId (Json.toJSON input)
 
+--  generic'
+--    ( RPC
+--        nodeId
+--        (Json.toJSON input)
+--        failure
+--        ( \value -> case Json.fromJSON value of
+--            Json.Success o -> success o
+--            Json.Error err -> failure err
+--        )
+--    )
+--
 ------------------------------------------------------------------------
 
 type Source s o = forall k. Node s k o ()
@@ -118,7 +133,7 @@ source :: (Foldable f) => f a -> Source s a
 source = mapM_ yield
 
 debugEnabled :: Bool
-debugEnabled = False
+debugEnabled = True
 
 debug :: BS8.ByteString -> Node s i o ()
 debug bs
@@ -127,7 +142,7 @@ debug bs
 
 stdinBS :: Source s ByteString
 stdinBS = do
-  debug "stdinBS: awaiting getline"
+  -- debug "stdinBS: awaiting getline"
   bs <- liftIO BS8.getLine
   debug ("stdinBS: getLine: " <> bs)
   if BS8.null bs
@@ -141,7 +156,7 @@ type Sink s k = Node s k Void ()
 
 stdoutShow :: (Show a) => Sink s (Is a)
 stdoutShow = do
-  s <- await
+  s <- await'
   liftIO (print s)
 
 stdoutBS :: Sink s (Is ByteString)
@@ -167,6 +182,7 @@ identity = do
 data NodeState s = NodeState
   { localState :: s
   , self :: NodeId
+  , neighbours :: [NodeId]
   , nextMessageId :: MessageId
   , pendingRPCs :: PendingRPCs
   }
@@ -177,7 +193,7 @@ type PendingRPCs =
     (Json.Value -> SomeNode (Is (Message Json.Value)) Json.Value ())
 
 initialNodeState :: s -> NodeId -> NodeState s
-initialNodeState s0 nodeId = NodeState s0 nodeId 0 Map.empty
+initialNodeState s0 nodeId = NodeState s0 nodeId [] 0 Map.empty
 
 infixr 1 >>>
 
@@ -187,16 +203,16 @@ infixr 1 >>>
   -> Node (NodeState s) (Is a) c ()
 f >>> g = case runNode g of
   Stop -> stop
-  Yield c k -> yield c >> (f >>> k ())
-  Await Refl k -> case runNode f of
+  Yield c k -> yield' c >> (f >>> k ())
+  Await (Just Refl) k -> case runNode f of
     Stop -> stop
     Yield b k' -> k' () >>> k b
     Await p k' -> do
-      i <- awaits p
+      i <- awaits' p
       k' i >>> g
     LiftIO io k' -> do
       x <- liftIO io
-      k' x >>> (await >>= k)
+      k' x >>> (await' >>= k)
     Get k' -> do
       s <- get
       k' s >>> g
@@ -204,7 +220,9 @@ f >>> g = case runNode g of
       put s'
       k' () >>> g
     RPC n v failure success k' -> do
-      generic' (RPC n v (\e -> failure e >>> g) (\c -> success c >>> g))
+      liftIO $ print ("send", n, v)
+      send n v
+      -- generic' (RPC n v (\e -> failure e >>> g) (\c -> success c >>> g))
       k' () >>> g
   LiftIO io k -> do
     x <- liftIO io
@@ -216,8 +234,9 @@ f >>> g = case runNode g of
     put s'
     f >>> k ()
   RPC n i failure success k -> do
-    generic' (RPC n i (\e -> f >>> failure e) (\c -> f >>> success c))
-    f >>> k ()
+    liftIO $ print "byte"
+    -- generic' (RPC n i (\e -> f >>> failure e) (\c -> f >>> success c))
+    f >>> (k () >> send n i)
 
 -- XXX: Shared state doesn't make sense here?
 (&&&) ::
@@ -227,7 +246,8 @@ f &&& g = do
   s <- get
   (_s', bs) <- liftIO (run' f [i] s)
   (_s', cs) <- liftIO (run' g [i] s)
-  zipWithM_ (\b c -> yield (b, c)) bs cs
+  -- zipWithM_ (\b c -> yield (b, c)) bs cs
+  zipWithM_ (\(Left b) (Left c) -> yield' (Left (b, c))) bs cs
 
 (***) ::
   Node s (Is a) c () -> Node s (Is b) d () -> Node s (Is (a, b)) (c, d) ()
@@ -236,7 +256,7 @@ f *** g = do
   s <- get
   (_s', cs) <- liftIO (run' f [a] s)
   (_s', ds) <- liftIO (run' g [b] s)
-  zipWithM_ (\c d -> yield (c, d)) cs ds
+  undefined -- zipWithM_ (\c d -> yield' (c, d)) cs ds
 
 (|||) ::
   Node (NodeState s) (Is a) c ()
@@ -262,14 +282,18 @@ supply = foldr go id
       -> Node s (Is i) o ()
     go i r n = case runNode n of
       Stop -> stop
-      Await Refl k -> r (k i)
-      Yield o k -> yield o >> go i r (k ())
+      Await (Just Refl) k -> r (k (Left i))
+      Yield o k -> yield' o >> go i r (k ())
       LiftIO io k -> liftIO io >>= \x -> go i r (k x)
 
-run' :: Node s (Is i) o () -> [i] -> s -> IO (s, [o])
+run' ::
+  Node s (Is i) o ()
+  -> [i]
+  -> s
+  -> IO (s, [Either o (NodeId, Json.Value)])
 run' node is s = run (supply is node) s
 
-run :: Node s k o () -> s -> IO (s, [o])
+run :: Node s k o () -> s -> IO (s, [Either o (NodeId, Json.Value)])
 run n = go
   where
     go s = case runNode n of
@@ -282,8 +306,7 @@ run n = go
       Get k -> run (k s) s
       Put s' k -> run (k ()) s'
       RPC n v success failure k -> do
-        undefined -- XXX: ?
-        run (k ()) s
+        run (send n v >> k ()) s
 
 run_ :: (Show o) => Node s k o () -> s -> IO ()
 run_ node s = void (run node s)
@@ -304,22 +327,35 @@ test2 = do
         >>> forever stdoutShow
     )
     (initialNodeState () "test2")
+
+test3 :: IO ()
+test3 =
+  run_
+    ( source ["foo" :: String, "bar", "baz"]
+        >>> forever
+          ( await >>= \s -> rpc "n1" s error (error "success") >> yield ()
+          -- works: ( await >>= \s -> send "n1" (Json.toJSON s) >> yield ()
+          )
+        >>> forever stdoutShow
+    )
+    (initialNodeState () "test3")
+
 t :: IO ()
-t = test2
+t = test3
 
 ------------------------------------------------------------------------
 
-data Echo
-  = Init {node_id :: NodeId, node_ids :: [NodeId]}
-  | Echo {echo :: String}
-  deriving stock (Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
-data EchoOk
-  = Init_Ok
-  | Echo_Ok {echo :: String}
-  deriving stock (Generic)
-  deriving anyclass (FromJSON, ToJSON)
+-- data Echo
+--   = Init {node_id :: NodeId, node_ids :: [NodeId]}
+--   | Echo {echo :: String}
+--   deriving stock (Generic)
+--   deriving anyclass (FromJSON, ToJSON)
+--
+-- data EchoOk
+--   = Init_Ok
+--   | Echo_Ok {echo :: String}
+--   deriving stock (Generic)
+--   deriving anyclass (FromJSON, ToJSON)
 
 jsonDecode ::
   (Generic i, FromJSON i, Json.GFromJSON Json.Zero (Rep i)) =>
@@ -327,6 +363,15 @@ jsonDecode ::
 jsonDecode = do
   bs <- await
   case decodeMessage bs of
+    Left err ->
+      error
+        ("Failed trying to parse: '" <> LBS8.unpack bs <> "'\nError: " <> err)
+    Right msg -> yield msg
+
+jsonDecodeValue :: Node s (Is ByteString) (Message Json.Value) ()
+jsonDecodeValue = do
+  bs <- await
+  case decodeMessageValue bs of
     Left err ->
       error
         ("Failed trying to parse: '" <> LBS8.unpack bs <> "'\nError: " <> err)
@@ -361,30 +406,30 @@ auto f = do
   i <- await
   yield (f i)
 
-echoNode :: Node s (Is Echo) EchoOk ()
-echoNode = do
-  await >>= \case
-    Init {} -> yield Init_Ok
-    Echo s -> yield (Echo_Ok s)
-
-echo' :: Node (NodeState ()) (Is i) Void ()
-echo' =
-  forever stdinBS
-    >>> forever jsonDecode
-    >>> forever
-      ((forever (auto body) >>> forever echoNode) &&& forever (auto void))
-    >>> forever reply
-    >>> forever jsonEncode
-    >>> forever stdoutBS
-
-libMain :: IO ()
-libMain = do
-  hSetBuffering stdin LineBuffering
-  hSetBuffering stdout LineBuffering
-  hSetBuffering stderr LineBuffering
-  run_
-    echo'
-    (initialNodeState () "n1")
+-- echoNode :: Node s (Is Echo) EchoOk ()
+-- echoNode = do
+--   await >>= \case
+--     Init {} -> yield Init_Ok
+--     Echo s -> yield (Echo_Ok s)
+--
+-- echo' :: Node (NodeState ()) (Is i) Void ()
+-- echo' =
+--   forever stdinBS
+--     >>> forever jsonDecode
+--     >>> forever
+--       ((forever (auto body) >>> forever echoNode) &&& forever (auto void))
+--     >>> forever reply
+--     >>> forever jsonEncode
+--     >>> forever stdoutBS
+--
+-- libMain :: IO ()
+-- libMain = do
+--   hSetBuffering stdin LineBuffering
+--   hSetBuffering stdout LineBuffering
+--   hSetBuffering stderr LineBuffering
+--   run_
+--     echo'
+--     (initialNodeState () "n1")
 
 ------------------------------------------------------------------------
 
@@ -397,9 +442,11 @@ bcast' ::
 bcast' =
   forever stdinBS
     >>> forever jsonDecode
-    >>> forever handleRPC
-    >>> forever
-      (forever (forever bcast ||| forever identity) *** forever identity)
+    -- >>> forever handleRPC
+    -- >>> forever
+    --   (forever (forever bcast ||| forever identity) *** forever identity)
+    -- >>> forever reply
+    >>> ((forever (auto body) >>> forever bcast) &&& forever (auto void))
     >>> forever reply
     >>> forever jsonEncode
     >>> forever stdoutBS
@@ -422,17 +469,19 @@ handleRPC = do
         Just node' -> node' >>> (await >>= (\o -> yield (Right o, void msg)))
         Nothing -> error "handleRPC: state type mismatch"
     Nothing -> case Json.fromJSON msg.body of
-      Json.Success i -> yield (Left i, void msg)
+      Json.Success i -> trace "handleRPC, normal" $ yield (Left i, void msg)
       Json.Error e -> info (Text.pack e) >>> stop
 
 data Broadcast
-  = Broadcast Json.Value
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Broadcast Json.Value
   | Read
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
 data BroadcastOk
-  = Broadcast_Ok
+  = Init_OK
+  | Broadcast_Ok
   | Read_Ok [Json.Value]
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -448,79 +497,93 @@ initialState = BroadcastState Set.empty Map.empty
 bcast :: Node (NodeState BroadcastState) (Is Broadcast) BroadcastOk ()
 bcast =
   await >>= \case
+    Init nodeId neighbours -> info "initialised" >> yield Init_OK
     Broadcast msg -> do
       -- Acknowledge the request.
       yield Broadcast_Ok
-      seenMessages <- seen . localState <$> get
-      when (msg `Set.notMember` seenMessages) $ do
-        modify
-          ( \s ->
-              s {localState = s.localState {seen = Set.insert msg s.localState.seen}}
-          )
-        neighbours <- getPeers
-        sender <- getSender
-        modify
-          ( \s ->
-              s
-                { localState =
-                    s.localState
-                      { unAcked = Map.insert msg (neighbours \\ [sender]) s.localState.unAcked
-                      }
-                }
-          )
-        let go = do
-              unAckedNodes <- (Map.! msg) . unAcked . localState <$> get
-              if null unAckedNodes
-                then info ("Done with message: " <> fromString (show msg))
-                else do
-                  info
-                    ( "Need to replicate \""
-                        <> Text.pack (show msg)
-                        <> "\" to "
-                        <> Text.pack (show unAckedNodes)
-                    )
-                  forM_ unAckedNodes $ \nodeId -> rpc
-                    nodeId
-                    (Broadcast msg)
-                    ( \e ->
-                        info
-                          ( "Failed to deliver "
-                              <> fromString (show msg)
-                              <> " to "
-                              <> unNodeId nodeId
-                              <> ": "
-                              <> fromString e
-                          )
-                    )
-                    $ \resp ->
-                      case resp of
-                        Broadcast_Ok -> do
-                          info ("Got ack from: " <> unNodeId nodeId)
-                          modify
-                            ( \s ->
-                                s
-                                  { localState =
-                                      s.localState
-                                        { unAcked = Map.adjust (delete nodeId) msg s.localState.unAcked
-                                        }
-                                  }
-                            )
-                        _otherwise -> error "broadcast: unexpected response"
-                  sleep 1_000_000
-                  go
-        go
+    -- seenMessages <- seen . localState <$> get
+    -- when (msg `Set.notMember` seenMessages) $ do
+    --  modify
+    --    ( \s ->
+    --        s {localState = s.localState {seen = Set.insert msg s.localState.seen}}
+    --    )
+    --  neighbours <- getPeers
+    --  sender <- getSender
+    --  modify
+    --    ( \s ->
+    --        s
+    --          { localState =
+    --              s.localState
+    --                { unAcked = Map.insert msg (neighbours \\ [sender]) s.localState.unAcked
+    --                }
+    --          }
+    --    )
+    --  let go = do
+    --        unAckedNodes <- (Map.! msg) . unAcked . localState <$> get
+    --        if null unAckedNodes
+    --          then info ("Done with message: " <> fromString (show msg))
+    --          else do
+    --            info
+    --              ( "Need to replicate \""
+    --                  <> Text.pack (show msg)
+    --                  <> "\" to "
+    --                  <> Text.pack (show unAckedNodes)
+    --              )
+    --            forM_ unAckedNodes $ \nodeId -> rpc
+    --              nodeId
+    --              (Broadcast msg)
+    --              ( \e ->
+    --                  info
+    --                    ( "Failed to deliver "
+    --                        <> fromString (show msg)
+    --                        <> " to "
+    --                        <> unNodeId nodeId
+    --                        <> ": "
+    --                        <> fromString e
+    --                    )
+    --              )
+    --              $ \resp ->
+    --                case resp of
+    --                  Broadcast_Ok -> do
+    --                    info ("Got ack from: " <> unNodeId nodeId)
+    --                    modify
+    --                      ( \s ->
+    --                          s
+    --                            { localState =
+    --                                s.localState
+    --                                  { unAcked = Map.adjust (delete nodeId) msg s.localState.unAcked
+    --                                  }
+    --                            }
+    --                      )
+    --                  _otherwise -> error "broadcast: unexpected response"
+    --            sleep 1_000_000
+    --            go
+    --  go
     Read -> do
       seenMessages <- seen . localState <$> get
       info ("Read, seen: " <> fromString (show seenMessages))
       yield (Read_Ok (Set.toList seenMessages))
 
 info :: Text -> Node s i o ()
-info = liftIO . Text.putStrLn
+info = liftIO . Text.hPutStrLn stderr
 
 sleep :: Int -> Node s i o ()
 sleep = liftIO . threadDelay
 
 getPeers :: Node (NodeState s) i o [NodeId]
-getPeers = undefined
+getPeers = neighbours <$> get
 
-getSender = undefined
+getSender ::
+  Free
+    (NodeF (NodeState BroadcastState) (Is Broadcast) BroadcastOk)
+    NodeId
+getSender = return "dummy"
+
+libMain' :: IO ()
+libMain' = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  run_
+    bcast'
+    (initialNodeState initialState "n1")

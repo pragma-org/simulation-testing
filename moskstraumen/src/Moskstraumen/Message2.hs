@@ -5,8 +5,10 @@ module Moskstraumen.Message2 (
   Message (Message, src, dest, body, msgId, inReplyTo),
   parseMessage,
   decodeMessage,
+  decodeMessageValue,
   encodeMessage,
   t,
+  tv,
 ) where
 
 import Data.Aeson (
@@ -88,6 +90,15 @@ parseMaelstromBody = withObject "MaelstromBody" $ \v ->
       aesonOptions
       (Object (Json.delete "in_reply_to" (Json.delete "msg_id" v)))
 
+parseMaelstromBodyValue :: Value -> Parser (MaelstromBody Value)
+parseMaelstromBodyValue = withObject "MaelstromBody" $ \v ->
+  MaelstromBody
+    <$> v
+    .:? "msg_id"
+    <*> v
+    .:? "in_reply_to"
+    <*> return (Object (Json.delete "in_reply_to" (Json.delete "msg_id" v)))
+
 maelstromBodyToJSON ::
   (Generic a, ToJSON a, Json.GToJSON' Value Json.Zero (Rep a)) =>
   MaelstromBody a
@@ -122,6 +133,19 @@ parseMessage = Json.parseEither $ \value -> do
       , body = body.payload
       }
 
+parseMessageValue :: Value -> Either String (Message Value)
+parseMessageValue = Json.parseEither $ \value -> do
+  msg <- Json.parseJSON value :: Parser (MaelstromMessage Value)
+  body <- parseMaelstromBodyValue msg.body
+  return
+    Message
+      { src = msg.src
+      , dest = msg.dest
+      , msgId = body.msg_id
+      , inReplyTo = body.in_reply_to
+      , body = body.payload
+      }
+
 decodeMessage ::
   (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
   ByteString
@@ -129,6 +153,11 @@ decodeMessage ::
 decodeMessage bs = do
   value <- Json.eitherDecode bs
   parseMessage value
+
+decodeMessageValue :: ByteString -> Either String (Message Value)
+decodeMessageValue bs = do
+  value <- Json.eitherDecode bs
+  parseMessageValue value
 
 encodeMessage ::
   (Generic a, ToJSON a, Json.GToJSON' Value Json.Zero (Rep a)) =>
@@ -173,3 +202,12 @@ t = do
     Right init0 -> do
       print init0
       print $ encodeMessage init0
+
+tv :: IO ()
+tv = do
+  let bs =
+        "{\"id\":0,\"src\":\"c0\",\"dest\":\"n1\",\"body\":{\"type\":\"init\",\"node_id\":\"n1\",\"node_ids\":[\"n1\"],\"msg_id\":1}}"
+
+  case decodeMessageValue bs :: Either String (Message Value) of
+    Left err -> error err
+    Right msg -> print msg
