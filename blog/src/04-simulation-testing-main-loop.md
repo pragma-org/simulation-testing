@@ -46,7 +46,7 @@ Given this a test run proceeds as follows:
   4. If the response is a client response, then append it to the trace,
      otherwise it's a message to another node. For messages to other nodes we
      generate a random arrival time using the PRNG and put it back into heap
-     (this process creates different message interleavings or different seeds
+     (this process creates different message interleavings for different seeds
      to the PRNG);
   5. Keep doing step 3 and 4 until we run out of messages on the heap.
   6. Use the developer supplied trace checker to see if the test passed or not.

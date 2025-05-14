@@ -59,7 +59,7 @@ So the overall testing strategy is: generate random client requests, introduce
 faults while serving the requests, make sure no assertions fail while serving
 the requests, and potentially make some global assertions across all nodes
 after the tests, e.g. all nodes have the same data or the client requests and
-responses all linearise, etc. If anything fails we can share the seed with out
+responses all linearise, etc. If anything fails we can share the seed with our
 colleagues which can reproduce the exact same test execution and outcome.
 
 Once many such tests passed, FoundationDB introduced implementations of

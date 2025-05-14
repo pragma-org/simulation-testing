@@ -44,7 +44,7 @@ Given this a test run proceeds as follows:
     otherwise it's a message to another node. For messages to other
     nodes we generate a random arrival time using the PRNG and put it
     back into heap (this process creates different message interleavings
-    or different seeds to the PRNG);
+    for different seeds to the PRNG);
 5.  Keep doing step 3 and 4 until we run out of messages on the heap.
 6.  Use the developer supplied trace checker to see if the test passed
     or not.
