@@ -15,6 +15,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text.IO as Text
 import GHC.Generics (Rep)
 import System.IO
 import System.Process
@@ -44,7 +45,7 @@ data NodeState s = NodeState
   { localState :: s
   , self :: NodeId
   , neighbours :: [NodeId]
-  , sender :: NodeId
+  , incoming :: Message ()
   }
 
 -- end snippet
@@ -151,7 +152,7 @@ getNeighbours :: NodeBody s i o [NodeId]
 getNeighbours = neighbours <$> generic Get
 
 getSender :: NodeBody s i o NodeId
-getSender = sender <$> generic Get
+getSender = src . incoming <$> generic Get
 
 rpc ::
   NodeId
@@ -210,6 +211,7 @@ data Runtime = Runtime
   { send :: [Message Value] -> IO ()
   , receive :: Timeout -> IO (Maybe [(Time, Message Value)])
   , getTime :: IO Time
+  , log :: Text -> IO ()
   }
 
 -- end snippet
@@ -231,7 +233,14 @@ initialNodeState s =
     { localState = s
     , self = "uninitialised"
     , neighbours = []
-    , sender = "no sender"
+    , incoming =
+        Message
+          { src = "dummy"
+          , dest = "dummy"
+          , msgId = Nothing
+          , inReplyTo = Nothing
+          , body = ()
+          }
     }
 
 -- end snippet
@@ -260,6 +269,8 @@ data Effect s i o
       i
       (RpcError -> (NodeState s, [Effect s i o]))
       (o -> (NodeState s, [Effect s i o]))
+  | LOG Text
+  | AFTER Int (NodeState s, [Effect s i o])
 
 runNode ::
   Node s i o
@@ -298,8 +309,8 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
         ( ns
         , RPC nodeId i (flip failure (ns, acc)) (flip success (ns, acc)) : acc
         )
-    go (Log text k) (s, acc) = k () (s, acc) -- XXX: do the effect
-    go (After micros m k) (s, acc) = k () (s, acc) -- XXX:
+    go (Log text k) (s, acc) = k () (s, LOG text : acc)
+    go (After micros _m k) (s, acc) = (s, AFTER micros (k () (s, acc)) : acc)
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
@@ -346,7 +357,13 @@ eventLoop node initialState codec runtime =
           let micros = max 0 (diffTimeMicros later now)
           runtime.receive micros >>= \case
             Nothing -> do
-              let (es', outgoing) = handleEffects codec undefined ns' es effects
+              (es', outgoing) <-
+                handleEffects
+                  runtime
+                  codec
+                  ns'
+                  es
+                  effects
               runtime.send outgoing
               loop ns' es'
             Just incoming -> do
@@ -364,8 +381,9 @@ eventLoop node initialState codec runtime =
               ("Failed to parse input: " <> err <> "\nbody: " <> show message.body)
             handleMessages ns es incoming acc
           Right mi -> do
-            let (ns', effects) = runNode node ns {sender = mi.src} mi.body
-            let (es', outgoing) = handleEffects codec (void mi) ns' es effects
+            let (ns', effects) = runNode node ns {incoming = void mi} mi.body
+            (es', outgoing) <-
+              handleEffects runtime codec ns' {incoming = void mi} es effects
             handleMessages ns' es' incoming (outgoing : acc)
         Just (msgId', k) -> case traverse codec.decodeOutput message of
           Left err -> do
@@ -375,27 +393,28 @@ eventLoop node initialState codec runtime =
             Right o -> do
               let (ns', effects) = k o
               let es' = es {pendingRpcs = Map.delete msgId' (pendingRpcs es)}
-              let (es'', outgoing) = handleEffects codec (void mo) ns' es' effects
+              (es'', outgoing) <-
+                handleEffects runtime codec ns' {incoming = void mo} es' effects
               handleMessages ns' es'' incoming (outgoing : acc)
             Left rpcError ->
               undefined
 
 handleEffects ::
   forall i o s.
-  Codec i o
-  -> Message ()
+  Runtime
+  -> Codec i o
   -> NodeState s
   -> EventLoopState s i o
   -> [Effect s i o]
-  -> (EventLoopState s i o, [Message Value])
-handleEffects codec incoming ns = go []
+  -> IO (EventLoopState s i o, [Message Value])
+handleEffects runtime codec ns = go []
   where
     go ::
       [Message Value]
       -> EventLoopState s i o
       -> [Effect s i o]
-      -> (EventLoopState s i o, [Message Value])
-    go acc es [] = (es, reverse acc)
+      -> IO (EventLoopState s i o, [Message Value])
+    go acc es [] = return (es, reverse acc)
     go acc es (SEND nodeId i : effects) = do
       let messageId = es.nextMessageId
       let message =
@@ -412,9 +431,9 @@ handleEffects codec incoming ns = go []
       let message =
             Message
               { src = ns.self
-              , dest = incoming.src
+              , dest = ns.incoming.src
               , msgId = Just messageId
-              , inReplyTo = incoming.msgId
+              , inReplyTo = ns.incoming.msgId
               , body = codec.encodeOutput o
               }
       go (message : acc) es {nextMessageId = messageId + 1} effects
@@ -428,7 +447,7 @@ handleEffects codec incoming ns = go []
               , inReplyTo = Nothing
               , body = codec.encodeInput i
               }
-      let now = undefined
+      now <- runtime.getTime
       let es' =
             es
               { nextMessageId = messageId + 1
@@ -440,6 +459,20 @@ handleEffects codec incoming ns = go []
                     (pendingTimers es)
               }
       go (message : acc) es' effects
+    go acc es (LOG text : effects) = do
+      runtime.log text
+      go acc es effects
+    go acc es (AFTER micros k : effects) = do
+      now <- runtime.getTime
+      let es' =
+            es
+              { pendingTimers =
+                  insertTimer
+                    (addTimeMicros micros now)
+                    k
+                    (pendingTimers es)
+              }
+      go acc es' effects
 
 rPC_TIMEOUT_MICROS :: Int
 rPC_TIMEOUT_MICROS = 1_000_000 -- 1s.
@@ -457,6 +490,7 @@ consoleRuntime = do
       { receive = \micros -> Timeout.timeout micros consoleReceive
       , send = consoleSend
       , getTime = getCurrentTime
+      , log = Text.hPutStrLn stderr
       }
   where
     consoleReceive :: IO [(Time, Message Value)]
@@ -567,6 +601,7 @@ testRuntime = do
             loop timeoutTime
         , send = atomically . mapM_ (writeTQueue outgoing . decodeMessage)
         , getTime = readFakeTimeIO fakeTime
+        , log = Text.hPutStrLn stderr
         }
     , TestHandle
         { fakeTime = fakeTime
