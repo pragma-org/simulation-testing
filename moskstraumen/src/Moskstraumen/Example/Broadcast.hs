@@ -1,5 +1,6 @@
 module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) where
 
+import Data.Aeson (FromJSON, ToJSON)
 import Data.List (delete, (\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -7,12 +8,8 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 
-import Moskstraumen.Codec
-import Moskstraumen.EventLoop2
-import Moskstraumen.Message
-import Moskstraumen.Node4
+import Moskstraumen.Experiment.Node8
 import Moskstraumen.NodeId
-import Moskstraumen.Parse
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
@@ -20,43 +17,46 @@ import Moskstraumen.Prelude
 data BroadcastInput
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
   | Topology {topology :: Map Text [NodeId]}
-  | Broadcast {message :: Value}
+  | Broadcast {message :: Int}
   | Read
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastOutput
-  = InitOk
-  | TopologyOk
-  | BroadcastOk
-  | ReadOk {messages :: [Value]}
+  = Init_Ok
+  | Topology_Ok
+  | Broadcast_Ok
+  | Read_Ok {messages :: [Int]}
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastState = BroadcastState
-  { seen :: Set Value
-  , unAcked :: Map Value [NodeId]
+  { seen :: Set Int
+  , unAcked :: Map Int [NodeId]
   }
 
 initialState :: BroadcastState
 initialState = BroadcastState Set.empty Map.empty
 
-broadcast ::
-  BroadcastInput -> Node BroadcastState BroadcastInput BroadcastOutput
+broadcast :: Node BroadcastState BroadcastInput BroadcastOutput
 broadcast (Init self nodeIds) = do
   info ("Initialising: " <> unNodeId self)
-  setNodeId self
-  setPeers nodeIds
-  reply InitOk
+  setSelf self
+  setNeighbours nodeIds
+  reply Init_Ok
 broadcast (Topology nodeIds) = do
-  NodeId self <- getNodeId
+  NodeId self <- getSelf
   let newNeighbours = nodeIds Map.! self
   info ("New neighbours: " <> fromString (show newNeighbours))
-  setPeers newNeighbours
-  reply TopologyOk
+  setNeighbours newNeighbours
+  reply Topology_Ok
 broadcast (Broadcast msg) = do
   -- Acknowledge the request.
-  reply BroadcastOk
+  reply Broadcast_Ok
   seenMessages <- seen <$> getState
   when (msg `Set.notMember` seenMessages) $ do
     modifyState (\s -> s {seen = Set.insert msg s.seen})
-    neighbours <- getPeers
+    neighbours <- getNeighbours
     sender <- getSender
     modifyState
       (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
@@ -74,85 +74,34 @@ broadcast (Broadcast msg) = do
               forM_ unAckedNodes $ \nodeId -> rpc
                 nodeId
                 (Broadcast msg)
-                ( info
-                    ( "Failed to deliver "
-                        <> fromString (show msg)
-                        <> " to "
-                        <> unNodeId nodeId
-                    )
+                ( \rpcError ->
+                    info
+                      ( "Failed to deliver "
+                          <> fromString (show msg)
+                          <> " to "
+                          <> unNodeId nodeId
+                          <> ": "
+                          <> fromString (show rpcError)
+                      )
                 )
                 $ \resp ->
                   case resp of
-                    Right BroadcastOk -> do
+                    Broadcast_Ok -> do
                       info ("Got ack from: " <> unNodeId nodeId)
                       modifyState
                         (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
                     _otherwise -> error "broadcast: unexpected response"
-              sleep 1_000_000 go
+              sleep 1_000_000
+              go
     go
 broadcast Read = do
   seenMessages <- seen <$> getState
   info ("Read, seen: " <> fromString (show seenMessages))
-  reply (ReadOk (Set.toList seenMessages))
-
-------------------------------------------------------------------------
-
-broadcastValidateInput :: Parser BroadcastInput
-broadcastValidateInput =
-  asum
-    [ Init
-        <$ hasKind "init"
-        <*> hasNodeIdField "node_id"
-        <*> hasListField "node_ids" isNodeId
-    , Topology
-        <$ hasKind "topology"
-        <*> hasMapField "topology" (isList isNodeId)
-    , Broadcast <$ hasKind "broadcast" <*> hasValueField "message"
-    , Read <$ hasKind "read"
-    ]
-
-broadcastMarshalInput ::
-  BroadcastInput -> (MessageKind, [(Field, Value)])
-broadcastMarshalInput (Init {}) = undefined
-broadcastMarshalInput (Broadcast msg) = ("broadcast", [("message", msg)])
-broadcastMarshalInput (Topology topology) =
-  ( "topology"
-  ,
-    [
-      ( "topology"
-      , Map
-          (Map.map (List . map (\(NodeId text) -> String text)) topology)
-      )
-    ]
-  )
-broadcastMarshalInput (Read {}) = undefined
-
-broadcastMarshalOutput ::
-  BroadcastOutput -> (MessageKind, [(Field, Value)])
-broadcastMarshalOutput InitOk = ("init_ok", [])
-broadcastMarshalOutput TopologyOk = ("topology_ok", [])
-broadcastMarshalOutput BroadcastOk = ("broadcast_ok", [])
-broadcastMarshalOutput (ReadOk msgs) = ("read_ok", [("messages", List msgs)])
-
-broadcastValidateOutput :: Parser BroadcastOutput
-broadcastValidateOutput =
-  asum
-    [ InitOk <$ hasKind "init_ok"
-    , TopologyOk <$ hasKind "topology_ok"
-    , BroadcastOk <$ hasKind "broadcast_ok"
-    , ReadOk <$ hasKind "read_ok" <*> hasListField "messages" Just
-    ]
+  reply (Read_Ok (Set.toList seenMessages))
 
 ------------------------------------------------------------------------
 
 libMain :: IO ()
 libMain = do
-  consoleEventLoop
-    broadcast
-    initialState
-    ValidateMarshal
-      { validateInput = broadcastValidateInput
-      , validateOutput = broadcastValidateOutput
-      , marshalInput = broadcastMarshalInput
-      , marshalOutput = broadcastMarshalOutput
-      }
+  runtime <- consoleRuntime
+  eventLoop broadcast initialState jsonCodec runtime

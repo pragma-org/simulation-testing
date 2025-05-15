@@ -1,21 +1,27 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Moskstraumen.Experiment.Node8 (module Moskstraumen.Experiment.Node8) where
 
 -- Fork of Node5 where we add RPC.
 
 import Control.Applicative
+import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Exception (assert)
 import Data.Aeson
 import qualified Data.Aeson as Json
+import qualified Data.Aeson.Types as Json
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import GHC.Generics (Rep)
 import System.IO
 import System.Process
 import qualified System.Timeout as Timeout
 
 import Moskstraumen.FreeMonad
-import Moskstraumen.NodeHandle (NodeHandle (..), close, handle)
+import Moskstraumen.Message2
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate
@@ -25,43 +31,55 @@ import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
 
-type Node_ s i o = Node s i o ()
-
 -- start snippet Node
 
-newtype Node s i o a = Node {unNode :: i -> NodeBody s i o a}
+type Node s i o = i -> NodeBody s i o ()
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
+
+-- end snippet
+
+-- start snippet NodeState
+data NodeState s = NodeState
+  { localState :: s
+  , self :: NodeId
+  , neighbours :: [NodeId]
+  , sender :: NodeId
+  }
 
 -- end snippet
 
 -- start snippet NodeF
 data NodeF s i o x
   = Reply o (() -> x)
-  | Get (s -> x)
-  | Put s (() -> x)
+  | Get (NodeState s -> x)
+  | Put (NodeState s) (() -> x)
   | Send NodeId i (() -> x)
-  | Rpc NodeId i (RpcError -> x) (o -> x) ~x
+  | Rpc NodeId i (RpcError -> x) (o -> x) (() -> x)
+  | After Int x (() -> x)
+  | Log Text (() -> x)
   | -- end snippet
     Fail String
   | NewVar (VarId -> x)
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
-  | After Int x (() -> x)
   | At Time x (() -> x)
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
+  fmap f (Get k) = Get (f . k)
+  fmap f (Put s' k) = Put s' (f . k)
   fmap f (Send nodeId i k) = Send nodeId i (f . k)
-  fmap f (Rpc nodeId i failure success x) = Rpc nodeId i (f . failure) (f . success) (f x)
+  fmap f (Rpc nodeId i failure success k) = Rpc nodeId i (f . failure) (f . success) (f . k)
+  fmap f (After micros task k) = After micros (f task) (f . k)
+  fmap f (Log text k) = Log text (f . k)
   fmap _f (Fail string) = Fail string
   fmap f (NewVar k) = NewVar (f . k)
   fmap f (DeliverVar varId var x) = DeliverVar varId var (f x)
   fmap f (AwaitVar varId k) = AwaitVar varId (f . k)
-  fmap f (After micros task k) = After micros (f task) (f . k)
 
 data RpcError = Timeout
-  deriving stock (Generic)
+  deriving stock (Show, Eq, Generic)
   deriving anyclass (FromJSON)
 
 instance Functor (NodeBody s i o) where
@@ -103,6 +121,52 @@ generic_ ::
   -> NodeBody state input output a
 generic_ op = NodeBody (Free (op (Pure ())))
 
+getState :: NodeBody s i o s
+getState = localState <$> generic Get
+
+putState :: s -> NodeBody s i o ()
+putState s' = do
+  ns <- generic Get
+  generic (Put ns {localState = s'})
+
+modifyState :: (s -> s) -> NodeBody s i o ()
+modifyState f = do
+  s <- getState
+  putState (f s)
+
+setSelf :: NodeId -> NodeBody s i o ()
+setSelf self = do
+  ns <- generic Get
+  generic (Put ns {self = self})
+
+getSelf :: NodeBody s i o NodeId
+getSelf = self <$> generic Get
+
+setNeighbours :: [NodeId] -> NodeBody s i o ()
+setNeighbours neighbours = do
+  ns <- generic Get
+  generic (Put ns {neighbours = neighbours})
+
+getNeighbours :: NodeBody s i o [NodeId]
+getNeighbours = neighbours <$> generic Get
+
+getSender :: NodeBody s i o NodeId
+getSender = sender <$> generic Get
+
+rpc ::
+  NodeId
+  -> i
+  -> (RpcError -> NodeBody s i o ())
+  -> (o -> NodeBody s i o ())
+  -> NodeBody s i o ()
+rpc nodeId i failure success = generic (Rpc nodeId i (unNodeBody . failure) (unNodeBody . success))
+
+info :: Text -> NodeBody s i o ()
+info text = generic (Log ("[info] " <> text))
+
+sleep :: Int -> NodeBody s i o ()
+sleep micros = generic (After micros (Pure ()))
+
 syncRpc ::
   NodeId
   -> i
@@ -110,7 +174,7 @@ syncRpc ::
   -> NodeBody s i o (Either RpcError o)
 syncRpc nodeId i failure = do
   varId <- generic NewVar
-  generic_
+  generic
     $ Rpc
       nodeId
       i
@@ -121,8 +185,16 @@ syncRpc nodeId i failure = do
 ------------------------------------------------------------------------
 
 -- start snippet echo
-echo :: Node () String String ()
-echo = Node $ \input -> let output = input in reply output
+data Echo = Echo {echo :: String}
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
+
+data Echo_Ok = Echo_Ok {echo :: String}
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
+
+echoNode :: Node () Echo Echo_Ok
+echoNode (Echo input) = reply (Echo_Ok input)
 
 reply :: o -> NodeBody s i o ()
 reply output = NodeBody (Free (Reply output Pure))
@@ -131,25 +203,12 @@ reply output = NodeBody (Free (Reply output Pure))
 
 ------------------------------------------------------------------------
 
--- start snippet Message
-data Message a = Message
-  { src :: NodeId
-  , dest :: NodeId
-  , msgId :: Maybe MessageId
-  , inReplyTo :: Maybe MessageId
-  , payload :: a
-  }
-  deriving stock (Generic, Functor, Foldable, Traversable)
-  deriving anyclass (FromJSON, ToJSON)
-
-type MessageId = Word64
-
--- end snippet
-
 -- start snippet Runtime
+type Timeout = Int
+
 data Runtime = Runtime
   { send :: [Message Value] -> IO ()
-  , receive :: Int -> IO (Maybe [(Time, Message Value)])
+  , receive :: Timeout -> IO (Maybe [(Time, Message Value)])
   , getTime :: IO Time
   }
 
@@ -162,13 +221,6 @@ data Runtime = Runtime
 -- , getCurrentTime :: m Time
 -- , shutdown :: m ()
 
--- start snippet NodeState
-data NodeState s = NodeState
-  { localState :: s
-  , self :: NodeId
-  }
-
--- end snippet
 -- , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
 -- , nextVarId :: VarId
 
@@ -178,6 +230,8 @@ initialNodeState s =
   NodeState
     { localState = s
     , self = "uninitialised"
+    , neighbours = []
+    , sender = "no sender"
     }
 
 -- end snippet
@@ -208,11 +262,11 @@ data Effect s i o
       (o -> (NodeState s, [Effect s i o]))
 
 runNode ::
-  Node s i o a
+  Node s i o
   -> NodeState s
   -> i
   -> (NodeState s, [Effect s i o])
-runNode node s i = runNodeBody (unNode node i) s
+runNode node s i = runNodeBody (node i) s
 
 -- end snippet
 
@@ -236,36 +290,22 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
         ((NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o]))
     go (Reply o k) (ns, acc) = k () (ns, REPLY o : acc)
     go (Send nodeId i k) (s, acc) = k () (ns, SEND nodeId i : acc)
-    go (Get k) (s, acc) = k s.localState (s, acc)
-    go (Put s' k) (s, acc) = k () (s {localState = s'}, acc)
+    go (Get k) (s, acc) = k s (s, acc)
+    go (Put s' k) (s, acc) = k () (s', acc)
     go (Rpc nodeId i failure success k) (ns, acc) =
       k
+        ()
         ( ns
         , RPC nodeId i (flip failure (ns, acc)) (flip success (ns, acc)) : acc
         )
+    go (Log text k) (s, acc) = k () (s, acc) -- XXX: do the effect
+    go (After micros m k) (s, acc) = k () (s, acc) -- XXX:
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
     --      k varId (s {nextVarId = varId + 1}, acc)
     go (DeliverVar varId var x) acc = undefined
     go (AwaitVar varId k) acc = undefined
-
--- go (RPC)
--- \| RPC NodeId i (RpcError -> x) (o -> x) ~x
-
-{-
-runNodeBody (Pure ()) _codec _runtime _s _mi = return ()
-runNodeBody (Free (Reply o k)) codec runtime s mi = do
-  let mv = Message mi.dest mi.src mi.msgId (codec.encodeOutput o)
-  runtime.send mv
-  runNodeBody (k ()) codec runtime s mi
-runNodeBody (Free (Send nid i k)) codec runtime s mi = do
-  let m = Message undefined nid undefined
-  runtime.send m
-  runNodeBody (NodeBody (k ())) codec runtime s mi
-runNodeBody (Free (RPC nid i failure success k)) codec runtime s mi = do
-  runNodeBody (NodeBody (k ())) codec runtime s mi
- -}
 
 ------------------------------------------------------------------------
 
@@ -285,7 +325,7 @@ initialEventLoopState =
     }
 
 eventLoop ::
-  forall s i o. Node_ s i o -> s -> Codec i o -> Runtime -> IO ()
+  forall s i o. Node s i o -> s -> Codec i o -> Runtime -> IO ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
   where
@@ -319,17 +359,19 @@ eventLoop node initialState codec runtime =
       case message.msgId >>= \msgId' -> (\k -> (msgId', k)) <$> Map.lookup msgId' es.pendingRpcs of
         Nothing -> case traverse codec.decodeInput message of
           Left err -> do
-            putStrLn ("Failed to parse input: " <> err)
+            hPutStrLn
+              stderr
+              ("Failed to parse input: " <> err <> "\nbody: " <> show message.body)
             handleMessages ns es incoming acc
           Right mi -> do
-            let (ns', effects) = runNode node ns mi.payload
+            let (ns', effects) = runNode node ns {sender = mi.src} mi.body
             let (es', outgoing) = handleEffects codec (void mi) ns' es effects
             handleMessages ns' es' incoming (outgoing : acc)
         Just (msgId', k) -> case traverse codec.decodeOutput message of
           Left err -> do
-            putStrLn ("Failed to parse output: " <> err)
+            hPutStrLn stderr ("Failed to parse output: " <> err)
             handleMessages ns es incoming acc
-          Right mo -> case mo.payload of
+          Right mo -> case mo.body of
             Right o -> do
               let (ns', effects) = k o
               let es' = es {pendingRpcs = Map.delete msgId' (pendingRpcs es)}
@@ -362,7 +404,7 @@ handleEffects codec incoming ns = go []
               , dest = nodeId
               , msgId = Just messageId
               , inReplyTo = Nothing
-              , payload = codec.encodeInput i
+              , body = codec.encodeInput i
               }
       go (message : acc) es {nextMessageId = messageId + 1} effects
     go acc es (REPLY o : effects) = do
@@ -373,7 +415,7 @@ handleEffects codec incoming ns = go []
               , dest = incoming.src
               , msgId = Just messageId
               , inReplyTo = incoming.msgId
-              , payload = codec.encodeOutput o
+              , body = codec.encodeOutput o
               }
       go (message : acc) es {nextMessageId = messageId + 1} effects
     go acc es (RPC nodeId i failure success : effects) = do
@@ -384,7 +426,7 @@ handleEffects codec incoming ns = go []
               , dest = nodeId
               , msgId = Just messageId
               , inReplyTo = Nothing
-              , payload = codec.encodeInput i
+              , body = codec.encodeInput i
               }
       let now = undefined
       let es' =
@@ -424,7 +466,7 @@ consoleRuntime = do
         then return []
         else do
           BS8.hPutStrLn stderr ("consoleRuntime: recieved: " <> line)
-          case Json.eitherDecodeStrict line of
+          case decodeMessageValue' line :: Either String (Message Value) of
             Right message -> do
               now <- getCurrentTime
               return [(now, message)]
@@ -438,10 +480,9 @@ consoleRuntime = do
     consoleSend :: [Message Value] -> IO ()
     consoleSend messages =
       forM_ messages $ \message -> do
-        BS8.hPutStrLn
-          stderr
-          ("consoleRuntime: sent: " <> LBS8.toStrict (Json.encode message))
-        BS8.hPutStrLn stdout (LBS8.toStrict (Json.encode message))
+        let bytes = LBS8.toStrict (encodeMessage message)
+        BS8.hPutStrLn stderr ("consoleRuntime: sent: " <> bytes)
+        BS8.hPutStrLn stdout bytes
 
 -- end snippet
 
@@ -453,44 +494,78 @@ newFakeTime time = FakeTime <$> newTVarIO time
 readFakeTime :: FakeTime -> STM Time
 readFakeTime (FakeTime tvar) = readTVar tvar
 
+writeFakeTime :: FakeTime -> Time -> STM ()
+writeFakeTime (FakeTime tvar) newTime = writeTVar tvar newTime
+
 readFakeTimeIO :: FakeTime -> IO Time
 readFakeTimeIO = atomically . readFakeTime
 
 data TestHandle i o = TestHandle
   { fakeTime :: FakeTime
-  , inQueue :: TQueue (Either (Message i) (Message o))
+  , inQueue :: TQueue (Time, Either (Message i) (Message o))
   , outQueue :: TQueue (Either (Message i) (Message o))
   }
 
-testSend :: TestHandle i o -> Time -> NodeId -> i -> IO ()
-testSend = undefined
+nextMessage ::
+  TQueue (Time, Either (Message i) (Message o))
+  -> STM (Time, Either (Message i) (Message o))
+nextMessage = readTQueue
 
-nextMessage = undefined
-
-testRuntime :: (ToJSON i, ToJSON o) => IO (Runtime, TestHandle i o)
+testRuntime ::
+  forall i o.
+  (ToJSON i, ToJSON o, FromJSON i, FromJSON o) =>
+  IO (Runtime, TestHandle i o)
 testRuntime = do
   fakeTime <- newFakeTime epoch
   incoming <- newTQueueIO
   outgoing <- newTQueueIO
+  let encodeMessage :: Either (Message i) (Message o) -> Message Value
+      encodeMessage = either (fmap Json.toJSON) (fmap Json.toJSON)
+
+      decodeMessage :: Message Value -> Either (Message i) (Message o)
+      decodeMessage message = case message.inReplyTo of
+        Nothing -> case Json.fromJSON message.body of
+          Json.Error err -> error err
+          Json.Success i -> Left message {body = i}
+        Just _ -> case Json.fromJSON message.body of
+          Json.Error err -> error err
+          Json.Success o -> Right message {body = o}
+
   return
     ( Runtime
         { receive = \micros -> atomically $ do
             start <- readFakeTime fakeTime
-            let later = addTimeMicros micros start
-            let loop later = do
+            let timeoutTime = addTimeMicros micros start
+            let loop timeoutTime = do
                   now <- readFakeTime fakeTime
                   (arrivalTime, msg) <- nextMessage incoming
-                  -- unGetTQueue
-                  if now > later
-                    then return Nothing -- Timeout happened.
+                  if timeoutTime < arrivalTime
+                    then
+                      if now > timeoutTime
+                        then do
+                          unGetTQueue incoming (arrivalTime, msg)
+                          return Nothing -- Timeout happened.
+                        else
+                          if now >= arrivalTime
+                            then -- Next message got receieved.
+                              return (Just [(arrivalTime, encodeMessage msg)])
+                            else do
+                              -- Still waiting.
+                              unGetTQueue incoming (arrivalTime, msg)
+                              loop timeoutTime
                     else
                       if now >= arrivalTime
-                        then -- Next message got receieved.
-                          return (Just [(arrivalTime, msg)])
-                        else -- Still waiting.
-                          loop later
-            loop later
-        , send = undefined
+                        then return (Just [(arrivalTime, encodeMessage msg)])
+                        else
+                          if now > timeoutTime
+                            then do
+                              unGetTQueue incoming (arrivalTime, msg)
+                              return Nothing
+                            else do
+                              unGetTQueue incoming (arrivalTime, msg)
+                              loop timeoutTime
+            loop timeoutTime
+        , send = atomically . mapM_ (writeTQueue outgoing . decodeMessage)
         , getTime = readFakeTimeIO fakeTime
         }
     , TestHandle
@@ -500,12 +575,19 @@ testRuntime = do
         }
     )
 
-echoCodec :: Codec String String
-echoCodec =
+-- (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
+jsonCodec ::
+  ( Generic i
+  , FromJSON i
+  , Json.GFromJSON Json.Zero (Rep i)
+  , ToJSON i
+  , FromJSON o
+  , ToJSON o
+  ) =>
+  Codec i o
+jsonCodec =
   Codec
-    { decodeInput = \value -> case Json.fromJSON value of
-        Json.Success input -> Right input
-        Json.Error err -> Left err
+    { decodeInput = Json.parseEither (Json.genericParseJSON aesonOptions)
     , encodeOutput = Json.toJSON
     , encodeInput = Json.toJSON
     , decodeOutput = \value -> case Json.fromJSON value of
@@ -513,9 +595,12 @@ echoCodec =
         Json.Error err -> Left err
     }
 
+echoCodec :: Codec Echo Echo_Ok
+echoCodec = jsonCodec
+
 -- start snippet testMain
 testMain :: IO ()
-testMain = eventLoop echo () echoCodec =<< consoleRuntime
+testMain = eventLoop echoNode () echoCodec =<< consoleRuntime
 
 -- end snippet
 
@@ -529,11 +614,17 @@ tcpRuntime = undefined
 -- start snippet prodMain
 
 prodMain :: Port -> Map NodeId Port -> IO ()
-prodMain port peers = eventLoop echo () echoCodec =<< tcpRuntime port peers
+prodMain port peers = eventLoop echoNode () echoCodec =<< tcpRuntime port peers
 
 -- end snippet
 
 -- start snippet pipeNodeHandle
+--
+data NodeHandle = NodeHandle
+  { handle :: Time -> Message Value -> IO [Message Value]
+  , close :: IO ()
+  }
+
 pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
 pipeNodeHandle fp args = do
   (Just hin, Just hout, _, processHandle) <-
@@ -542,11 +633,11 @@ pipeNodeHandle fp args = do
   return
     NodeHandle
       { handle = \_arrivalTime message -> do
-          LBS8.hPutStr hin (Json.encode message)
+          LBS8.hPutStr hin (encodeMessage message)
           BS8.hPutStr hin "\n"
           hFlush hin
           line <- BS8.hGetLine hout
-          case Json.eitherDecodeStrict line of
+          case decodeMessage' line of
             Left err -> hPutStrLn stderr err >> return []
             Right msg' -> return [msg']
       , close = terminateProcess processHandle
@@ -561,3 +652,55 @@ simulatorMain = blackboxTest "/path/to/test-main-binary" workload
     -- end snippet
 
     workload = undefined
+
+------------------------------------------------------------------------
+
+test_echo :: IO ()
+test_echo = do
+  (runtime, testHandle) <- testRuntime
+  pid <- forkIO (eventLoop echoNode () echoCodec runtime)
+  sendTest
+    testHandle
+    1
+    ( Message
+        { src = "test"
+        , dest = "n1"
+        , msgId = Just 5
+        , inReplyTo = Nothing
+        , body = Echo "hi"
+        }
+    )
+  expectNoRecv testHandle
+  advanceTime testHandle 1
+  expectRecv
+    testHandle
+    ( Message
+        { src = "uninitialised"
+        , dest = "test"
+        , msgId = Just 0
+        , inReplyTo = Just 5
+        , body = Echo_Ok "hi"
+        }
+    )
+
+sendTest :: TestHandle i o -> Int -> Message i -> IO ()
+sendTest testHandle afterMicros input = atomically $ do
+  now <- readFakeTime testHandle.fakeTime
+  writeTQueue
+    testHandle.inQueue
+    (addTimeMicros afterMicros now, Left input)
+expectRecv :: (Eq o, Show i) => TestHandle i o -> Message o -> IO ()
+expectRecv testHandle expectedOutput = do
+  atomically (readTQueue testHandle.outQueue) >>= \case
+    Left input -> error (show input)
+    Right actualOutput ->
+      assertM (actualOutput == expectedOutput)
+
+expectNoRecv :: TestHandle i o -> IO ()
+expectNoRecv testHandle =
+  assertM =<< atomically (isEmptyTQueue testHandle.outQueue)
+
+advanceTime :: TestHandle i o -> Int -> IO ()
+advanceTime testHandle micros = atomically $ do
+  now <- readFakeTime testHandle.fakeTime
+  writeFakeTime testHandle.fakeTime (addTimeMicros micros now)

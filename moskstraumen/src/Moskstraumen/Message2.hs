@@ -5,27 +5,33 @@ module Moskstraumen.Message2 (
   Message (Message, src, dest, body, msgId, inReplyTo),
   parseMessage,
   decodeMessage,
+  decodeMessage',
   decodeMessageValue,
+  decodeMessageValue',
   encodeMessage,
+  aesonOptions,
+  -- t,
+  -- tv,
   t,
-  tv,
 ) where
 
 import Data.Aeson (
   FromJSON,
   ToJSON,
   Value (..),
-  parseJSON,
   withObject,
   (.:?),
-  (.=),
  )
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.KeyMap as Json
 import Data.Aeson.Types (Parser)
 import qualified Data.Aeson.Types as Json
-import Data.ByteString.Lazy (ByteString)
+import Data.ByteString (ByteString)
+import Data.ByteString.Lazy (LazyByteString)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Char (toLower)
+import qualified Data.Text as Text
+import Debug.Trace
 import GHC.Generics
 
 import Moskstraumen.NodeId
@@ -65,15 +71,20 @@ data Message a = Message
   , inReplyTo :: Maybe MessageId
   , body :: a
   }
-  deriving stock (Show, Functor)
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 aesonOptions :: Json.Options
 aesonOptions =
   Json.defaultOptions
-    { Json.sumEncoding = Json.defaultTaggedObject {Json.tagFieldName = "type"}
+    { Json.sumEncoding =
+        Json.TaggedObject
+          { Json.tagFieldName = "type"
+          , Json.contentsFieldName = "contents"
+          }
     , Json.tagSingleConstructors = True
     , Json.constructorTagModifier = map toLower
     , Json.omitNothingFields = True
+    , Json.unwrapUnaryRecords = True
     }
 
 parseMaelstromBody ::
@@ -109,9 +120,7 @@ maelstromBodyToJSON mbody =
       [ ("msg_id", Json.toJSON mbody.msg_id)
       , ("in_reply_to", Json.toJSON mbody.in_reply_to)
       ]
-    <> case Json.genericToJSON
-      aesonOptions
-      mbody.payload of
+    <> case Json.genericToJSON aesonOptions mbody.payload of
       Json.Object kvs -> kvs
       _otherwise ->
         error
@@ -148,37 +157,53 @@ parseMessageValue = Json.parseEither $ \value -> do
 
 decodeMessage ::
   (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
-  ByteString
+  LazyByteString
   -> Either String (Message a)
 decodeMessage bs = do
   value <- Json.eitherDecode bs
   parseMessage value
 
-decodeMessageValue :: ByteString -> Either String (Message Value)
-decodeMessageValue bs = do
-  value <- Json.eitherDecode bs
+decodeMessage' ::
+  (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
+  ByteString
+  -> Either String (Message a)
+decodeMessage' = decodeMessage . LBS.fromStrict
+
+decodeMessageValue :: LazyByteString -> Either String (Message Value)
+decodeMessageValue lbs = do
+  value <- Json.eitherDecode lbs
   parseMessageValue value
+
+decodeMessageValue' :: ByteString -> Either String (Message Value)
+decodeMessageValue' = decodeMessageValue . LBS.fromStrict
 
 encodeMessage ::
   (Generic a, ToJSON a, Json.GToJSON' Value Json.Zero (Rep a)) =>
   Message a
-  -> ByteString
+  -> LazyByteString
 encodeMessage message =
   Json.encode
     MaelstromMessage
       { src = message.src
       , dest = message.dest
       , body =
-          maelstromBodyToJSON
-            MaelstromBody
-              { msg_id = message.msgId
-              , in_reply_to = message.inReplyTo
-              , payload = message.body
-              }
+          case Json.genericToJSON aesonOptions message.body of
+            Json.Object km -> case Json.lookup "contents" km of
+              Just (Json.Object contents) -> case Json.lookup "tag" contents of
+                Just (Json.String tag) ->
+                  Json.toJSON
+                    $ Json.fromList
+                      [ ("msg_id", Json.toJSON message.msgId)
+                      , ("in_reply_to", Json.toJSON message.inReplyTo)
+                      , ("type", Json.String (Text.toLower tag))
+                      ]
+                    <> Json.delete "tag" contents
+            _otherwise -> error "encodeMessage"
       }
 
 ------------------------------------------------------------------------
 
+{-
 data Echo
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
   | Echo {echo :: Text}
@@ -211,3 +236,36 @@ tv = do
   case decodeMessageValue bs :: Either String (Message Value) of
     Left err -> error err
     Right msg -> print msg
+ -}
+
+data Broadcast
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Broadcast {message :: Value}
+  deriving stock (Generic, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
+data BroadCastOk = Init_Ok {test :: Int}
+  deriving stock (Generic, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
+t :: IO ()
+t = do
+  print
+    $ encodeMessage
+      ( Message
+          { src = "a"
+          , dest = "b"
+          , msgId = Just 1
+          , inReplyTo = Just 2
+          , body = Json.Object (Json.fromList [("tag", Json.String "Init_Ok")])
+          }
+      )
+
+--  let bs =
+--        "{\"id\":4,\"src\":\"c4\",\"dest\":\"n3\",\"body\":{\"type\":\"init\",\"node_id\":\"n3\",\"node_ids\":[\"n1\",\"n2\", \"n3\",\"n4\",\"n5\"],\"msg_id\":1}}"
+--
+-- case decodeMessageValue' bs :: Either String (Message Value) of
+--   Left err -> error err
+--   Right bcast -> do
+--     print bcast
+--     print $ encodeMessage bcast

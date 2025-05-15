@@ -39,6 +39,7 @@ library
     Moskstraumen.Experiment.Node5
     Moskstraumen.Experiment.Node6
     Moskstraumen.Experiment.Node7
+    Moskstraumen.Experiment.Node8
     Moskstraumen.Experiment.PipelineNode
     Moskstraumen.Experiment.SourceSinkNode
     Moskstraumen.Experiment.SourceSinkNode2
