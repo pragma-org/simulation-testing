@@ -1,6 +1,8 @@
 module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Control.Concurrent (forkIO, killThread)
+import Control.Exception (bracket)
+import Data.Aeson (FromJSON, ToJSON, toJSON)
 import Data.List (delete, (\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -9,6 +11,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 
 import Moskstraumen.Experiment.Node8
+import Moskstraumen.Message3
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 
@@ -105,3 +108,60 @@ libMain :: IO ()
 libMain = do
   runtime <- consoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
+
+test_broadcast :: IO ()
+test_broadcast = do
+  (runtime, testHandle) <- testRuntime
+  bracket
+    (forkIO (eventLoop broadcast initialState testCodec runtime))
+    killThread
+    $ \_pid -> do
+      sendTest
+        testHandle
+        0
+        ( Message
+            { src = "c1"
+            , dest = "n1"
+            , msgId = Just 0
+            , body = Init {node_id = "n1", node_ids = ["n2"]}
+            }
+        )
+      expectRecv
+        testHandle
+        ( Response
+            { src = "n1"
+            , dest = "c1"
+            , msgId = Just 0
+            , inReplyTo = 0
+            , body = Init_Ok
+            }
+        )
+      sendTest
+        testHandle
+        0
+        ( Message
+            { src = "c1"
+            , dest = "n1"
+            , msgId = Just 1
+            , body = Broadcast {message = 42}
+            }
+        )
+      expectRecv
+        testHandle
+        ( Response
+            { src = "n1"
+            , dest = "c1"
+            , msgId = Just 1
+            , inReplyTo = 1
+            , body = Broadcast_Ok
+            }
+        )
+      expectRecvMessage
+        testHandle
+        ( Message
+            { src = "n1"
+            , dest = "n2"
+            , msgId = Just 2
+            , body = Broadcast {message = 42}
+            }
+        )
