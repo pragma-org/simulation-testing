@@ -17,6 +17,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text.IO as Text
+import Debug.Trace
 import GHC.Generics (Rep)
 import System.IO
 import System.Process
@@ -46,6 +47,7 @@ newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
 data NodeState s = NodeState
   { localState :: s
   , self :: NodeId
+  , theTime :: Time
   , neighbours :: [NodeId]
   , sender :: NodeId
   , inReplyTo :: MessageId
@@ -62,6 +64,7 @@ data NodeF s i o x
   | Rpc NodeId i (RpcError -> x) (o -> x) (() -> x)
   | After Int x (() -> x)
   | Log Text (() -> x)
+  | GetTime (Time -> x)
   | -- end snippet
     Fail String
   | NewVar (VarId -> x)
@@ -77,6 +80,7 @@ instance Functor (NodeF s i o) where
   fmap f (Rpc nodeId i failure success k) = Rpc nodeId i (f . failure) (f . success) (f . k)
   fmap f (After micros task k) = After micros (f task) (f . k)
   fmap f (Log text k) = Log text (f . k)
+  fmap f (GetTime k) = GetTime (f . k)
   fmap _f (Fail string) = Fail string
   fmap f (NewVar k) = NewVar (f . k)
   fmap f (DeliverVar varId var x) = DeliverVar varId var (f x)
@@ -161,8 +165,13 @@ rpc ::
   -> NodeBody s i o ()
 rpc nodeId i failure success = generic (Rpc nodeId i (unNodeBody . failure) (unNodeBody . success))
 
+getNodeTime :: NodeBody s i o Time
+getNodeTime = generic GetTime
+
 info :: Text -> NodeBody s i o ()
-info text = generic (Log ("[info] " <> text))
+info text = do
+  now <- getNodeTime
+  generic (Log ("[info] (" <> textShow now <> ") " <> text))
 
 sleep :: Int -> NodeBody s i o ()
 sleep micros = generic (After micros (Pure ()))
@@ -232,6 +241,7 @@ initialNodeState s =
   NodeState
     { localState = s
     , self = "uninitialised"
+    , theTime = epoch
     , neighbours = []
     , sender = "uninitialised"
     , inReplyTo = -1
@@ -252,17 +262,16 @@ data Codec i_ i o_ o = Codec
 
 ------------------------------------------------------------------------
 
+type Cont s i o =
+  (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
+
 -- start snippet runNode
 data Effect s i o
   = SEND NodeId i
   | REPLY o
-  | RPC
-      NodeId
-      i
-      (RpcError -> (NodeState s, [Effect s i o]))
-      (o -> (NodeState s, [Effect s i o]))
+  | RPC NodeId i (RpcError -> Cont s i o) (o -> Cont s i o)
   | LOG Text
-  | AFTER Int (NodeState s, [Effect s i o])
+  | AFTER Int (Cont s i o)
 
 instance (Show i, Show o) => Show (Effect s i o) where
   show (SEND nodeId i) = "SEND " <> show nodeId <> show i
@@ -306,10 +315,11 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
       k
         ()
         ( ns
-        , acc <> [RPC nodeId i (flip failure (ns, acc)) (flip success (ns, acc))]
+        , acc <> [RPC nodeId i failure success]
         )
     go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
-    go (After micros _m k) (ns, acc) = (ns, acc <> [AFTER micros (k () (ns, acc))])
+    go (GetTime k) (ns, acc) = k ns.theTime (ns, acc)
+    go (After micros _m k) (ns, acc) = (ns, acc <> [AFTER micros (k ())])
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
@@ -322,8 +332,8 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
 -- start snippet eventLoop
 data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
-  , pendingRpcs :: Map MessageId (o -> (NodeState s, [Effect s i o]))
-  , pendingTimers :: TimerWheel Time (NodeState s, [Effect s i o])
+  , pendingRpcs :: Map MessageId (o -> Cont s i o)
+  , pendingTimers :: TimerWheel Time (NodeState s, Cont s i o)
   }
 
 initialEventLoopState :: EventLoopState s i o
@@ -350,22 +360,25 @@ eventLoop node initialState codec runtime =
     loop ns es = do
       case popTimer es.pendingTimers of
         Nothing -> do
-          runtime.receive maxBound >>= \case
+          runtime.receive 10_000_000 >>= \case
             Nothing -> loop ns es
             Just incoming -> do
               (ns', es', outgoing) <- handleIncoming ns es incoming []
               runtime.send outgoing
               loop ns' es'
-        Just ((later, (ns', effects)), timerWheel') -> do
+        Just ((later, (ns', k)), pendingTimers') -> do
           now <- runtime.getTime
           -- NOTE: The `max 0` is needed because if we pass a negative value to
           -- `timeout` it won't timeout.
           let micros = max 0 (diffTimeMicros later now)
           runtime.receive micros >>= \case
             Nothing -> do
-              (es', outgoing) <- handleEffects runtime codec ns' es effects
+              now <- runtime.getTime
+              let (ns'', effects) = k (ns' {theTime = now}, [])
+              -- traceM $ "timeout triggered, effects: " <> show effects
+              (es', outgoing) <- handleEffects runtime codec ns'' es effects
               runtime.send outgoing
-              loop ns' es'
+              loop ns' es' {pendingTimers = pendingTimers'}
             Just incoming -> do
               (ns', es', outgoing) <- handleIncoming ns es incoming []
               runtime.send outgoing
@@ -392,6 +405,7 @@ eventLoop node initialState codec runtime =
             )
           handleIncoming ns es incoming acc
         Right (InMessage message) -> do
+          now <- runtime.getTime
           let (ns', effects) =
                 runNode
                   node
@@ -400,17 +414,19 @@ eventLoop node initialState codec runtime =
                     , inReplyTo = case message.msgId of
                         Nothing -> undefined
                         Just msgId -> msgId
+                    , theTime = now
                     }
                   message.body
-          hPutStrLn stderr ("InMessage, effects: " <> show effects)
+          -- hPutStrLn stderr ("InMessage, effects: " <> show effects)
           (es', outgoing) <- handleEffects runtime codec ns' es effects
           handleIncoming ns' es' incoming (outgoing : acc)
         Right (InResponse response) ->
           case Map.lookup response.inReplyTo es.pendingRpcs of
             Nothing -> undefined
             Just k -> do
-              let (ns', effects) = k response.body
-              hPutStrLn stderr ("InResponse, effects: " <> show effects)
+              now <- runtime.getTime
+              let (ns', effects) = k response.body (ns {theTime = now}, [])
+              -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
               let es' = es {pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)}
               (es'', outgoing) <-
                 handleEffects
@@ -485,7 +501,7 @@ handleEffects runtime codec ns = go []
               , pendingTimers =
                   insertTimer
                     (addTimeMicros rPC_TIMEOUT_MICROS now)
-                    (failure Timeout)
+                    (ns, failure Timeout)
                     (pendingTimers es)
               }
       go (codec.encodeOutgoing outgoing : acc) es' effects
@@ -499,7 +515,7 @@ handleEffects runtime codec ns = go []
               { pendingTimers =
                   insertTimer
                     (addTimeMicros micros now)
-                    k
+                    (ns, k)
                     (pendingTimers es)
               }
       go acc es' effects
@@ -564,6 +580,7 @@ nextMessage :: TQueue (Time, Incoming i o) -> STM (Time, Incoming i o)
 nextMessage = readTQueue
 
 testRuntime ::
+  forall i o.
   IO (Runtime (Incoming i o) (Outgoing i o), TestHandle i o)
 testRuntime = do
   fakeTime <- newFakeTime epoch
@@ -571,19 +588,22 @@ testRuntime = do
   outgoing <- newTQueueIO
   return
     ( Runtime
-        { receive = \micros -> atomically $ do
-            start <- readFakeTime fakeTime
+        { receive = \micros -> do
+            start <- readFakeTimeIO fakeTime
+
             let timeoutTime = addTimeMicros micros start
-            let loop timeoutTime = do
+
+            let loop :: Time -> STM (Maybe [(Time, Incoming i o)])
+                loop timeoutTime = do
                   now <- readFakeTime fakeTime
-                  (arrivalTime, msg) <- nextMessage incoming
-                  if timeoutTime < arrivalTime
-                    then
-                      if now > timeoutTime
-                        then do
-                          unGetTQueue incoming (arrivalTime, msg)
-                          return Nothing -- Timeout happened.
-                        else
+                  traceM $ "timeoutTime: " <> show timeoutTime <> ", now: " <> show now
+                  if timeoutTime < now
+                    then return Nothing
+                    else do
+                      (arrivalTime, msg) <- nextMessage incoming
+                      traceM $ "arrivalTime: " <> show arrivalTime
+                      if timeoutTime < arrivalTime
+                        then
                           if now >= arrivalTime
                             then -- Next message got receieved.
                               return (Just [(arrivalTime, msg)])
@@ -591,18 +611,19 @@ testRuntime = do
                               -- Still waiting.
                               unGetTQueue incoming (arrivalTime, msg)
                               loop timeoutTime
-                    else
-                      if now >= arrivalTime
-                        then return (Just [(arrivalTime, msg)])
                         else
-                          if now > timeoutTime
-                            then do
-                              unGetTQueue incoming (arrivalTime, msg)
-                              return Nothing
-                            else do
-                              unGetTQueue incoming (arrivalTime, msg)
-                              loop timeoutTime
-            loop timeoutTime
+                          if now >= arrivalTime
+                            then return (Just [(arrivalTime, msg)])
+                            else
+                              if now > timeoutTime
+                                then do
+                                  unGetTQueue incoming (arrivalTime, msg)
+                                  return Nothing
+                                else do
+                                  unGetTQueue incoming (arrivalTime, msg)
+                                  loop timeoutTime
+
+            atomically (loop timeoutTime)
         , send = atomically . mapM_ (writeTQueue outgoing)
         , getTime = readFakeTimeIO fakeTime
         , log = Text.hPutStrLn stderr
@@ -727,12 +748,23 @@ test_echo = do
         }
     )
 
-sendTest :: TestHandle i o -> Int -> Message i -> IO ()
-sendTest testHandle afterMicros input = atomically $ do
-  now <- readFakeTime testHandle.fakeTime
-  writeTQueue
-    testHandle.inQueue
-    (addTimeMicros afterMicros now, InMessage input)
+sendTest :: (Show i) => TestHandle i o -> Int -> Message i -> IO ()
+sendTest testHandle afterMicros input = do
+  hPutStrLn stderr $ ">> sendTest: " <> show input
+  atomically $ do
+    now <- readFakeTime testHandle.fakeTime
+    writeTQueue
+      testHandle.inQueue
+      (addTimeMicros afterMicros now, InMessage input)
+
+respondTest :: (Show o) => TestHandle i o -> Int -> Response o -> IO ()
+respondTest testHandle afterMicros input = do
+  hPutStrLn stderr $ ">> respondTest: " <> show input
+  atomically $ do
+    now <- readFakeTime testHandle.fakeTime
+    writeTQueue
+      testHandle.inQueue
+      (addTimeMicros afterMicros now, InResponse input)
 
 expectRecv ::
   (Eq o, Show i, Show o) => TestHandle i o -> Response o -> IO ()
@@ -743,7 +775,7 @@ expectRecv testHandle expectedOutput = do
         ("expectRecv: expected response, but got message:\n" <> show input)
     OutResponse actualOutput ->
       if actualOutput == expectedOutput
-        then return ()
+        then hPutStrLn stderr $ ">> expectRecv: " <> show expectedOutput
         else
           error
             ( "\nExpected: "
@@ -758,7 +790,7 @@ expectRecvMessage testHandle expectedOutput = do
   atomically (readTQueue testHandle.outQueue) >>= \case
     OutMessage actualOutput ->
       if actualOutput == expectedOutput
-        then return ()
+        then hPutStrLn stderr $ ">> expectRecvMessage: " <> show expectedOutput
         else
           error
             ( "\nExpected: "
@@ -773,6 +805,14 @@ expectNoRecv testHandle =
   assertM =<< atomically (isEmptyTQueue testHandle.outQueue)
 
 advanceTime :: TestHandle i o -> Int -> IO ()
-advanceTime testHandle micros = atomically $ do
-  now <- readFakeTime testHandle.fakeTime
-  writeFakeTime testHandle.fakeTime (addTimeMicros micros now)
+advanceTime testHandle micros = do
+  threadDelay 1000
+  now <- readFakeTimeIO testHandle.fakeTime
+  let later = addTimeMicros micros now
+  hPutStrLn stderr
+    $ ">> advanceTime, now: "
+    <> show now
+    <> ", later: "
+    <> show later
+  atomically $ writeFakeTime testHandle.fakeTime later
+  threadDelay 1000

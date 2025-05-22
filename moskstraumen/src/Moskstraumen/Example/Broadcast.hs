@@ -94,7 +94,9 @@ broadcast (Broadcast msg) = do
                       modifyState
                         (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
                     _otherwise -> error "broadcast: unexpected response"
-              sleep 1_000_000
+              info "About to sleep"
+              sleep 3_000_000
+              info "Awake again"
               go
     go
 broadcast Read = do
@@ -165,3 +167,28 @@ test_broadcast = do
             , body = Broadcast {message = 42}
             }
         )
+
+      advanceTime testHandle (rPC_TIMEOUT_MICROS + 1)
+      advanceTime testHandle 2_000_000
+
+      expectRecvMessage
+        testHandle
+        ( Message
+            { src = "n1"
+            , dest = "n2"
+            , msgId = Just 3
+            , body = Broadcast {message = 42}
+            }
+        )
+      respondTest
+        testHandle
+        0
+        ( Response
+            { src = "n2"
+            , dest = "n1"
+            , msgId = Just 0
+            , inReplyTo = 3
+            , body = Broadcast_Ok
+            }
+        )
+      advanceTime testHandle 4_000_000
