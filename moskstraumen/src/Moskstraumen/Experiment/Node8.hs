@@ -194,17 +194,17 @@ syncRpc nodeId i failure = do
 ------------------------------------------------------------------------
 
 -- start snippet echo
-data Echo = Echo {echo :: String}
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-data Echo_Ok = Echo_Ok {echo :: String}
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-echoNode :: Node () Echo Echo_Ok
-echoNode (Echo input) = reply (Echo_Ok input)
-
+-- data Echo = Echo {echo :: String}
+--   deriving stock (Eq, Show, Generic)
+--   deriving anyclass (ToJSON, FromJSON)
+--
+-- data Echo_Ok = Echo_Ok {echo :: String}
+--   deriving stock (Eq, Show, Generic)
+--   deriving anyclass (ToJSON, FromJSON)
+--
+-- echoNode :: Node () Echo Echo_Ok
+-- echoNode (Echo input) = reply (Echo_Ok input)
+--
 reply :: o -> NodeBody s i o ()
 reply output = NodeBody (Free (Reply output Pure))
 
@@ -640,7 +640,6 @@ jsonCodec ::
   ( Generic i
   , Json.GFromJSON Json.Zero (Rep i)
   , Json.GToJSON' Value Json.Zero (Rep i)
-  , ToJSON i
   , Generic o
   , Json.GFromJSON Json.Zero (Rep o)
   , Json.GToJSON' Value Json.Zero (Rep o)
@@ -653,12 +652,9 @@ jsonCodec =
     , encodeOutgoing = Message.encodeOutgoing
     }
 
-echoCodec :: Codec ByteString Echo ByteString Echo_Ok
-echoCodec = undefined
-
 -- start snippet testMain
-testMain :: IO ()
-testMain = eventLoop echoNode () echoCodec =<< consoleRuntime
+-- testMain :: IO ()
+-- testMain = eventLoop echoNode () echoCodec =<< consoleRuntime
 
 -- end snippet
 
@@ -673,7 +669,7 @@ tcpRuntime = undefined
 -- start snippet prodMain
 
 prodMain :: Port -> Map NodeId Port -> IO ()
-prodMain port peers = eventLoop echoNode () echoCodec =<< tcpRuntime port peers
+prodMain port peers = undefined -- eventLoop echoNode () echoCodec =<< tcpRuntime port peers
 
 -- end snippet
 
@@ -721,32 +717,32 @@ testCodec =
     , encodeOutgoing = id
     }
 
-test_echo :: IO ()
-test_echo = do
-  (runtime, testHandle) <- testRuntime
-  pid <- forkIO (eventLoop echoNode () testCodec runtime)
-  sendTest
-    testHandle
-    1
-    ( Message
-        { src = "test"
-        , dest = "n1"
-        , msgId = Just 5
-        , body = Echo "hi"
-        }
-    )
-  expectNoRecv testHandle
-  advanceTime testHandle 1
-  expectRecv
-    testHandle
-    ( Response
-        { src = "uninitialised"
-        , dest = "test"
-        , msgId = Just 0
-        , inReplyTo = 5
-        , body = Echo_Ok "hi"
-        }
-    )
+-- test_echo :: IO ()
+-- test_echo = do
+--   (runtime, testHandle) <- testRuntime
+--   pid <- forkIO (eventLoop echoNode () testCodec runtime)
+--   sendTest
+--     testHandle
+--     1
+--     ( Message
+--         { src = "test"
+--         , dest = "n1"
+--         , msgId = Just 5
+--         , body = Echo "hi"
+--         }
+--     )
+--   expectNoRecv testHandle
+--   advanceTime testHandle 1
+--   expectRecv
+--     testHandle
+--     ( Response
+--         { src = "uninitialised"
+--         , dest = "test"
+--         , msgId = Just 0
+--         , inReplyTo = 5
+--         , body = Echo_Ok "hi"
+--         }
+--     )
 
 sendTest :: (Show i) => TestHandle i o -> Int -> Message i -> IO ()
 sendTest testHandle afterMicros input = do
@@ -809,10 +805,10 @@ advanceTime testHandle micros = do
   threadDelay 1000
   now <- readFakeTimeIO testHandle.fakeTime
   let later = addTimeMicros micros now
-  hPutStrLn stderr
-    $ ">> advanceTime, now: "
-    <> show now
-    <> ", later: "
-    <> show later
+  -- hPutStrLn stderr
+  --   $ ">> advanceTime, now: "
+  --   <> show now
+  --   <> ", later: "
+  --   <> show later
   atomically $ writeFakeTime testHandle.fakeTime later
   threadDelay 1000

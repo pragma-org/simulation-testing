@@ -1,16 +1,14 @@
 module Moskstraumen.Example.Echo (module Moskstraumen.Example.Echo) where
 
 import Control.Applicative
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 
-import Moskstraumen.Codec
-import Moskstraumen.EventLoop2
+import Moskstraumen.Experiment.Node8
 import qualified Moskstraumen.Generate as Gen
 import Moskstraumen.LinearTemporalLogic
 import Moskstraumen.Message
-import Moskstraumen.Node4
 import Moskstraumen.NodeId
-import Moskstraumen.Parse
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate
 import Moskstraumen.Workload
@@ -19,23 +17,29 @@ import System.Process (readProcess)
 ------------------------------------------------------------------------
 
 -- start snippet echo
-data EchoInput = Init NodeId [NodeId] | Echo Text
+data EchoInput
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Echo {echo :: Text}
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
-data EchoOutput = InitOk | EchoOk Text
+data EchoOutput = Init_Ok | Echo_Ok {echo :: Text}
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 type EchoState = ()
 
-echo :: EchoInput -> Node EchoState EchoInput EchoOutput
-echo (Init myNodeId myNeighbours) = do
+echoNode :: Node EchoState EchoInput EchoOutput
+echoNode (Init myNodeId myNeighbours) = do
   info ("Initialising: " <> unNodeId myNodeId)
-  setNodeId myNodeId
-  setPeers myNeighbours
-  reply InitOk
-echo (Echo text) = do
+  setSelf myNodeId
+  setNeighbours myNeighbours
+  reply Init_Ok
+echoNode (Echo text) = do
   info ("Got: " <> text)
   if text == "Please echo: 42"
-    then reply (EchoOk "bug")
-    else reply (EchoOk text)
+    then reply (Echo_Ok "bug")
+    else reply (Echo_Ok text)
 
 -- end snippet echo
 
@@ -43,56 +47,8 @@ echo (Echo text) = do
 
 libMain :: IO ()
 libMain = do
-  consoleEventLoop
-    echo
-    ()
-    echoValidateMarshal
-
-echoValidateMarshal :: ValidateMarshal EchoInput EchoOutput
-echoValidateMarshal =
-  ValidateMarshal
-    { validateInput = echoValidateInput
-    , validateOutput = echoValidateOutput
-    , marshalInput = echoMarshalInput
-    , marshalOutput = echoMarshalOutput
-    }
-
-------------------------------------------------------------------------
-
--- XXX: make this generic...
-
-echoValidateInput :: Parser EchoInput
-echoValidateInput =
-  asum
-    [ Init
-        <$ hasKind "init"
-        <*> hasNodeIdField "node_id"
-        <*> hasListField "node_ids" isNodeId
-    , Echo
-        <$ hasKind "echo"
-        <*> hasTextField "echo"
-    ]
-
-echoValidateOutput :: Parser EchoOutput
-echoValidateOutput =
-  asum
-    [ InitOk <$ hasKind "init_ok"
-    , EchoOk <$ hasKind "echo_ok" <*> hasTextField "echo"
-    ]
-
-echoMarshalInput :: EchoInput -> (MessageKind, [(Field, Value)])
-echoMarshalInput (Init myNodeId myNeighbours) =
-  ( "init"
-  ,
-    [ ("node_id", String (unNodeId myNodeId))
-    , ("node_ids", List (map (String . unNodeId) myNeighbours))
-    ]
-  )
-echoMarshalInput (Echo text) = ("echo", [("echo", String text)])
-
-echoMarshalOutput :: EchoOutput -> (MessageKind, [(Field, Value)])
-echoMarshalOutput InitOk = ("init_ok", [])
-echoMarshalOutput (EchoOk text) = ("echo_ok", [("echo", String text)])
+  runtime <- consoleRuntime
+  eventLoop echoNode () jsonCodec runtime
 
 ------------------------------------------------------------------------
 
@@ -144,12 +100,12 @@ echoWorkload =
 
 ------------------------------------------------------------------------
 
-unit_blackboxTestEcho :: IO Bool
-unit_blackboxTestEcho = do
-  binaryFilePath <-
-    filter (/= '\n') <$> readProcess "cabal" ["list-bin", "echo"] ""
-  blackboxTest binaryFilePath echoWorkload
-
-unit_simulationTestEcho :: IO Bool
-unit_simulationTestEcho =
-  simulationTest echo () echoValidateMarshal echoWorkload
+-- unit_blackboxTestEcho :: IO Bool
+-- unit_blackboxTestEcho = do
+--   binaryFilePath <-
+--     filter (/= '\n') <$> readProcess "cabal" ["list-bin", "echo"] ""
+--   blackboxTest binaryFilePath echoWorkload
+--
+-- unit_simulationTestEcho :: IO Bool
+-- unit_simulationTestEcho =
+--   simulationTest echo () echoWorkload

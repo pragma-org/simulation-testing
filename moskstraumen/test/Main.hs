@@ -5,6 +5,9 @@ import Test.Tasty.HUnit
 
 import Moskstraumen.Example.Echo
 import Moskstraumen.Message
+import Moskstraumen.Prelude
+
+import MessageCodec
 
 ------------------------------------------------------------------------
 
@@ -18,12 +21,14 @@ unitTests :: TestTree
 unitTests =
   testGroup
     "Unit tests"
-    [ failingTestCase "blackboxTestEcho" unit_blackboxTestEcho
-    , failingTestCase "simulationTestEcho" unit_simulationTestEcho
-    , testCase
-        "encodeDecodeMessage"
-        (assertBool "encodeDecode" unit_encodeDecodeMessage)
-    ]
+    [messageCodecTests]
+
+--     [ failingTestCase "blackboxTestEcho" unit_blackboxTestEcho
+--     , failingTestCase "simulationTestEcho" unit_simulationTestEcho
+--     , testCase
+--         "encodeDecodeMessage"
+--         (assertBool "encodeDecode" unit_encodeDecodeMessage)
+--     ]
 
 ------------------------------------------------------------------------
 

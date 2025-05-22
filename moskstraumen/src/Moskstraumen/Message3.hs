@@ -49,7 +49,7 @@ data Incoming i o
   = InMessage (Message i)
   | InResponse (Response o)
   | InRpcError RpcError
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data Outgoing i o
   = OutMessage (Message i)
@@ -64,8 +64,6 @@ data MaelstromMessage a = MaelstromMessage
   , body :: MaelstromBody a
   }
   deriving stock (Show)
-
--- deriving anyclass (FromJSON) -- , ToJSON)
 
 data MaelstromBody a = MaelstromBody
   { msg_id :: Maybe MessageId
@@ -133,7 +131,7 @@ fromMaelstrom mmsg = case mmsg.body.in_reply_to of
             , msgId = mmsg.body.msg_id
             , body = i
             }
-    Left err -> error err
+    Left err -> Left err
   Just inReplyTo -> case gparser mmsg.body.payload of
     Right o ->
       Right
@@ -145,7 +143,7 @@ fromMaelstrom mmsg = case mmsg.body.in_reply_to of
             , inReplyTo = inReplyTo
             , body = o
             }
-    Left err -> error err
+    Left err -> Left err
 
 decodeIncoming ::
   ( Generic i
@@ -225,81 +223,3 @@ encodeOutgoing ::
   -> ByteString
 encodeOutgoing (OutMessage message) = encodeMessage message
 encodeOutgoing (OutResponse resposne) = encodeResponse resposne
-
-------------------------------------------------------------------------
-
--- data Broadcast = Init {node_id :: String, node_ids :: [String]} | Read
---   deriving stock (Generic, Show)
---   deriving anyclass (FromJSON, ToJSON)
---
--- data BroadcastOk = Init_ok | Read_ok
---   deriving stock (Generic, Show)
---   deriving anyclass (FromJSON, ToJSON)
---
--- u :: IO ()
--- u = do
---   print
---     $ encodeMessage
---     $ Message
---       { src = "c1"
---       , dest = "n1"
---       , msgId = Just 1
---       , body = Init {node_id = "n1", node_ids = ["n2"]}
---       }
---   print
---     $ encodeResponse
---     $ Response
---       { src = "n1"
---       , dest = "c1"
---       , msgId = Just 1
---       , inReplyTo = 1
---       , body = Init_ok
---       }
---
--- t :: IO ()
--- t = do
---   let m :: Either String (Incoming Broadcast BroadcastOk)
---       m =
---         fromMaelstrom
---           =<< decodeMaelstrom
---             "{\"id\":2,\"src\":\"c2\",\"dest\":\"n1\",\"body\":{\"type\":\"init\",\"node_id\":\"n1\",\"node_ids\":[\"n1\",\"n2\",\"n3\",\"n4\",\"n5\"],\"msg_id\":1}}"
---   print m
---
---   let r :: Either String (Incoming Broadcast BroadcastOk)
---       r =
---         fromMaelstrom
---           =<< decodeMaelstrom
---             "{\"id\":3,\"src\":\"n1\",\"dest\":\"c2\",\"body\":{\"type\":\"init_ok\",\"msg_id\":1,\"in_reply_to\":1}}"
---   print r
---
--- s :: IO ()
--- s =
---   print
---     $ ( parseEither
---           (genericParseJSON aesonOptions)
---           ( Object
---               ( KeyMap.fromList
---                   [ ("node_id", String "n1")
---                   ,
---                     ( "node_ids"
---                     , Array [String "n1", String "n2", String "n3", String "n4", String "n5"]
---                     )
---                   , ("type", String "init")
---                   ]
---               )
---           ) ::
---           Either String Broadcast
---       )
---
--- s2 :: IO ()
--- s2 =
---   print
---     $ ( parseEither
---           (genericParseJSON aesonOptions)
---           ( Object
---               ( KeyMap.fromList
---                   [("type", String "init_ok"), ("node_id", String "n1")]
---               )
---           ) ::
---           Either String BroadcastOk
---       )
