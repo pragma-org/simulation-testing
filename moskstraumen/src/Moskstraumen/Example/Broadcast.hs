@@ -2,7 +2,7 @@ module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) wh
 
 import Control.Concurrent (forkIO, killThread)
 import Control.Exception (bracket)
-import Data.Aeson (FromJSON, ToJSON, toJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.List (delete, (\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map

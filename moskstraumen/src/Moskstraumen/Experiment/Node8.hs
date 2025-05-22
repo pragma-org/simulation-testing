@@ -264,6 +264,13 @@ data Effect s i o
   | LOG Text
   | AFTER Int (NodeState s, [Effect s i o])
 
+instance (Show i, Show o) => Show (Effect s i o) where
+  show (SEND nodeId i) = "SEND " <> show nodeId <> show i
+  show (REPLY o) = "REPLY " <> show o
+  show (RPC nodeId i _failure _success) = "RPC " <> show nodeId <> " " <> show i <> " <failure> <success>"
+  show (LOG text) = "LOG " <> show text
+  show (AFTER micros _k) = "AFTER " <> show micros <> " <k>"
+
 runNode ::
   Node s i o
   -> NodeState s
@@ -285,24 +292,24 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
   where
     done ::
       a -> (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
-    done _x (ns, effects) = (ns, reverse effects)
+    done _x (ns, effects) = (ns, effects)
 
     go ::
       Alg
         (NodeF s i o)
         ((NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o]))
-    go (Reply o k) (ns, acc) = k () (ns, REPLY o : acc)
-    go (Send nodeId i k) (s, acc) = k () (ns, SEND nodeId i : acc)
+    go (Reply o k) (ns, acc) = k () (ns, acc <> [REPLY o])
+    go (Send nodeId i k) (s, acc) = k () (ns, acc <> [SEND nodeId i])
     go (Get k) (s, acc) = k s (s, acc)
     go (Put s' k) (s, acc) = k () (s', acc)
     go (Rpc nodeId i failure success k) (ns, acc) =
       k
         ()
         ( ns
-        , RPC nodeId i (flip failure (ns, acc)) (flip success (ns, acc)) : acc
+        , acc <> [RPC nodeId i (flip failure (ns, acc)) (flip success (ns, acc))]
         )
-    go (Log text k) (s, acc) = k () (s, LOG text : acc)
-    go (After micros _m k) (s, acc) = (s, AFTER micros (k () (s, acc)) : acc)
+    go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
+    go (After micros _m k) (ns, acc) = (ns, acc <> [AFTER micros (k () (ns, acc))])
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
@@ -327,9 +334,10 @@ initialEventLoopState =
     , pendingTimers = emptyTimerWheel
     }
 
+-- XXX: remove Show and debugging code
 eventLoop ::
   forall s i_ i o_ o.
-  (Show i_) =>
+  (Show i_, Show i, Show o) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
@@ -394,6 +402,7 @@ eventLoop node initialState codec runtime =
                         Just msgId -> msgId
                     }
                   message.body
+          hPutStrLn stderr ("InMessage, effects: " <> show effects)
           (es', outgoing) <- handleEffects runtime codec ns' es effects
           handleIncoming ns' es' incoming (outgoing : acc)
         Right (InResponse response) ->
@@ -401,9 +410,15 @@ eventLoop node initialState codec runtime =
             Nothing -> undefined
             Just k -> do
               let (ns', effects) = k response.body
+              hPutStrLn stderr ("InResponse, effects: " <> show effects)
               let es' = es {pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)}
               (es'', outgoing) <-
-                handleEffects runtime codec ns' {sender = response.src} es' effects
+                handleEffects
+                  runtime
+                  codec
+                  ns' {sender = response.src}
+                  es'
+                  effects
               handleIncoming ns' es'' incoming (outgoing : acc)
         Right InRpcError {} -> undefined
 
@@ -422,7 +437,7 @@ handleEffects runtime codec ns = go []
       -> EventLoopState s i o
       -> [Effect s i o]
       -> IO (EventLoopState s i o, [o_])
-    go acc es [] = return (es, reverse acc)
+    go acc es [] = return (es, acc)
     go acc es (SEND nodeId i : effects) = do
       let messageId = es.nextMessageId
       let outgoing =
@@ -725,7 +740,7 @@ expectRecv testHandle expectedOutput = do
   atomically (readTQueue testHandle.outQueue) >>= \case
     OutMessage input ->
       error
-        ("expectRecv: expexted response, but got message:\n" <> show input)
+        ("expectRecv: expected response, but got message:\n" <> show input)
     OutResponse actualOutput ->
       if actualOutput == expectedOutput
         then return ()
