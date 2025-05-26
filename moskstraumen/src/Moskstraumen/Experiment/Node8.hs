@@ -28,6 +28,7 @@ import Moskstraumen.Message3
 import qualified Moskstraumen.Message3 as Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Random
 import Moskstraumen.Simulate
 import Moskstraumen.Time
 import Moskstraumen.TimerWheel2
@@ -66,8 +67,8 @@ data NodeF s i o x
   | Log Text (() -> x)
   | GetTime (Time -> x)
   | -- end snippet
-    Fail String
-  | NewVar (VarId -> x)
+    -- Fail String
+    NewVar (VarId -> x)
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
   | At Time x (() -> x)
@@ -81,7 +82,7 @@ instance Functor (NodeF s i o) where
   fmap f (After micros task k) = After micros (f task) (f . k)
   fmap f (Log text k) = Log text (f . k)
   fmap f (GetTime k) = GetTime (f . k)
-  fmap _f (Fail string) = Fail string
+  -- fmap _f (Fail string) = Fail string
   fmap f (NewVar k) = NewVar (f . k)
   fmap f (DeliverVar varId var x) = DeliverVar varId var (f x)
   fmap f (AwaitVar varId k) = AwaitVar varId (f . k)
@@ -93,18 +94,18 @@ instance Applicative (NodeBody s i o) where
   pure = NodeBody . Pure
   NodeBody mf <*> NodeBody mx = NodeBody (mf <*> mx)
 
-instance MonadFail (NodeBody s i o) where
-  fail = NodeBody . Free . Fail
+-- instance MonadFail (NodeBody s i o) where
+--   fail = NodeBody . Free . Fail
 
-instance Alternative (NodeBody s i o) where
-  empty = fail "empty"
-  NodeBody (Free (Fail _)) <|> n = n
-  m <|> _n = m
+-- instance Alternative (NodeBody s i o) where
+--   empty = fail "empty"
+--   NodeBody (Free (Fail _)) <|> n = n
+--   m <|> _n = m
 
-instance MonadPlus (NodeBody s i o) where
-  mzero = empty
-  mplus = (<|>)
-
+-- instance MonadPlus (NodeBody s i o) where
+--   mzero = empty
+--   mplus = (<|>)
+--
 instance Monad (NodeBody s i o) where
   return = pure
   NodeBody m >>= k = NodeBody (m >>= unNodeBody . k)
@@ -347,7 +348,7 @@ initialEventLoopState =
 -- XXX: remove Show and debugging code
 eventLoop ::
   forall s i_ i o_ o.
-  (Show i_, Show i, Show o) =>
+  (Show s, Show i_, Show i, Show o) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
@@ -425,6 +426,7 @@ eventLoop node initialState codec runtime =
             Nothing -> undefined
             Just k -> do
               now <- runtime.getTime
+              hPutStrLn stderr ("Resuming success with state: " <> show ns.localState)
               let (ns', effects) = k response.body (ns {theTime = now}, [])
               -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
               let es' = es {pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)}
@@ -521,7 +523,7 @@ handleEffects runtime codec ns = go []
       go acc es' effects
 
 rPC_TIMEOUT_MICROS :: Int
-rPC_TIMEOUT_MICROS = 1_000_000 -- 1s.
+rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
 
 -- end snippet
 
@@ -643,7 +645,6 @@ jsonCodec ::
   , Generic o
   , Json.GFromJSON Json.Zero (Rep o)
   , Json.GToJSON' Value Json.Zero (Rep o)
-  , ToJSON o
   ) =>
   Codec ByteString i ByteString o
 jsonCodec =
@@ -674,14 +675,19 @@ prodMain port peers = undefined -- eventLoop echoNode () echoCodec =<< tcpRuntim
 -- end snippet
 
 -- start snippet pipeNodeHandle
---
--- data NodeHandle = NodeHandle
---  { handle :: Time -> Message Value -> IO [Response Value]
---  , close :: IO ()
---  }
---
--- pipeNodeHandle :: FilePath -> [String] -> IO NodeHandle
--- pipeNodeHandle fp args = do
+
+data NodeHandle i o = NodeHandle
+  { handle :: Time -> Incoming i o -> IO [Outgoing i o]
+  , close :: IO ()
+  }
+
+pipeNodeHandle ::
+  FilePath
+  -> [String]
+  -> Codec ByteString i ByteString o
+  -> IO (NodeHandle i o)
+pipeNodeHandle fp args codec = undefined
+
 --  (Just hin, Just hout, _, processHandle) <-
 --    createProcess
 --      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
@@ -698,6 +704,54 @@ prodMain port peers = undefined -- eventLoop echoNode () echoCodec =<< tcpRuntim
 --      , close = terminateProcess processHandle
 --      }
 --
+simulationRuntime ::
+  forall i o. IO (NodeHandle i o, Runtime (Incoming i o) (Outgoing i o))
+simulationRuntime = do
+  inputMVar <- newEmptyMVar
+  outputQueue <- newTBQueueIO 65536
+  fakeTime <- newFakeTime epoch
+  let
+    handle_ :: Time -> Incoming i o -> IO [Outgoing i o]
+    handle_ arrivalTime incoming = do
+      putMVar inputMVar (arrivalTime, incoming)
+      atomically $ do
+        len <- lengthTBQueue outputQueue
+        guard (len /= 0)
+        replicateM (fromIntegral len) (readTBQueue outputQueue)
+
+    recieve_ :: Timeout -> IO (Maybe [(Time, Incoming i o)])
+    recieve_ micros = do
+      (arrivalTime, input) <- takeMVar inputMVar
+      return (Just [(arrivalTime, input)])
+
+    send_ :: [Outgoing i o] -> IO ()
+    send_ = atomically . mapM_ (writeTBQueue outputQueue)
+
+  return
+    ( NodeHandle
+        { handle = handle_
+        , close = return ()
+        }
+    , Runtime
+        { receive = recieve_
+        , send = send_
+        , log = Text.hPutStrLn stderr
+        , getTime = readFakeTimeIO fakeTime
+        }
+    )
+
+simulationSpawn ::
+  (Show state, Show input, Show output) =>
+  Node state input output
+  -> state
+  -> Prng
+  -> IO (NodeHandle input output)
+simulationSpawn node initialState initialPrng = do
+  (nodeHandle, runtime) <- simulationRuntime
+  tid <-
+    forkIO (eventLoop node initialState testCodec runtime)
+  return nodeHandle {close = killThread tid}
+
 -- end snippet
 
 -- start snippet simulatorMain

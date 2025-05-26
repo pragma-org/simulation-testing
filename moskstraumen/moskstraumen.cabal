@@ -84,6 +84,7 @@ library
     Moskstraumen.Runtime2
     Moskstraumen.Shrink
     Moskstraumen.Simulate
+    Moskstraumen.Simulate2
     Moskstraumen.Time
     Moskstraumen.TimerWheel2
     Moskstraumen.VarId

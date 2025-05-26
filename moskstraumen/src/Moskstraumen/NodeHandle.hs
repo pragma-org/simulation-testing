@@ -82,10 +82,10 @@ simulationSpawn ::
   -> ValidateMarshal input output
   -> IO NodeHandle
 simulationSpawn node initialState initialPrng validateMarshal = do
-  (interface, runtime) <- simulationRuntime
+  (nodeHandle, runtime) <- simulationRuntime
   tid <-
     forkIO (eventLoop node initialState initialPrng validateMarshal runtime)
-  return interface {close = killThread tid}
+  return nodeHandle {close = killThread tid}
 
 {-
 pureSpawn ::

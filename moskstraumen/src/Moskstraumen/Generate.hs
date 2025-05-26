@@ -86,6 +86,22 @@ sample' :: Gen a -> IO [a]
 sample' g =
   generate' (sequence [resize n g | n <- [0, 2 .. 20]])
 
+frequency :: [(Int, Gen a)] -> Gen a
+frequency [] = error "frequency used with empty list"
+frequency xs
+  | any (< 0) (map fst xs) =
+      error "frequency: negative weight"
+  | all (== 0) (map fst xs) =
+      error "frequency: all weights were zero"
+frequency xs0 = chooseInt (1, tot) >>= (`pick` xs0)
+  where
+    tot = sum (map fst xs0)
+
+    pick n ((k, x) : xs)
+      | n <= k = x
+      | otherwise = pick (n - k) xs
+    pick _ _ = error "pick used with empty list"
+
 ------------------------------------------------------------------------
 
 suchThat :: Gen a -> (a -> Bool) -> Gen a

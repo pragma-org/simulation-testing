@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLists #-}
 
@@ -13,6 +14,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Char (toLower)
 import Debug.Trace
 import GHC.Generics (Rep)
+import GHC.Records
 
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
@@ -20,7 +22,7 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 --
 newtype MessageId = MessageId Word64
-  deriving newtype (Eq, Ord, Show, Num)
+  deriving newtype (Eq, Ord, Show, Num, Enum)
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -51,10 +53,31 @@ data Incoming i o
   | InRpcError RpcError
   deriving stock (Show, Eq)
 
+instance HasField "dest" (Incoming i o) NodeId where
+  getField (InMessage msg) = msg.dest
+  getField (InResponse resp) = resp.dest
+  getField (InRpcError _err) = error "getField InRpcError"
+
+instance HasField "dest" (Outgoing i o) NodeId where
+  getField (OutMessage msg) = msg.dest
+  getField (OutResponse resp) = resp.dest
+  getField (OutRpcError _err) = error "getField OutRpcError"
+
 data Outgoing i o
   = OutMessage (Message i)
   | OutResponse (Response o)
+  | OutRpcError RpcError
   deriving stock (Show, Eq)
+
+incomingToOutgoing :: Incoming i o -> Outgoing i o
+incomingToOutgoing (InMessage msg) = OutMessage msg
+incomingToOutgoing (InResponse resp) = OutResponse resp
+incomingToOutgoing (InRpcError err) = OutRpcError err
+
+outgoingToIncoming :: Outgoing i o -> Incoming i o
+outgoingToIncoming (OutMessage msg) = InMessage msg
+outgoingToIncoming (OutResponse resp) = InResponse resp
+outgoingToIncoming (OutRpcError err) = InRpcError err
 
 ------------------------------------------------------------------------
 --

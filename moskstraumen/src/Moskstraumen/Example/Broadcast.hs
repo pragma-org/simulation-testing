@@ -11,9 +11,11 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 
 import Moskstraumen.Experiment.Node8
+import Moskstraumen.Generate
 import Moskstraumen.Message3
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
+import Moskstraumen.Simulate2
 
 ------------------------------------------------------------------------
 
@@ -37,6 +39,7 @@ data BroadcastState = BroadcastState
   { seen :: Set Int
   , unAcked :: Map Int [NodeId]
   }
+  deriving stock (Show)
 
 initialState :: BroadcastState
 initialState = BroadcastState Set.empty Map.empty
@@ -64,7 +67,7 @@ broadcast (Broadcast msg) = do
     modifyState
       (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
     let go = do
-          unAckedNodes <- (Map.! msg) . unAcked <$> getState
+          unAckedNodes <- Map.findWithDefault [] msg . unAcked <$> getState
           if null unAckedNodes
             then info ("Done with message: " <> fromString (show msg))
             else do
@@ -87,15 +90,14 @@ broadcast (Broadcast msg) = do
                           <> fromString (show rpcError)
                       )
                 )
-                $ \resp ->
-                  case resp of
-                    Broadcast_Ok -> do
-                      info ("Got ack from: " <> unNodeId nodeId)
-                      modifyState
-                        (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
-                    _otherwise -> error "broadcast: unexpected response"
+                $ \case
+                  Broadcast_Ok -> do
+                    info ("Got ack from: " <> unNodeId nodeId)
+                    modifyState
+                      (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
+                  _otherwise -> error "broadcast: unexpected response"
               info "About to sleep"
-              sleep 3_000_000
+              sleep 10_000
               info "Awake again"
               go
     go
@@ -192,3 +194,37 @@ test_broadcast = do
             }
         )
       advanceTime testHandle 4_000_000
+
+------------------------------------------------------------------------
+
+unit_simTestBroadcast :: IO Bool
+unit_simTestBroadcast = simulationTest broadcast initialState broadcastWorkload
+
+broadcastWorkload :: Workload BroadcastInput BroadcastOutput
+broadcastWorkload =
+  Workload
+    { name = "broadcast"
+    , generate = generate (-1)
+    , property = TracePredicate (const Pass)
+    }
+  where
+    generate :: Int -> Gen [Message BroadcastInput]
+    generate (-1) =
+      (:)
+        <$> pure
+          (Message {src = "c0", dest = "n1", msgId = Just 0, body = Init "n1" []})
+        <*> generate 0
+    generate n = sized (go n [])
+      where
+        go n acc 0 = return (zipWith makeMessage [1 ..] (reverse acc))
+        go n acc sz = do
+          input <- frequency [(1, genTopology), (6, genBroadcast n), (3, genRead)]
+          go (n + 1) (input : acc) (sz - 1)
+
+        genTopology = return (Topology (Map.fromList [("n1", [])]))
+        genBroadcast n = return (Broadcast n)
+
+        genRead = return Read
+
+        makeMessage :: MessageId -> BroadcastInput -> Message BroadcastInput
+        makeMessage msgId input = Message {src = "c1", dest = "n1", msgId = Just msgId, body = input}
