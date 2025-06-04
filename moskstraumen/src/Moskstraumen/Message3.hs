@@ -79,6 +79,11 @@ outgoingToIncoming (OutMessage msg) = InMessage msg
 outgoingToIncoming (OutResponse resp) = InResponse resp
 outgoingToIncoming (OutRpcError err) = InRpcError err
 
+isClientResponse :: Outgoing i o -> Bool
+isClientResponse OutMessage {} = False
+isClientResponse (OutResponse (Response {dest})) = isClientNodeId dest
+isClientResponse OutRpcError {} = False
+
 ------------------------------------------------------------------------
 --
 data MaelstromMessage a = MaelstromMessage

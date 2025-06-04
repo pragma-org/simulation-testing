@@ -188,8 +188,11 @@ testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace _reason) = Just trace
 
 handleResult ::
+  (Show i, Show o) =>
   -- Maybe (IO Text, Message -> Text) ->
-  TestResult i o -> Seed -> IO Bool
+  TestResult i o
+  -> Seed
+  -> IO Bool
 handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
   -- preamble <- maybe (return "") fst mPrettyMessage
   -- Text.putStrLn preamble
@@ -199,6 +202,7 @@ handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
         . ( \(index, (_time, message)) ->
               Text.pack (printf "%3d" index)
                 <> ". "
+                <> textShow message
                 -- <> maybe textShow (\f m -> f m) (fmap snd mPrettyMessage) message
           )
     )
@@ -289,12 +293,7 @@ runTests testConfig deployment workload initialPrng =
               (map InMessage initialMessages)
               prng'
       let (prng''', prng'''') = splitPrng prng''
-      let neighbours i = ["c1"] -- XXX: [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
-      -- let initMessages =
-      --       Heap.fromList
-      --         [ (epoch, makeInitMessage (makeNodeId i) (neighbours i))
-      --         | i <- [1 .. deployment.numberOfNodes]
-      --         ]
+      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
       result <-
         runTest deployment workload prng''' initialMessages'
       case result of
@@ -304,11 +303,17 @@ runTests testConfig deployment workload initialPrng =
             then return (Failure unShrunkTrace reason)
             else do
               putStrLn "Shrinking..."
+              let shrinker heap =
+                    let list = Heap.toList heap
+                        (initMessages, list') = splitAt deployment.numberOfNodes list
+                        shrunkLists = map (initMessages ++) (shrinkList (const []) list')
+                    in  map Heap.fromList shrunkLists
+
               initialMessagesAndTrace <-
                 shrink
                   (fmap testResultToMaybe . runTest deployment workload prng)
-                  (map Heap.fromList . shrinkList (const []) . Heap.toList)
-                  initialMessages' -- XXX: avoid shrinking initMessages?
+                  shrinker
+                  initialMessages'
               let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
               putStrLn
                 ( "Shrunk: "
@@ -391,7 +396,7 @@ simulationTestWith testConfig node initialState workload = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = simulationSpawn node initialState prng'
+          , spawn = simulationSpawn2 node initialState
           }
   result <- runTests testConfig deployment workload prng''
   handleResult {- workload.prettyFailure -} result seed
