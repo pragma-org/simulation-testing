@@ -396,7 +396,7 @@ simulationTestWith testConfig node initialState workload = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = simulationSpawn2 node initialState
+          , spawn = simulationNodeHandle node initialState
           }
   result <- runTests testConfig deployment workload prng''
   handleResult {- workload.prettyFailure -} result seed

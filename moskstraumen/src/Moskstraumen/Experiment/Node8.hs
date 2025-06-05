@@ -380,7 +380,7 @@ stepEventLoop node codec runtime ns es = do
           -- traceM $ "timeout triggered, effects: " <> show effects
           (es', outgoing) <- handleEffects runtime codec ns'' es effects
           runtime.send outgoing
-          return (ns', es' {pendingTimers = pendingTimers'})
+          return (ns'', es' {pendingTimers = pendingTimers'})
         Just incoming -> do
           (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
           runtime.send outgoing
@@ -731,93 +731,13 @@ data NodeHandle i o = NodeHandle
   , close :: IO ()
   }
 
-pipeNodeHandle ::
-  FilePath
-  -> [String]
-  -> Codec ByteString i ByteString o
-  -> IO (NodeHandle i o)
-pipeNodeHandle fp args codec = undefined
-
---  (Just hin, Just hout, _, processHandle) <-
---    createProcess
---      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
---  return
---    NodeHandle
---      { handle = \_arrivalTime incoming -> do
---          LBS8.hPutStr hin (encodeIncoming incoming)
---          BS8.hPutStr hin "\n"
---          hFlush hin
---          line <- BS8.hGetLine hout
---          case decodeOutgoing line of
---            Left err -> hPutStrLn stderr err >> return []
---            Right outgoing -> return [outgoing]
---      , close = terminateProcess processHandle
---      }
---
-simulationRuntime ::
-  forall i o. IO (NodeHandle i o, Runtime (Incoming i o) (Outgoing i o))
-simulationRuntime = do
-  inputMVar <- newEmptyMVar
-  outputQueue <- newTBQueueIO 32
-  fakeTime <- newFakeTime epoch
-  let
-    handle_ :: Time -> Incoming i o -> IO [Outgoing i o]
-    handle_ arrivalTime incoming = do
-      putMVar inputMVar (arrivalTime, incoming)
-      atomically $ do
-        len <- lengthTBQueue outputQueue
-        guard (len /= 0)
-        replicateM (fromIntegral len) (readTBQueue outputQueue)
-
-    recieve_ :: Timeout -> IO (Maybe [Incoming i o])
-    recieve_ micros = do
-      (_arrivalTime, input) <- takeMVar inputMVar
-      return (Just [input])
-
-    send_ :: [Outgoing i o] -> IO ()
-    send_ = atomically . mapM_ (writeTBQueue outputQueue)
-
-  return
-    ( NodeHandle
-        { handle = handle_
-        , close = return ()
-        }
-    , Runtime
-        { receive = recieve_
-        , send = send_
-        , log = Text.hPutStrLn stderr
-        , getTime = readFakeTimeIO fakeTime
-        }
-    )
-
-simulationSpawn ::
-  (Show state, Show input, Show output) =>
-  Node state input output
-  -> state
-  -> Prng
-  -> IO (NodeHandle input output)
-simulationSpawn node initialState initialPrng = do
-  (nodeHandle, runtime) <- simulationRuntime
-  tid <-
-    forkIO (eventLoop node initialState testCodec runtime)
-  return nodeHandle {close = killThread tid}
-
-simulationSpawn2 ::
-  (Show state, Show input, Show output) =>
-  Node state input output
-  -> state
-  -> IO (NodeHandle input output)
-simulationSpawn2 node initialState =
-  simulationRuntime2 node initialState testCodec
-
-simulationRuntime2 ::
+simulationNodeHandle ::
   forall s i o.
   (Show s, Show i, Show o) =>
   Node s i o
   -> s
-  -> Codec (Incoming i o) i (Outgoing i o) o
   -> IO (NodeHandle i o)
-simulationRuntime2 node initialState codec = do
+simulationNodeHandle node initialState = do
   ref <- newIORef (initialNodeState initialState, initialEventLoopState)
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
@@ -848,7 +768,7 @@ simulationRuntime2 node initialState codec = do
       writeFakeTimeIO fakeTime arrivalTime
       putMVar inputMVar (before, incoming)
       (ns, es) <- readIORef ref
-      (ns', es') <- stepEventLoop node codec runtime ns es
+      (ns', es') <- stepEventLoop node testCodec runtime ns es
       writeIORef ref (ns', es')
       takeMVar outputMVar
 
@@ -860,6 +780,29 @@ simulationRuntime2 node initialState codec = do
     )
 
 -- end snippet
+
+pipeNodeHandle ::
+  FilePath
+  -> [String]
+  -> Codec ByteString i ByteString o
+  -> IO (NodeHandle i o)
+pipeNodeHandle fp args codec = undefined
+
+--  (Just hin, Just hout, _, processHandle) <-
+--    createProcess
+--      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
+--  return
+--    NodeHandle
+--      { handle = \_arrivalTime incoming -> do
+--          LBS8.hPutStr hin (encodeIncoming incoming)
+--          BS8.hPutStr hin "\n"
+--          hFlush hin
+--          line <- BS8.hGetLine hout
+--          case decodeOutgoing line of
+--            Left err -> hPutStrLn stderr err >> return []
+--            Right outgoing -> return [outgoing]
+--      , close = terminateProcess processHandle
+--      }
 
 -- start snippet simulatorMain
 simulatorMain :: IO Bool

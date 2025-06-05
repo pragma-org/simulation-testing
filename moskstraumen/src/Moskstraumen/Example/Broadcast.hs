@@ -72,13 +72,14 @@ broadcast (Topology nodeIds) = do
   setNeighbours newNeighbours
   reply Topology_Ok
 broadcast (Broadcast msg) = do
+  sender <- getSender
+  info ("Got broadcast " <> textShow msg <> " from " <> textShow sender)
   -- Acknowledge the request.
   reply Broadcast_Ok
   seenMessages <- seen <$> getState
   when (msg `Set.notMember` seenMessages) $ do
     modifyState (\s -> s {seen = Set.insert msg s.seen})
     neighbours <- getNeighbours
-    sender <- getSender
     modifyState
       (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
     let go = do
@@ -107,13 +108,13 @@ broadcast (Broadcast msg) = do
                 )
                 $ \case
                   Broadcast_Ok -> do
-                    -- info ("Got ack from: " <> unNodeId nodeId)
+                    info ("Got ack from: " <> unNodeId nodeId)
                     modifyState
                       (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
                   msg -> error ("broadcast: unexpected response: " <> show msg)
-              -- info "About to sleep"
+              info "About to sleep"
               sleep 1_000_000
-              -- info "Awake again"
+              info "Awake again"
               go
     go
 broadcast Read = do
@@ -208,6 +209,7 @@ test_broadcast = do
             , body = Broadcast_Ok
             }
         )
+      advanceTime testHandle 4_000_000
 
       sendTest
         testHandle
@@ -232,7 +234,7 @@ test_broadcast = do
             }
         )
 
--- advanceTime testHandle 4_000_000
+      advanceTime testHandle 4_000_000
 
 ------------------------------------------------------------------------
 
