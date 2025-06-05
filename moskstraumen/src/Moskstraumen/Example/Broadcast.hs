@@ -21,7 +21,7 @@ import Moskstraumen.Simulate2
 
 data BroadcastInput
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
-  | Topology {topology :: Map Text [NodeId]}
+  | Topology {topology :: Map NodeId [NodeId]}
   | Broadcast {message :: Int}
   | Read
   deriving stock (Eq, Show, Generic)
@@ -56,7 +56,7 @@ broadcast (Init self nodeIds) = do
   setNeighbours nodeIds
   reply Init_Ok
 broadcast (Topology nodeIds) = do
-  NodeId self <- getSelf
+  self <- getSelf
   let newNeighbours =
         Map.findWithDefault
           ( error
@@ -86,12 +86,12 @@ broadcast (Broadcast msg) = do
           if null unAckedNodes
             then info ("Done with message: " <> fromString (show msg))
             else do
-              -- info
-              --   ( "Need to replicate \""
-              --       <> Text.pack (show msg)
-              --       <> "\" to "
-              --       <> Text.pack (show unAckedNodes)
-              --   )
+              info
+                ( "Need to replicate \""
+                    <> Text.pack (show msg)
+                    <> "\" to "
+                    <> Text.pack (show unAckedNodes)
+                )
               forM_ unAckedNodes $ \nodeId -> rpc
                 nodeId
                 (Broadcast msg)
@@ -112,7 +112,7 @@ broadcast (Broadcast msg) = do
                       (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
                   msg -> error ("broadcast: unexpected response: " <> show msg)
               -- info "About to sleep"
-              sleep 50_000
+              sleep 1_000_000
               -- info "Awake again"
               go
     go
@@ -281,62 +281,93 @@ broadcastWorkload testConfig =
             )
             (take testConfig.numberOfNodes (reverse outgoing))
 
+    allNodes :: [NodeId]
+    allNodes = ["n1", "n2", "n3", "n4", "n5"]
+
     generate :: Int -> Gen [Message BroadcastInput]
     generate (-1) = do
       let initMessages =
             map
-              ( \i ->
-                  let nodeId = makeNodeId i
-                  in  Message
-                        { src = "c0"
-                        , dest = nodeId
-                        , msgId = Just (fromIntegral i)
-                        , body = Init nodeId (["n1", "n2", "n3", "n4", "n5"] \\ [nodeId])
-                        }
+              ( \nodeId ->
+                  Message
+                    { src = "c0"
+                    , dest = nodeId
+                    , msgId = Nothing
+                    , body = Init nodeId (allNodes \\ [nodeId])
+                    }
               )
-              [1 .. testConfig.numberOfNodes]
+              allNodes
+      let topologyMessages =
+            [ Message
+              { src = "c0"
+              , dest = nodeId
+              , msgId = Nothing
+              , body = Topology (gridTopology allNodes)
+              }
+            | nodeId <- allNodes
+            ]
       inputs <- generate 0
       let finalReads =
-            zipWith
-              ( \i msgId ->
-                  let nodeId = makeNodeId i
-                  in  Message
-                        { src = "c1"
-                        , dest = nodeId
-                        , msgId = Just msgId
-                        , body = Read
-                        }
+            map
+              ( \nodeId ->
+                  Message
+                    { src = "c1"
+                    , dest = nodeId
+                    , msgId = Nothing
+                    , body = Read
+                    }
               )
-              [1 .. testConfig.numberOfNodes]
-              [fromIntegral (length (initMessages <> inputs) + 1) ..]
-      return (initMessages ++ inputs ++ finalReads)
+              allNodes
+      return
+        ( addMessageIds (initMessages ++ topologyMessages ++ inputs ++ finalReads)
+        )
     generate n = sized (go n [])
       where
-        go n acc 0 = return (zipWith makeMessage [1 ..] (reverse acc))
+        go n acc 0 = return (reverse acc)
         go n acc sz = do
-          input <- frequency [(1, genTopology), (6, genBroadcast n), (3, genRead)]
+          input <- frequency [(7, pure (Broadcast n)), (3, pure Read)]
           let n' = case input of
                 Broadcast {} -> n + 1
                 _otherwise -> n
-          go n' (input : acc) (sz - 1)
-
-        genTopology =
-          return
-            ( Topology
-                ( Map.fromList
-                    ( map
-                        ( \i ->
-                            let nodeId = "n" <> textShow i
-                            in  (nodeId, map NodeId (["n1", "n2", "n3", "n4", "n5"] \\ [nodeId]))
-                        )
-                        [1 .. testConfig.numberOfNodes]
-                    )
-                )
+          dest <- elements allNodes
+          go
+            n'
+            ( Message {src = "c1", dest = dest, msgId = Nothing, body = input} : acc
             )
+            (sz - 1)
 
-        genBroadcast n = return (Broadcast n)
+------------------------------------------------------------------------
 
-        genRead = return Read
+-- | Arrange nodes in a square grid topology, such that each node has at most four neighbours.
+gridTopology :: [NodeId] -> Map NodeId [NodeId]
+gridTopology nodes =
+  Map.fromList
+    [ ( n
+      , concat
+          [ node (i + 1) j
+          , node (i - 1) j
+          , node i (j + 1)
+          , node i (j - 1)
+          ]
+      )
+    | i <- [0 .. side - 1]
+    , j <- [0 .. side - 1]
+    , n <- node i j
+    ]
+  where
+    n :: Int
+    n = length nodes
 
-        makeMessage :: MessageId -> BroadcastInput -> Message BroadcastInput
-        makeMessage msgId input = Message {src = "c1", dest = "n1", msgId = Just msgId, body = input}
+    side :: Int
+    side = ceiling (sqrt (fromIntegral n))
+
+    node :: Int -> Int -> [NodeId]
+    node i j
+      | 0 <= idx && idx < n = [nodes !! idx]
+      | otherwise = []
+      where
+        idx :: Int
+        idx = i * side + j
+
+totalTopology :: [NodeId] -> Map NodeId [NodeId]
+totalTopology nodes = Map.fromList [(node, nodes \\ [node]) | node <- nodes]

@@ -172,8 +172,12 @@ getNodeTime = generic GetTime
 
 info :: Text -> NodeBody s i o ()
 info text = do
+  self <- getSelf
   now <- getNodeTime
-  generic (Log ("[info] (" <> textShow now <> ") " <> text))
+  generic
+    ( Log
+        ("[info] (" <> textShow now <> ") [" <> unNodeId self <> "] " <> text)
+    )
 
 sleep :: Int -> NodeBody s i o ()
 sleep micros = generic (After micros (Pure ()))
@@ -815,17 +819,6 @@ simulationRuntime2 ::
   -> IO (NodeHandle i o)
 simulationRuntime2 node initialState codec = do
   ref <- newIORef (initialNodeState initialState, initialEventLoopState)
-  {-
-  stepEventLoop ::
-    forall s i_ i o_ o.
-    (Show s, Show i_, Show i, Show o) =>
-    Node s i o
-    -> Codec i_ i o_ o
-    -> Runtime i_ o_
-    -> NodeState s
-    -> EventLoopState s i o
-    -> IO (NodeState s, EventLoopState s i o)
-    -}
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
   fakeTime <- newFakeTime epoch

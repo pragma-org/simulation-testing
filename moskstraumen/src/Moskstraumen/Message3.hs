@@ -251,3 +251,9 @@ encodeOutgoing ::
   -> ByteString
 encodeOutgoing (OutMessage message) = encodeMessage message
 encodeOutgoing (OutResponse resposne) = encodeResponse resposne
+
+------------------------------------------------------------------------
+
+addMessageIds :: forall a. [Message a] -> [Message a]
+addMessageIds =
+  zipWith (\i message -> (message {msgId = Just i} :: Message a)) [0 ..]

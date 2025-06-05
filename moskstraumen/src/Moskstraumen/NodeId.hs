@@ -1,6 +1,6 @@
 module Moskstraumen.NodeId (module Moskstraumen.NodeId) where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 import qualified Data.Text as Text
 
 import Moskstraumen.Prelude
@@ -11,7 +11,7 @@ import Moskstraumen.Prelude
 newtype NodeId = NodeId Text
   -- end snippet
   deriving stock (Generic)
-  deriving newtype (Eq, Ord, Show, IsString)
+  deriving newtype (Eq, Ord, Show, IsString, ToJSONKey, FromJSONKey)
   deriving anyclass (FromJSON, ToJSON)
 
 unNodeId :: NodeId -> Text
