@@ -18,6 +18,11 @@ data-files:
   chain.json
   context.json
 
+flag debugger
+  description: Enable building debugger
+  default:     False
+  manual:      True
+
 common warnings
   ghc-options: -Wall
 
@@ -90,6 +95,14 @@ library
     Moskstraumen.VarId
     Moskstraumen.Workload
 
+  if flag(debugger)
+    exposed-modules:
+      Moskstraumen.Debugger.AnsiEscape
+      Moskstraumen.Debugger.LibMain
+      Moskstraumen.Debugger.SequenceDiagram
+      Moskstraumen.Debugger.State
+      Moskstraumen.Debugger.UserInterface
+
   other-modules:    Paths_moskstraumen
 
   -- NOTE: GHC 9.2 is needed for OverloadedRecordDot and
@@ -109,6 +122,14 @@ library
     , text
     , time
     , vector
+
+  if flag(debugger)
+    build-depends:
+      , brick
+      , microlens
+      , vty
+      , vty-unix
+      , word-wrap
 
   hs-source-dirs:   src
   default-language: Haskell2010
@@ -181,6 +202,22 @@ executable amaru
     , moskstraumen
 
   hs-source-dirs:   app/amaru
+  default-language: Haskell2010
+
+executable debugger
+  hs-source-dirs:   app/debugger
+
+  if flag(debugger)
+    main-is: Main.hs
+
+  else
+    main-is: DummyMain.hs
+
+  build-depends:
+    , base
+    , moskstraumen
+
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
   default-language: Haskell2010
 
 test-suite test
