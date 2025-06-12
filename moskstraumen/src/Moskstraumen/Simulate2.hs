@@ -65,6 +65,7 @@ data TestConfig = TestConfig
   , numberOfNodes :: Int
   , replaySeed :: Maybe Int
   , disableShrinking :: Bool
+  , maxSize :: Int
   }
 
 -- end snippet
@@ -77,6 +78,7 @@ defaultTestConfig =
     , numberOfNodes = 5
     , replaySeed = Nothing
     , disableShrinking = False
+    , maxSize = 100
     }
 
 -- end snippet
@@ -88,18 +90,16 @@ generateRandomArrivalTimes ::
   -> Double
   -> [Incoming i o]
   -> Prng
-  -> (Prng, Heap Time (Incoming i o))
-generateRandomArrivalTimes now meanMicros = go 0 []
+  -> (Prng, [(Time, Incoming i o)], Time)
+generateRandomArrivalTimes time0 meanMicros = go time0 0 []
   where
-    go _i acc [] prng = (prng, Heap.fromList acc)
-    go i acc (message : messages) prng =
+    go time _i acc [] prng = (prng, reverse acc, time)
+    go time i acc (message : messages) prng =
       let
         (deltaMicros, prng') = exponential meanMicros prng
-        -- XXX: deltaMicros shouldn't be hardcoded.
-        deltaMicros' = i
-        arrivalTime = addTimeMicros (round deltaMicros') now
+        arrivalTime = addTimeMicros (round deltaMicros) time
       in
-        go (i + 1) ((arrivalTime, message) : acc) messages prng'
+        go arrivalTime (i + 1) ((arrivalTime, message) : acc) messages prng'
 
 -- start snippet stepWorld
 stepWorld :: (Show i, Show o) => World i o -> IO (Either (World i o) ())
@@ -114,8 +114,9 @@ stepWorld world = case Heap.pop world.messages of
             error ("stepWorld: timeout when handling: " <> show message)
           Just (Left err) -> do
             putStrLn
-              "------------------------------------------------------------------------"
-            putStrLn "node.handle failed:"
+              ( "stepWorld, failed on the message failed: "
+                  <> show (arrivalTime, message, messages')
+              )
             error (displayException (err :: SomeException))
           Just (Right responses) -> do
             let aux :: Outgoing i o -> NodeId
@@ -123,7 +124,7 @@ stepWorld world = case Heap.pop world.messages of
             let (clientResponses, nodeMessages) =
                   partition (isClientNodeId . aux) responses
                 meanMicros = 20000 -- 20ms
-                (prng', nodeMessages') =
+                (prng', nodeMessages', _time) =
                   generateRandomArrivalTimes
                     arrivalTime
                     meanMicros
@@ -133,7 +134,8 @@ stepWorld world = case Heap.pop world.messages of
               $ Left
                 World
                   { nodes = world.nodes
-                  , messages = messages' <> nodeMessages'
+                  , messages =
+                      messages' <> Heap.fromList nodeMessages'
                   , prng = prng'
                   , -- XXX: the arrival time for client responses is arbitrary
                     trace =
@@ -159,10 +161,7 @@ runWorld world =
 newWorld ::
   Deployment i o -> Heap Time (Incoming i o) -> Prng -> IO (World i o)
 newWorld deployment initialMessages prng = do
-  let nodeIds =
-        map
-          (NodeId . ("n" <>) . Text.pack . show)
-          [1 .. deployment.numberOfNodes]
+  let nodeIds = map makeNodeId [1 .. deployment.numberOfNodes]
   nodeHandles <- replicateM deployment.numberOfNodes deployment.spawn
   return
     World
@@ -199,10 +198,10 @@ handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
   putStrLn "Trace: "
   mapM_
     ( Text.putStrLn
-        . ( \(index, (_time, message)) ->
+        . ( \(index, (time, message)) ->
               Text.pack (printf "%3d" index)
                 <> ". "
-                <> textShow message
+                <> displayOutgoing time message
                 -- <> maybe textShow (\f m -> f m) (fmap snd mPrettyMessage) message
           )
     )
@@ -215,6 +214,26 @@ handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
 handleResult {-_mPrettyMessage-} Success _seed = do
   putStrLn "Success!"
   return True
+
+displayOutgoing :: (Show i, Show o) => Time -> Outgoing i o -> Text
+displayOutgoing time (OutMessage (Message {src, dest, body})) =
+  Text.concat
+    [ unNodeId src
+    , if isClientNodeId src then " ==> " else " --> "
+    , unNodeId dest
+    , "   "
+    , textShow time
+    , "   " <> textShow body
+    ]
+displayOutgoing time (OutResponse (Response {src, dest, body})) =
+  Text.concat
+    [ unNodeId dest
+    , if isClientNodeId dest then " <== " else " <-- "
+    , unNodeId src
+    , "   "
+    , textShow time
+    , "   " <> textShow body
+    ]
 
 -- start snippet Workload
 
@@ -232,25 +251,31 @@ x === y
 data Workload i o = Workload
   { name :: Text
   , generate :: Gen [Message i]
+  , finallyGenerate :: Maybe (Int, Gen [Message i])
   , property :: Property i o
+  , baseLatency :: Double -- µs
   -- , prettyFailure :: Maybe (IO Text, Message -> Text)
   }
 
 -- end snippet
 
 -- start snippet runTest
+data RunMode = TestMode | ShrinkMode
+  deriving (Eq)
+
 runTest ::
   (Show i, Show o) =>
   Deployment i o
   -> Workload i o
   -> Prng
-  -> Heap Time (Incoming i o)
+  -> RunMode
+  -> [(Time, Incoming i o)]
   -> IO (TestResult i o)
-runTest deployment workload prng initialMessages = do
+runTest deployment workload prng runMode initialMessages = do
   world <-
     newWorld
       deployment
-      initialMessages
+      (Heap.fromList initialMessages)
       prng
   resultingTrace <-
     runWorld world `finally` traverse_ (.close) world.nodes
@@ -262,8 +287,13 @@ runTest deployment workload prng initialMessages = do
         --     else Fail "LTL formula failed"
         TracePredicate predicate -> predicate (map snd resultingTrace)
   case propertyResult of
-    Pass -> return Success
+    Pass -> do
+      when (runMode == ShrinkMode)
+        $ putStr "."
+      return Success
     Fail reason -> do
+      when (runMode == ShrinkMode)
+        $ putStr "x"
       return (Failure resultingTrace reason)
 
 -- end snippet
@@ -278,62 +308,67 @@ runTests ::
   -> Prng
   -> IO (TestResult i o)
 runTests testConfig deployment workload initialPrng =
-  loop testConfig.numberOfTests initialPrng
+  loop testConfig.numberOfTests initialPrng initialSize
   where
-    loop :: NumberOfTests -> Prng -> IO (TestResult i o)
-    loop 0 _prng = return Success
-    loop n prng = do
-      let size = 30 -- XXX: vary size over time...
-      let (prng', initialMessages) = generate size prng
-      let meanMicros = 20000 -- 20ms  -- XXX: make parameter of workload
-      let (prng'', initialMessages') =
-            generateRandomArrivalTimes
-              epoch
-              meanMicros
-              (map InMessage initialMessages)
-              prng'
-      let (prng''', prng'''') = splitPrng prng''
-      let neighbours i = [makeNodeId j | j <- [1 .. deployment.numberOfNodes], j /= i]
+    initialSize :: Int
+    initialSize = 0
+
+    loop :: NumberOfTests -> Prng -> Int -> IO (TestResult i o)
+    loop 0 _prng _size = return Success
+    loop n prng size = do
+      let (prng', messages) = generate size prng
+      let (prng'', prng''') = splitPrng prng'
       result <-
-        runTest deployment workload prng''' initialMessages'
+        runTest deployment workload prng'' TestMode messages
       case result of
-        Success -> loop (n - 1) prng''''
+        Success -> loop (n - 1) prng''' (min testConfig.maxSize ((n + 3) `div` 2))
         Failure unShrunkTrace reason -> do
           if testConfig.disableShrinking
             then return (Failure unShrunkTrace reason)
             else do
-              putStrLn "Shrinking..."
-              let shrinker heap =
-                    let list = Heap.toList heap
-                        (initMessages, list') = splitAt deployment.numberOfNodes list
-                        shrunkLists = map (initMessages ++) (shrinkList (const []) list')
-                    in  map Heap.fromList shrunkLists
+              putStrLn "Shrinking:"
+              let shrinker list =
+                    let
+                      -- list = Heap.toList heap
+                      (initMessages, list') = splitAt deployment.numberOfNodes list
+                    in
+                      map (initMessages ++) (shrinkList (const []) list')
+              -- in  map Heap.fromList shrunkLists
 
               initialMessagesAndTrace <-
                 shrink
-                  (fmap testResultToMaybe . runTest deployment workload prng)
+                  (fmap testResultToMaybe . runTest deployment workload prng ShrinkMode)
                   shrinker
-                  initialMessages'
+                  messages
               let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
               putStrLn
-                ( "Shrunk: "
+                ( "\nShrunk: "
                     <> show (NonEmpty.length initialMessagesAndTrace)
+                    <> " times"
                 )
               return (Failure shrunkTrace reason)
 
-    generate :: Int -> Prng -> (Prng, [Message i])
+    generate :: Int -> Prng -> (Prng, [(Time, Incoming i o)])
     generate size prng =
       let (prng', initialMessages) =
             Gen.runGen workload.generate prng size
-
-          messages :: [Message i]
-          messages =
-            zipWith
-              ( \message index -> (message {msgId = Just index} :: Message i)
-              )
-              initialMessages
-              [0 ..]
-      in  (prng', messages)
+          (prng'', initialMessages', time) =
+            generateRandomArrivalTimes
+              epoch
+              workload.baseLatency
+              (map InMessage initialMessages)
+              prng'
+      in  case workload.finallyGenerate of
+            Nothing -> (prng'', addMessageIds initialMessages')
+            Just (delay, finallyGen) ->
+              let (prng''', finalMessages) = Gen.runGen finallyGen prng'' size
+                  (prng'''', finalMessages', _time) =
+                    generateRandomArrivalTimes
+                      (addTimeMicros delay time)
+                      workload.baseLatency
+                      (map InMessage finalMessages)
+                      prng'''
+              in  (prng'''', addMessageIds (initialMessages' <> finalMessages'))
 
 -- end snippet
 
@@ -392,13 +427,12 @@ simulationTestWith ::
   -> IO Bool
 simulationTestWith testConfig node initialState workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
-  let (prng', prng'') = splitPrng prng
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
           , spawn = simulationNodeHandle node initialState
           }
-  result <- runTests testConfig deployment workload prng''
+  result <- runTests testConfig deployment workload prng
   handleResult {- workload.prettyFailure -} result seed
 
 simulationTest ::

@@ -30,7 +30,7 @@ import qualified Moskstraumen.Message3 as Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
-import Moskstraumen.Simulate
+import Moskstraumen.Simulate (blackboxTest)
 import Moskstraumen.Time
 import Moskstraumen.TimerWheel2
 import Moskstraumen.VarId
@@ -339,7 +339,8 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
 data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
   , pendingRpcs :: Map MessageId (o -> Cont s i o)
-  , pendingTimers :: TimerWheel Time (NodeState s, Cont s i o)
+  , pendingTimers ::
+      TimerWheel Time (Maybe MessageId, (NodeState s, Cont s i o))
   }
 
 initialEventLoopState :: EventLoopState s i o
@@ -363,12 +364,18 @@ stepEventLoop node codec runtime ns es = do
   case popTimer es.pendingTimers of
     Nothing -> do
       runtime.receive 10_000_000 >>= \case
-        Nothing -> return (ns, es)
+        Nothing -> do
+          -- NOTE: This `send` is needed for simulation handle, otherwise
+          -- the call to `takeMVar outputMVar` in simulationNodeHandle.handle
+          -- times out.
+          runtime.send []
+          return (ns, es)
         Just incoming -> do
+          putStrLn $ "eventLoop, incoming: " <> show incoming
           (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
           runtime.send outgoing
           return (ns', es')
-    Just ((later, (ns', k)), pendingTimers') -> do
+    Just ((later, (_mMessageId, (ns', k))), pendingTimers') -> do
       now <- runtime.getTime
       -- NOTE: The `max 0` is needed because if we pass a negative value to
       -- `timeout` it won't timeout.
@@ -376,7 +383,9 @@ stepEventLoop node codec runtime ns es = do
       runtime.receive micros >>= \case
         Nothing -> do
           now <- runtime.getTime
-          let (ns'', effects) = k (ns' {theTime = now}, [])
+          -- XXX: Which node state should we resume with? The current one,
+          -- probably? Remove saving the old one in the timer wheel (`ns'`)?
+          let (ns'', effects) = k (ns {theTime = now}, [])
           -- traceM $ "timeout triggered, effects: " <> show effects
           (es', outgoing) <- handleEffects runtime codec ns'' es effects
           runtime.send outgoing
@@ -443,7 +452,9 @@ handleIncoming node codec runtime = go []
                   ns
                     { sender = message.src
                     , inReplyTo = case message.msgId of
-                        Nothing -> undefined
+                        Nothing ->
+                          error
+                            ("handleIncoming: message doesn't have msgId set: " <> show message)
                         Just msgId -> msgId
                     , theTime = now
                     }
@@ -459,7 +470,12 @@ handleIncoming node codec runtime = go []
               -- hPutStrLn stderr ("Resuming success with state: " <> show ns.localState)
               let (ns', effects) = k response.body (ns {theTime = now}, [])
               -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
-              let es' = es {pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)}
+              let es' =
+                    es
+                      { pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)
+                      , pendingTimers =
+                          filterTimer ((== Just response.inReplyTo) . fst) (pendingTimers es)
+                      }
               (es'', outgoing) <-
                 handleEffects
                   runtime
@@ -533,7 +549,7 @@ handleEffects runtime codec ns = go []
               , pendingTimers =
                   insertTimer
                     (addTimeMicros rPC_TIMEOUT_MICROS now)
-                    (ns, failure Timeout)
+                    (Just messageId, (ns, failure Timeout))
                     (pendingTimers es)
               }
       go (codec.encodeOutgoing outgoing : acc) es' effects
@@ -547,7 +563,7 @@ handleEffects runtime codec ns = go []
               { pendingTimers =
                   insertTimer
                     (addTimeMicros micros now)
-                    (ns, k)
+                    (Nothing, (ns, k))
                     (pendingTimers es)
               }
       go acc es' effects

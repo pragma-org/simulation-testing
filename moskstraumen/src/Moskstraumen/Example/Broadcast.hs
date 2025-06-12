@@ -112,9 +112,11 @@ broadcast (Broadcast msg) = do
                     modifyState
                       (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
                   msg -> error ("broadcast: unexpected response: " <> show msg)
-              info "About to sleep"
+              s <- getState
+              info ("About to sleep, state " <> textShow s)
               sleep 1_000_000
-              info "Awake again"
+              s <- getState
+              info ("Awake again, state: " <> textShow s)
               go
     go
 broadcast Read = do
@@ -239,13 +241,27 @@ test_broadcast = do
 ------------------------------------------------------------------------
 
 unit_simTestBroadcast :: IO Bool
-unit_simTestBroadcast =
-  simulationTest
+unit_simTestBroadcast = unit_simTestBroadcast' Nothing
+
+unit_simTestBroadcastReplay :: Int -> IO Bool
+unit_simTestBroadcastReplay seed = unit_simTestBroadcast' (Just seed)
+
+unit_simTestBroadcast' :: Maybe Int -> IO Bool
+unit_simTestBroadcast' mSeed =
+  simulationTestWith
+    config
     broadcast
     initialState
-    ( broadcastWorkload
-        defaultTestConfig {numberOfTests = 1, disableShrinking = True}
-    )
+    (broadcastWorkload config)
+  where
+    config =
+      defaultTestConfig
+        { replaySeed = mSeed
+        , numberOfTests = 100
+        , numberOfNodes = 2
+        , disableShrinking = True
+        , maxSize = 3
+        }
 
 broadcastWorkload ::
   TestConfig -> Workload BroadcastInput BroadcastOutput
@@ -253,26 +269,35 @@ broadcastWorkload testConfig =
   Workload
     { name = "broadcast"
     , generate = generate (-1)
+    , finallyGenerate = Just (10_000_000, generateFinalReads)
     , property = TracePredicate tracePredicate
+    , baseLatency = 200_000 -- 200 ms
     }
   where
     tracePredicate ::
       [Outgoing BroadcastInput BroadcastOutput] -> PropertyResult
-    tracePredicate outgoing
-      | all
-          (\finalRead -> Set.toList broadcasted == finalRead)
-          finalReads =
-          Pass
-      | otherwise = Fail ""
+    tracePredicate outgoing =
+      case find (\finalRead -> Set.toList broadcasted /= finalRead) finalReads of
+        Nothing -> Pass
+        Just finalRead ->
+          Fail
+            ( show finalRead
+                <> " /= "
+                <> show (Set.toList broadcasted)
+                -- <> "\nTrace predicate outgoing (for debugging only):"
+                -- <> Text.unpack (Text.unlines (map (displayOutgoing epoch) outgoing))
+            )
       where
         broadcasted :: Set Int
         broadcasted =
           foldMap
-            ( \outgoing -> case outgoing of
-                OutMessage (Message {body = Broadcast value}) -> Set.singleton value
-                _ -> Set.empty
+            ( \(request, mResponse) -> case mResponse of
+                Nothing -> Set.empty
+                Just response -> case request of
+                  Message {body = Broadcast value} -> Set.singleton value
+                  _ -> Set.empty
             )
-            outgoing
+            (pairReplies outgoing)
 
         finalReads :: [[Int]]
         finalReads =
@@ -284,7 +309,7 @@ broadcastWorkload testConfig =
             (take testConfig.numberOfNodes (reverse outgoing))
 
     allNodes :: [NodeId]
-    allNodes = ["n1", "n2", "n3", "n4", "n5"]
+    allNodes = map makeNodeId [1 .. testConfig.numberOfNodes]
 
     generate :: Int -> Gen [Message BroadcastInput]
     generate (-1) = do
@@ -309,20 +334,7 @@ broadcastWorkload testConfig =
             | nodeId <- allNodes
             ]
       inputs <- generate 0
-      let finalReads =
-            map
-              ( \nodeId ->
-                  Message
-                    { src = "c1"
-                    , dest = nodeId
-                    , msgId = Nothing
-                    , body = Read
-                    }
-              )
-              allNodes
-      return
-        ( addMessageIds (initMessages ++ topologyMessages ++ inputs ++ finalReads)
-        )
+      return (initMessages ++ topologyMessages ++ inputs)
     generate n = sized (go n [])
       where
         go n acc 0 = return (reverse acc)
@@ -337,6 +349,20 @@ broadcastWorkload testConfig =
             ( Message {src = "c1", dest = dest, msgId = Nothing, body = input} : acc
             )
             (sz - 1)
+
+    generateFinalReads :: Gen [Message BroadcastInput]
+    generateFinalReads =
+      return
+        $ map
+          ( \nodeId ->
+              Message
+                { src = "c1"
+                , dest = nodeId
+                , msgId = Nothing
+                , body = Read
+                }
+          )
+          allNodes
 
 ------------------------------------------------------------------------
 
@@ -357,15 +383,15 @@ gridTopology nodes =
     , n <- node i j
     ]
   where
-    n :: Int
-    n = length nodes
+    len :: Int
+    len = length nodes
 
     side :: Int
-    side = ceiling (sqrt (fromIntegral n))
+    side = ceiling (sqrt (fromIntegral len))
 
     node :: Int -> Int -> [NodeId]
     node i j
-      | 0 <= idx && idx < n = [nodes !! idx]
+      | 0 <= idx && idx < len = [nodes !! idx]
       | otherwise = []
       where
         idx :: Int

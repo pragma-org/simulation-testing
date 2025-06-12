@@ -8,7 +8,7 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 
 newtype Heap time a = Heap (Heap.Heap (Heap.Entry time a))
-  deriving newtype (Semigroup, Monoid)
+  deriving newtype (Semigroup, Monoid, Show)
 
 empty :: Heap time a
 empty = Heap Heap.empty

@@ -12,6 +12,8 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (LazyByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Char (toLower)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Debug.Trace
 import GHC.Generics (Rep)
 import GHC.Records
@@ -183,8 +185,6 @@ decodeIncoming ::
   -> Either String (Incoming i o)
 decodeIncoming bs = fromMaelstrom =<< decodeMaelstrom (LBS.fromStrict bs)
 
-decodeOutgoing = undefined
-
 toMaelstromMessage :: Message i -> MaelstromMessage i
 toMaelstromMessage msg =
   MaelstromMessage
@@ -217,6 +217,7 @@ toJsonMaelstromBody mbody =
     ( ["msg_id" .= mbody.msg_id, "in_reply_to" .= mbody.in_reply_to]
         <> case genericToJSON aesonOptions mbody.payload of
           Object kvs -> KeyMap.toList kvs
+          _ -> error "toJsonMaelstromBody: impossible, payload is always an object"
     )
 
 encodeMaelstrom ::
@@ -254,6 +255,44 @@ encodeOutgoing (OutResponse resposne) = encodeResponse resposne
 
 ------------------------------------------------------------------------
 
-addMessageIds :: forall a. [Message a] -> [Message a]
+addMessageIds ::
+  forall time i o. [(time, Incoming i o)] -> [(time, Incoming i o)]
 addMessageIds =
-  zipWith (\i message -> (message {msgId = Just i} :: Message a)) [0 ..]
+  zipWith
+    ( \i (time, incoming) -> case incoming of
+        InMessage message ->
+          ( time
+          , InMessage
+              ( message {msgId = Just (MessageId (fromIntegral i))} ::
+                  Message i
+              )
+          )
+        _otherwise ->
+          error
+            "addMessageIds, impossible, only called on newly generated messages"
+    )
+    [0 ..]
+
+pairReplies ::
+  forall i o. [Outgoing i o] -> [(Message i, Maybe (Response o))]
+pairReplies outgoing =
+  [ (message, message.msgId >>= \msgId -> Map.lookup msgId responses)
+  | message <- messages
+  ]
+  where
+    (messages, responses) = splitOutgoing outgoing
+
+    splitOutgoing ::
+      [Outgoing i o] -> ([Message i], Map MessageId (Response o))
+    splitOutgoing = go [] Map.empty
+      where
+        go ::
+          [Message i]
+          -> Map MessageId (Response o)
+          -> [Outgoing i o]
+          -> ([Message i], Map MessageId (Response o))
+        go ms rs [] = (reverse ms, rs)
+        go ms rs (OutMessage m : os) = go (m : ms) rs os
+        go ms rs (OutResponse r : os) =
+          go ms (Map.insert r.inReplyTo r rs) os
+        go _ms _rs (OutRpcError _e : _os) = error "pariReplies: RpcError"
