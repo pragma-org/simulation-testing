@@ -78,24 +78,25 @@ drawUI as = [ui]
           , vLimit 7 $ borderWithLabel (str "Logs") $ renderLogs as
           ]
 
-renderEvent :: LocalTime -> DebEvent -> String
+renderEvent :: LocalTime -> DebEvent -> Text
 renderEvent localTime (DebEvent from to event receivedLogical _msg) =
-  printf
-    "%-25.25s: %-8.8s: %7.7s -> %-7.7s @ %d"
-    (show localTime)
-    event
-    from
-    to
-    receivedLogical
+  Text.pack
+    $ printf
+      "%-25.25s: %-8.8s: %7.7s -> %-7.7s @ %d"
+      (show localTime)
+      event
+      from
+      to
+      receivedLogical
 
-renderOutputEvent :: DebEvent -> String
+renderOutputEvent :: DebEvent -> Text
 renderOutputEvent (DebEvent _ to _ _ msg) =
   to <> ": " <> msg
 
-renderToString :: AppState -> (InstanceState -> String) -> Widget ()
-renderToString as f =
+renderToText :: AppState -> (InstanceState -> Text) -> Widget ()
+renderToText as f =
   center
-    $ strWrapWith
+    $ txtWrapWith
       wrapSettings
       (fromMaybe "?" . fmap (f . snd) $ L.listSelectedElement $ _asLog as)
 
@@ -114,12 +115,12 @@ renderReactorState as =
       ( fromMaybe "?" . fmap (isState . snd) $ L.listSelectedElement $ _asLog as
       )
   where
-    fillWidth x = hBox [x, center $ str " "]
-    myWrap = vBox . map myStr . lines
+    fillWidth x = hBox [x, center $ txt " "]
+    myWrap = vBox . map myStr . Text.lines
     myStr x =
       hBox
         [ raw $ V.text' a c
-        | Segment a c <- parseANSI (Text.pack x)
+        | Segment a c <- parseANSI x
         ]
 
 -- only works for greedy sizes
@@ -145,11 +146,11 @@ renderSeqDia as = withHeight $ \h ->
       )
   where
     fillWidth x = hBox [x, center $ str " "]
-    myWrap = vBox . map myStr . lines
+    myWrap = vBox . map myStr . Text.lines
     myStr x =
       hBox
         [ raw $ V.text' a c
-        | Segment a c <- parseANSI (Text.pack x)
+        | Segment a c <- parseANSI x
         ]
 
 renderEvents :: AppState -> Widget ()
@@ -159,31 +160,35 @@ renderEvents as =
     $ _asLog as
 
 renderMessage :: AppState -> Widget ()
-renderMessage as = renderToString as (message . isCurrentEvent)
+renderMessage as = renderToText as (message . isCurrentEvent)
 
 -- renderVersion :: AppState -> Widget ()
--- renderVersion as = renderToString as (show . isRunningVersion)
+-- renderVersion as = renderToText as (show . isRunningVersion)
 
 renderSentMessage :: AppState -> Widget ()
 renderSentMessage as =
-  renderToString as (addEmpty . unlines . map renderOutputEvent . isSent)
+  renderToText
+    as
+    (addEmpty . Text.unlines . map renderOutputEvent . isSent)
   where
-    addEmpty [] = "\n"
-    addEmpty xs = xs
+    addEmpty text
+      | Text.null text = "\n"
+      | otherwise = text
 
 renderLogs :: AppState -> Widget ()
-renderLogs as = renderToString as (addEmpty . unlines . isLogs)
+renderLogs as = renderToText as (addEmpty . Text.unlines . isLogs)
   where
-    addEmpty [] = "\n"
-    addEmpty xs = xs
+    addEmpty text
+      | Text.null text = "\n"
+      | otherwise = text
 
 listDrawElement :: TimeZone -> Bool -> InstanceState -> Widget ()
 listDrawElement tz sel is =
-  let selStr s =
+  let selTxt s =
         if sel
-          then withAttr customAttr (str $ ">" <> s)
-          else str $ " " <> s
-  in  selStr
+          then withAttr customAttr (txt $ ">" <> s)
+          else txt $ " " <> s
+  in  selTxt
         $ renderEvent (utcToLocalTime tz (isReceivedTime is))
         $ isCurrentEvent is
 

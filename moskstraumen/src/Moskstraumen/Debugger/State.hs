@@ -13,38 +13,38 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 
 data InstanceStateRepr = InstanceStateRepr
-  { state :: String
+  { state :: Text
   , currentEvent :: DebEvent
   , -- , runningVersion :: Int64
     receivedTime :: Int64 -- nanoseconds since posix-epoch
-  , logs :: [String]
+  , logs :: [Text]
   , sent :: [DebEvent]
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
 data DebEvent = DebEvent
-  { from :: String
-  , to :: String
-  , event :: String
+  { from :: Text
+  , to :: Text
+  , event :: Text
   , receivedLogical :: Int
   , -- , receivedSimulated :: Time
-    message :: String
+    message :: Text
   }
   deriving stock (Generic, Show)
   deriving anyclass (FromJSON, ToJSON)
 
 data InstanceState = InstanceState
-  { isState :: String -- Should probably be per reactor
+  { isState :: Text -- Should probably be per reactor
   , isCurrentEvent :: DebEvent
   , -- , isRunningVersion :: Int64
     isReceivedTime :: UTCTime
-  , isSeqDia :: Int -> String -- the current height
-  , isLogs :: [String]
+  , isSeqDia :: Int -> Text -- the current height
+  , isLogs :: [Text]
   , isSent :: [DebEvent]
   }
 
-toArrowDE :: DebEvent -> Arrow String
+toArrowDE :: DebEvent -> Arrow Text
 toArrowDE de =
   Arrow
     { aFrom = from de
@@ -53,7 +53,7 @@ toArrowDE de =
     , aMessage = event de
     }
 
-toArrowIS :: InstanceStateRepr -> [Arrow String]
+toArrowIS :: InstanceStateRepr -> [Arrow Text]
 toArrowIS is = toArrowDE (currentEvent is) : map toArrowDE' (sent is)
   where
     -- we don't want to select the sent messages

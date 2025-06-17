@@ -2,95 +2,104 @@
 
 module Moskstraumen.Debugger.SequenceDiagram (module Moskstraumen.Debugger.SequenceDiagram) where
 
+import qualified Data.Text as Text
+
 import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
-type Name = String
+type Name = Text
 
-hLine :: Char
-hLine = '─'
+hLine :: Text
+hLine = "─"
 
-vLine :: Char
-vLine = '│'
+vLine :: Text
+vLine = "│"
 
-mkBoxLines :: Bool -> Bool -> [(Int, Name)] -> [String]
+mkBoxLines :: Bool -> Bool -> [(Int, Name)] -> [Text]
 mkBoxLines isTop dotted allBoxes =
   let (x, y, z) = go allBoxes
   in  if isTop then [x, y, z, extraLine] else [extraLine, x, y, z]
   where
-    emptySpace i = (replicate i ' ', replicate i ' ', replicate i ' ')
+    emptySpace i = (Text.replicate i " ", Text.replicate i " ", Text.replicate i " ")
     extraLine = mygo allBoxes
       where
         mygo [] = mempty
         mygo ((pre, name) : xs) =
-          replicate (pre + 2 + length name `div` 2) ' '
-            ++ [if dotted then '╎' else vLine]
-            ++ replicate (length name `div` 2 + 2) ' '
-            ++ mygo xs
-    go :: [(Int, Name)] -> (String, String, String)
+          Text.replicate (pre + 2 + Text.length name `div` 2) " "
+            <> if dotted
+              then "╎"
+              else
+                vLine
+                  <> Text.replicate (Text.length name `div` 2 + 2) " "
+                  <> mygo xs
+    go :: [(Int, Name)] -> (Text, Text, Text)
     go [] = mempty
     go ((pre, name) : xs) =
       emptySpace pre
         <> ( "╭"
-              ++ replicate (length name `div` 2 + 1) hLine
-              ++ (if isTop then [hLine] else "┴")
-              ++ replicate (length name `div` 2 + 1) hLine
-              ++ "╮"
-           , [vLine, ' ']
-              ++ name
-              ++ (if length name `mod` 2 == 0 then " " else "")
-              ++ [' ', vLine]
+              <> Text.replicate (Text.length name `div` 2 + 1) hLine
+              <> (if isTop then hLine else "┴")
+              <> Text.replicate (Text.length name `div` 2 + 1) hLine
+              <> "╮"
+           , (vLine <> " ")
+              <> name
+              <> (if Text.length name `mod` 2 == 0 then " " else "")
+              <> (" " <> vLine)
            , "╰"
-              ++ replicate (length name `div` 2 + 1) hLine
-              ++ (if isTop then "┬" else [hLine])
-              ++ replicate (length name `div` 2 + 1) hLine
-              ++ "╯"
+              <> Text.replicate (Text.length name `div` 2 + 1) hLine
+              <> (if isTop then "┬" else hLine)
+              <> Text.replicate (Text.length name `div` 2 + 1) hLine
+              <> "╯"
            )
         <> go xs
 
-mkArrow :: [(Int, Name)] -> Int -> Int -> Message -> [String]
+mkArrow :: [(Int, Name)] -> Int -> Int -> Message -> [Text]
 mkArrow allBoxes from to (Message msg msgLen) = let (x, y) = go 0 allBoxes in [x, y]
   where
     go _ [] = mempty
     go c ((pre, name) : xs) =
       ( topLine
-          ++ replicate (length name `div` 2 + 1) ' '
-          ++ [' ', vLine, ' ']
-          ++ replicate (length name `div` 2 + 1) ' '
-      , replicate (pre + length name `div` 2 + 1) before
-          ++ middle
-          ++ replicate (length name `div` 2 + 1) after
+          <> Text.replicate (Text.length name `div` 2 + 1) " "
+          <> Text.concat [" ", vLine, " "]
+          <> Text.replicate (Text.length name `div` 2 + 1) " "
+      , Text.replicate (pre + Text.length name `div` 2 + 1) before
+          <> middle
+          <> Text.replicate (Text.length name `div` 2 + 1) after
       )
         <> go (succ c) xs
       where
         topLine
-          | c == succ from && from < to = msg ++ replicate (pre - msgLen) ' '
-          | c == from && from > to = replicate (pre - msgLen) ' ' ++ msg
-          | otherwise = replicate pre ' '
+          | c == succ from && from < to = msg <> Text.replicate (pre - msgLen) " "
+          | c == from && from > to = Text.replicate (pre - msgLen) " " <> msg
+          | otherwise = Text.replicate pre " "
         lower = min from to
         higher = max from to
         middle
-          | c == from && from < to = [' ', '├', hLine]
-          | c == from && from > to = [hLine, '┤', ' ']
-          | c == to && from < to = ['▶', vLine, ' ']
-          | c == to && from > to = [' ', vLine, '◀']
+          | c == from && from < to = " ├" <> hLine
+          | c == from && from > to = hLine <> "┤ "
+          | c == to && from < to = "▶" <> vLine <> " "
+          | c == to && from > to = " " <> vLine <> "◀"
           | otherwise =
-              [active c, if isActive c then '┼' else vLine, active (succ c)]
+              Text.concat
+                [ active c
+                , if isActive c then "┼" else vLine
+                , active (succ c)
+                ]
         isActive x = lower < x && x <= higher
         active x
           | isActive x = hLine
-          | otherwise = ' '
+          | otherwise = " "
         before = active c
         after = active (succ c)
 
-data Message = Message String Int
+data Message = Message Text Int
 
-simpleMessage :: String -> Message
-simpleMessage x = Message (" " <> x <> " ") (2 + length x)
+simpleMessage :: Text -> Message
+simpleMessage x = Message (" " <> x <> " ") (2 + Text.length x)
 
-markedMessage :: String -> Message
-markedMessage x = Message ("\x001b[93m[" <> x <> "]\x001b[0m") (2 + length x)
+markedMessage :: Text -> Message
+markedMessage x = Message ("\x001b[93m[" <> x <> "]\x001b[0m") (2 + Text.length x)
 
 data Arrow msg = Arrow
   { aFrom :: Name
@@ -100,9 +109,9 @@ data Arrow msg = Arrow
   }
   deriving stock (Show)
 
-generate :: [Arrow String] -> Int -> Int -> String
+generate :: [Arrow Text] -> Int -> Int -> Text
 generate originalArrs current height =
-  unlines
+  Text.unlines
     $ mkBoxLines True (dropBeginning > 0) names
     <> concat
       [ mkArrow names fromIndex toIndex msg
@@ -176,7 +185,7 @@ generate originalArrs current height =
           | fromIndex < toIndex = succ fromIndex
           | otherwise = fromIndex
 
-example :: Int -> String
+example :: Int -> Text
 example = generate arrs 1000
   where
     arrs =
