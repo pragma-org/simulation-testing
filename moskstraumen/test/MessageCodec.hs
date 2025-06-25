@@ -3,13 +3,12 @@
 module MessageCodec (module MessageCodec) where
 
 import Data.Aeson
-import Data.ByteString (ByteString)
 import Test.Tasty
 import Test.Tasty.HUnit
 
 import Moskstraumen.Prelude
 
-import Moskstraumen.Experiment.Node8 (Codec, decodeIncoming, jsonCodec)
+import Moskstraumen.Experiment.Node8 (decodeIncoming, jsonCodec)
 import Moskstraumen.Message3 hiding (decodeIncoming)
 
 ------------------------------------------------------------------------

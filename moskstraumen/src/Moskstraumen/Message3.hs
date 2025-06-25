@@ -55,15 +55,35 @@ data Incoming i o
   | InRpcError RpcError
   deriving stock (Show, Eq)
 
+instance HasField "src" (Incoming i o) NodeId where
+  getField (InMessage msg) = msg.src
+  getField (InResponse resp) = resp.src
+  getField (InRpcError _err) = error "Incoming.src InRpcError"
+
 instance HasField "dest" (Incoming i o) NodeId where
   getField (InMessage msg) = msg.dest
   getField (InResponse resp) = resp.dest
-  getField (InRpcError _err) = error "getField InRpcError"
+  getField (InRpcError _err) = error "Incoming.dest InRpcError"
+
+instance HasField "body" (Incoming i o) (Either i o) where
+  getField (InMessage msg) = Left msg.body
+  getField (InResponse resp) = Right resp.body
+  getField (InRpcError _err) = error "Incoming.body InRpcError"
+
+instance HasField "src" (Outgoing i o) NodeId where
+  getField (OutMessage msg) = msg.src
+  getField (OutResponse resp) = resp.src
+  getField (OutRpcError _err) = error "Outgoing.src OutRpcError"
 
 instance HasField "dest" (Outgoing i o) NodeId where
   getField (OutMessage msg) = msg.dest
   getField (OutResponse resp) = resp.dest
-  getField (OutRpcError _err) = error "getField OutRpcError"
+  getField (OutRpcError _err) = error "Outgoing.dest OutRpcError"
+
+instance HasField "body" (Outgoing i o) (Either i o) where
+  getField (OutMessage msg) = Left msg.body
+  getField (OutResponse resp) = Right resp.body
+  getField (OutRpcError _err) = error "Outgoing.body InRpcError"
 
 data Outgoing i o
   = OutMessage (Message i)

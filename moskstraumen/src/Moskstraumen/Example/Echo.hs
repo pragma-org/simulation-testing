@@ -95,7 +95,6 @@ echoWorkload =
                     :. Project "echo"
                 )
             )
-    , prettyFailure = Nothing
     }
 
 ------------------------------------------------------------------------

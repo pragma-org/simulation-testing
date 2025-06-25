@@ -1,9 +1,11 @@
 module Moskstraumen.Time (module Moskstraumen.Time) where
 
+import Data.Int (Int64)
 import qualified Data.Text as Text
 import Data.Time
 import qualified Data.Time as Time
 import Data.Time.Calendar.OrdinalDate (fromOrdinalDate)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
 
 import Moskstraumen.Prelude
@@ -35,3 +37,16 @@ diffTimeMicros (Time t1) (Time t2) = micros
 
 iso8601Format :: Time -> Text
 iso8601Format (Time utcTime) = Text.pack (iso8601Show utcTime)
+
+fromNanosSinceEpoch :: Int64 -> Time
+fromNanosSinceEpoch =
+  Time
+    . posixSecondsToUTCTime
+    . (/ (1_000_000_000))
+    . secondsToNominalDiffTime
+    . fromInteger
+    . fromIntegral
+
+-- XXX: This leaks TimeZone and LocalTime...
+utcToLocalTime :: TimeZone -> Time -> LocalTime
+utcToLocalTime tz (Time t) = Time.utcToLocalTime tz t

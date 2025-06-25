@@ -3,7 +3,8 @@
 module Moskstraumen.Simulate2 (module Moskstraumen.Simulate2) where
 
 import Control.Exception
-import Data.Aeson (GFromJSON, GToJSON', Value, Zero)
+import Data.Aeson (GFromJSON, GToJSON', Value, Zero, encode)
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.List (partition)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
@@ -15,6 +16,9 @@ import System.Timeout
 import Text.Printf
 
 -- import Moskstraumen.Codec
+
+import Data.Vector (Vector)
+import qualified Data.Vector as Vector
 import Moskstraumen.Experiment.Node8
 import Moskstraumen.Generate (Gen)
 import qualified Moskstraumen.Generate as Gen
@@ -26,6 +30,7 @@ import Moskstraumen.Message3
 
 -- import Moskstraumen.NodeHandle
 
+import Moskstraumen.Debugger.State
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
@@ -40,6 +45,7 @@ data World i o = World
   , messages :: Heap Time (Incoming i o)
   , prng :: Prng
   , trace :: Trace i o
+  , debugTrace :: Vector DebugEvent
   }
 
 -- end snippet
@@ -118,11 +124,12 @@ stepWorld world = case Heap.pop world.messages of
                   <> show (arrivalTime, message, messages')
               )
             error (displayException (err :: SomeException))
-          Just (Right responses) -> do
+          Just (Right handleOutput) -> do
+            mapM_ Text.putStrLn handleOutput.logs
             let aux :: Outgoing i o -> NodeId
                 aux outgoing = outgoing.dest
             let (clientResponses, nodeMessages) =
-                  partition (isClientNodeId . aux) responses
+                  partition (isClientNodeId . aux) handleOutput.outgoing
                 meanMicros = 20000 -- 20ms
                 (prng', nodeMessages', _time) =
                   generateRandomArrivalTimes
@@ -144,15 +151,55 @@ stepWorld world = case Heap.pop world.messages of
                           ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                           )
                           clientResponses
+                  , debugTrace =
+                      world.debugTrace
+                        <> Vector.singleton
+                          ( DebugEvent
+                              { state =
+                                  "Node: "
+                                    <> unNodeId message.dest
+                                    <> "\nBefore: "
+                                    <> handleOutput.beforeState
+                                    <> "\nAfter:  "
+                                    <> handleOutput.afterState
+                              , currentEvent =
+                                  SendEvent
+                                    { from = unNodeId message.src
+                                    , to = unNodeId message.dest
+                                    , event =
+                                        Text.takeWhile (/= ' ') (either textShow textShow message.body)
+                                    , receivedLogical = Vector.length world.debugTrace
+                                    , message =
+                                        either textShow textShow message.body
+                                    }
+                              , logs = handleOutput.logs
+                              , sent =
+                                  zipWith
+                                    ( \ix outgoing ->
+                                        SendEvent
+                                          { from = unNodeId outgoing.src
+                                          , to = unNodeId outgoing.dest
+                                          , event = Text.takeWhile (/= ' ') (either textShow textShow outgoing.body)
+                                          , receivedLogical =
+                                              length handleOutput.outgoing + Vector.length world.debugTrace + ix -- XXX: doesn't account for other sent...
+                                          , message = either textShow textShow outgoing.body
+                                          }
+                                    )
+                                    [0 ..]
+                                    handleOutput.outgoing
+                              , receivedTime = 0
+                              }
+                          )
                   }
 
 -- end snippet
 
 -- start snippet runWorld
-runWorld :: (Show i, Show o) => World i o -> IO (Trace i o)
+runWorld ::
+  (Show i, Show o) => World i o -> IO (Trace i o, Vector DebugEvent)
 runWorld world =
   stepWorld world >>= \case
-    Right () -> return world.trace
+    Right () -> return (world.trace, world.debugTrace)
     Left world' -> runWorld world'
 
 -- end snippet
@@ -169,6 +216,7 @@ newWorld deployment initialMessages prng = do
       , messages = initialMessages
       , prng = prng
       , trace = []
+      , debugTrace = Vector.empty
       }
 
 -- end snippet
@@ -176,25 +224,20 @@ newWorld deployment initialMessages prng = do
 ------------------------------------------------------------------------
 
 -- start snippet TestResult
-data TestResult i o = Success | Failure (Trace i o) Reason
+data TestResult i o
+  = Success
+  | Failure (Trace i o) (Vector DebugEvent) Reason
   -- end snippet
   deriving stock (Eq, Show)
 
 type Reason = String
 
-testResultToMaybe :: TestResult i o -> Maybe (Trace i o)
-testResultToMaybe Success = Nothing
-testResultToMaybe (Failure trace _reason) = Just trace
-
 handleResult ::
   (Show i, Show o) =>
-  -- Maybe (IO Text, Message -> Text) ->
   TestResult i o
   -> Seed
   -> IO Bool
-handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
-  -- preamble <- maybe (return "") fst mPrettyMessage
-  -- Text.putStrLn preamble
+handleResult (Failure trace debugTrace reason) seed = do
   putStrLn "Trace: "
   mapM_
     ( Text.putStrLn
@@ -202,7 +245,6 @@ handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
               Text.pack (printf "%3d" index)
                 <> ". "
                 <> displayOutgoing time message
-                -- <> maybe textShow (\f m -> f m) (fmap snd mPrettyMessage) message
           )
     )
     (zip [1 :: Int ..] trace)
@@ -210,8 +252,10 @@ handleResult {-mPrettyMessage-} (Failure trace reason) seed = do
   putStrLn ("Seed: " <> show seed)
   putStrLn ""
   putStrLn ("Failure: " <> reason)
+  putStrLn "Debug trace: /tmp/moskstraumen.trace"
+  LBS8.writeFile "/tmp/moskstraumen.trace" (encode debugTrace)
   return False
-handleResult {-_mPrettyMessage-} Success _seed = do
+handleResult Success _seed = do
   putStrLn "Success!"
   return True
 
@@ -254,7 +298,6 @@ data Workload i o = Workload
   , finallyGenerate :: Maybe (Int, Gen [Message i])
   , property :: Property i o
   , baseLatency :: Double -- µs
-  -- , prettyFailure :: Maybe (IO Text, Message -> Text)
   }
 
 -- end snippet
@@ -277,7 +320,7 @@ runTest deployment workload prng runMode initialMessages = do
       deployment
       (Heap.fromList initialMessages)
       prng
-  resultingTrace <-
+  (resultingTrace, debugTrace) <-
     runWorld world `finally` traverse_ (.close) world.nodes
   let propertyResult = case workload.property of
         -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
@@ -294,7 +337,7 @@ runTest deployment workload prng runMode initialMessages = do
     Fail reason -> do
       when (runMode == ShrinkMode)
         $ putStr "x"
-      return (Failure resultingTrace reason)
+      return (Failure resultingTrace debugTrace reason)
 
 -- end snippet
 
@@ -322,18 +365,16 @@ runTests testConfig deployment workload initialPrng =
         runTest deployment workload prng'' TestMode messages
       case result of
         Success -> loop (n - 1) prng''' (min testConfig.maxSize ((n + 3) `div` 2))
-        Failure unShrunkTrace reason -> do
+        Failure unShrunkTrace debugTrace reason -> do
           if testConfig.disableShrinking
-            then return (Failure unShrunkTrace reason)
+            then return (Failure unShrunkTrace debugTrace reason)
             else do
               putStrLn "Shrinking:"
               let shrinker list =
                     let
-                      -- list = Heap.toList heap
                       (initMessages, list') = splitAt deployment.numberOfNodes list
                     in
                       map (initMessages ++) (shrinkList (const []) list')
-              -- in  map Heap.fromList shrunkLists
 
               initialMessagesAndTrace <-
                 shrink
@@ -346,7 +387,12 @@ runTests testConfig deployment workload initialPrng =
                     <> show (NonEmpty.length initialMessagesAndTrace)
                     <> " times"
                 )
-              return (Failure shrunkTrace reason)
+              -- XXX: We need the shrunkDebugTrace here...
+              return (Failure shrunkTrace debugTrace reason)
+
+    testResultToMaybe :: TestResult i o -> Maybe (Trace i o)
+    testResultToMaybe Success = Nothing
+    testResultToMaybe (Failure trace _debugTrace _reason) = Just trace
 
     generate :: Int -> Prng -> (Prng, [(Time, Incoming i o)])
     generate size prng =
@@ -399,7 +445,7 @@ blackboxTestWith testConfig binaryFilePath args workload = do
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests testConfig deployment workload prng'
-  handleResult {-workload.prettyFailure -} result seed
+  handleResult result seed
 
 blackboxTest ::
   ( Show i
@@ -433,7 +479,7 @@ simulationTestWith testConfig node initialState workload = do
           , spawn = simulationNodeHandle node initialState
           }
   result <- runTests testConfig deployment workload prng
-  handleResult {- workload.prettyFailure -} result seed
+  handleResult result seed
 
 simulationTest ::
   (Show state, Show input, Show output) =>

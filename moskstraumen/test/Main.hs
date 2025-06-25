@@ -3,6 +3,7 @@ module Main (main) where
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Moskstraumen.Example.Broadcast
 import Moskstraumen.Example.Echo
 import Moskstraumen.Message
 import Moskstraumen.Prelude
@@ -20,8 +21,17 @@ tests = testGroup "Tests" [unitTests]
 unitTests :: TestTree
 unitTests =
   testGroup
-    "Unit tests"
-    [messageCodecTests]
+    "Tests"
+    [ testGroup
+        "UnitTests"
+        [messageCodecTests]
+    , testGroup
+        "ExampleTests"
+        [ testCase
+            "Broadcast"
+            (assertBool "" =<< unit_simTestBroadcastReplay (-320952954625588303))
+        ]
+    ]
 
 --     [ failingTestCase "blackboxTestEcho" unit_blackboxTestEcho
 --     , failingTestCase "simulationTestEcho" unit_simulationTestEcho

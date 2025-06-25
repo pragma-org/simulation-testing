@@ -2,28 +2,27 @@ module Moskstraumen.Debugger.State (module Moskstraumen.Debugger.State) where
 
 import Data.Aeson
 import Data.Int
-import Data.Time.Clock (UTCTime, secondsToNominalDiffTime)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 
 import Moskstraumen.Debugger.SequenceDiagram (Arrow (..), generate)
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
-data InstanceStateRepr = InstanceStateRepr
+data DebugEvent = DebugEvent
   { state :: Text
-  , currentEvent :: DebEvent
+  , currentEvent :: SendEvent
   , -- , runningVersion :: Int64
     receivedTime :: Int64 -- nanoseconds since posix-epoch
   , logs :: [Text]
-  , sent :: [DebEvent]
+  , sent :: [SendEvent]
   }
-  deriving stock (Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
-data DebEvent = DebEvent
+data SendEvent = SendEvent
   { from :: Text
   , to :: Text
   , event :: Text
@@ -31,20 +30,20 @@ data DebEvent = DebEvent
   , -- , receivedSimulated :: Time
     message :: Text
   }
-  deriving stock (Generic, Show)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
 data InstanceState = InstanceState
   { isState :: Text -- Should probably be per reactor
-  , isCurrentEvent :: DebEvent
+  , isCurrentEvent :: SendEvent
   , -- , isRunningVersion :: Int64
-    isReceivedTime :: UTCTime
+    isReceivedTime :: Time
   , isSeqDia :: Int -> Text -- the current height
   , isLogs :: [Text]
-  , isSent :: [DebEvent]
+  , isSent :: [SendEvent]
   }
 
-toArrowDE :: DebEvent -> Arrow Text
+toArrowDE :: SendEvent -> Arrow Text
 toArrowDE de =
   Arrow
     { aFrom = from de
@@ -53,27 +52,23 @@ toArrowDE de =
     , aMessage = event de
     }
 
-toArrowIS :: InstanceStateRepr -> [Arrow Text]
+toArrowIS :: DebugEvent -> [Arrow Text]
 toArrowIS is = toArrowDE (currentEvent is) : map toArrowDE' (sent is)
   where
     -- we don't want to select the sent messages
     toArrowDE' d = toArrowDE d {receivedLogical = -1}
 
-fromRepr :: Vector InstanceStateRepr -> Vector InstanceState
+fromRepr :: Vector DebugEvent -> Vector InstanceState
 fromRepr xs = Vector.imap repr xs
   where
     arrows = concatMap toArrowIS $ Vector.toList xs
-    repr :: Int -> InstanceStateRepr -> InstanceState
+    repr :: Int -> DebugEvent -> InstanceState
     repr currentIx i =
       InstanceState
         { isState = state i
         , isCurrentEvent = currentEvent i
         , -- , isRunningVersion = runningVersion i
-          isReceivedTime =
-            posixSecondsToUTCTime
-              $ (/ (1_000_000_000))
-              $ secondsToNominalDiffTime
-              $ fromInteger (fromIntegral (receivedTime i))
+          isReceivedTime = fromNanosSinceEpoch i.receivedTime
         , isSeqDia = generate arrows currentIx
         , isLogs = logs i
         , isSent = sent i

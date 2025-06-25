@@ -14,7 +14,6 @@ import Data.Tree
 
 import Moskstraumen.Generate
 import Moskstraumen.Message
-import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
 import Moskstraumen.Simulate
@@ -302,31 +301,31 @@ amaruWorkload = do
           { name = "Amaru workload"
           , generate = fmap inputsToMessages (generateInputs (recreateTree blocks))
           , property = TracePredicate (tracePredicate (last blocks))
-          , prettyFailure =
-              Just
-                $ ( chainTree
-                  , \message ->
-                      unNodeId message.src
-                        <> " -- "
-                        <> unMessageKind message.body.kind
-                        <> " --> "
-                        <> unNodeId message.dest
-                        <> if message.body.kind == "fwd" || message.body.kind == "bck"
-                          then
-                            " { hash: "
-                              <> prettyHash (message.body.fields Map.! "hash")
-                              <> ", slot: "
-                              <> prettySlot (message.body.fields Map.! "slot")
-                              <> "}"
-                          else ""
-                  )
+          -- , prettyFailure =
+          --     Just
+          --       $ ( chainTree
+          --         , \message ->
+          --             unNodeId message.src
+          --               <> " -- "
+          --               <> unMessageKind message.body.kind
+          --               <> " --> "
+          --               <> unNodeId message.dest
+          --               <> if message.body.kind == "fwd" || message.body.kind == "bck"
+          --                 then
+          --                   " { hash: "
+          --                     <> prettyHash (message.body.fields Map.! "hash")
+          --                     <> ", slot: "
+          --                     <> prettySlot (message.body.fields Map.! "slot")
+          --                     <> "}"
+          --                 else ""
+          --         )
           }
   where
-    prettyHash (String hash) = Text.take 8 hash <> "..."
-    prettyHash _ = error "prettyHash"
+    -- prettyHash (String hash) = Text.take 8 hash <> "..."
+    -- prettyHash _ = error "prettyHash"
 
-    prettySlot (Int slot) = textShow slot
-    prettySlot _ = error "prettySlot"
+    -- prettySlot (Int slot) = textShow slot
+    -- prettySlot _ = error "prettySlot"
 
     tracePredicate :: Block -> [Message] -> PropertyResult
     tracePredicate lastBlock messages =

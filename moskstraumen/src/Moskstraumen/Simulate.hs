@@ -173,18 +173,15 @@ testResultToMaybe :: TestResult -> Maybe Trace
 testResultToMaybe Success = Nothing
 testResultToMaybe (Failure trace _reason) = Just trace
 
-handleResult ::
-  Maybe (IO Text, Message -> Text) -> TestResult -> Seed -> IO Bool
-handleResult mPrettyMessage (Failure trace reason) seed = do
-  preamble <- maybe (return "") fst mPrettyMessage
-  Text.putStrLn preamble
+handleResult :: TestResult -> Seed -> IO Bool
+handleResult (Failure trace reason) seed = do
   putStrLn "Trace: "
   mapM_
     ( Text.putStrLn
         . ( \(index, (_time, message)) ->
               Text.pack (printf "%3d" index)
                 <> ". "
-                <> maybe textShow (\f m -> f m) (fmap snd mPrettyMessage) message
+                <> textShow message
           )
     )
     (zip [1 :: Int ..] trace)
@@ -193,7 +190,7 @@ handleResult mPrettyMessage (Failure trace reason) seed = do
   putStrLn ""
   putStrLn ("Failure: " <> reason)
   return False
-handleResult _mPrettyMessage Success _seed = do
+handleResult Success _seed = do
   putStrLn "Success!"
   return True
 
@@ -298,7 +295,7 @@ blackboxTestWith testConfig binaryFilePath args workload = do
           }
   let (prng', _prng'') = splitPrng prng
   result <- runTests testConfig deployment workload prng'
-  handleResult workload.prettyFailure result seed
+  handleResult result seed
 
 blackboxTest :: FilePath -> Workload -> IO Bool
 blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
@@ -321,7 +318,7 @@ simulationTestWith testConfig node initialState validateMarshal workload = do
           , spawn = simulationSpawn node initialState prng' validateMarshal
           }
   result <- runTests testConfig deployment workload prng''
-  handleResult workload.prettyFailure result seed
+  handleResult result seed
 
 simulationTest ::
   (input -> Node state input output)

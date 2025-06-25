@@ -28,7 +28,7 @@ mkBoxLines isTop dotted allBoxes =
         mygo ((pre, name) : xs) =
           Text.replicate (pre + 2 + Text.length name `div` 2) " "
             <> if dotted
-              then "╎"
+              then "⋮"
               else
                 vLine
                   <> Text.replicate (Text.length name `div` 2 + 2) " "

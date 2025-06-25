@@ -24,7 +24,6 @@ data Workload = Workload
   { name :: Text
   , generate :: Gen [Message]
   , property :: Property
-  , prettyFailure :: Maybe (IO Text, Message -> Text)
   }
 
 -- end snippet

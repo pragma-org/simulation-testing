@@ -11,7 +11,7 @@ import Brick.Widgets.Center (center, vCenter)
 import qualified Brick.Widgets.List as L
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
-import Data.Time.LocalTime (LocalTime, TimeZone, utcToLocalTime)
+import Data.Time.LocalTime (LocalTime, TimeZone)
 import qualified Data.Vector as Vector
 import qualified Graphics.Vty as V
 import qualified Graphics.Vty.Platform.Unix as V
@@ -27,6 +27,7 @@ import Moskstraumen.Debugger.State hiding (
   to,
  )
 import Moskstraumen.Prelude
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -78,8 +79,8 @@ drawUI as = [ui]
           , vLimit 7 $ borderWithLabel (str "Logs") $ renderLogs as
           ]
 
-renderEvent :: LocalTime -> DebEvent -> Text
-renderEvent localTime (DebEvent from to event receivedLogical _msg) =
+renderEvent :: LocalTime -> SendEvent -> Text
+renderEvent localTime (SendEvent from to event receivedLogical _msg) =
   Text.pack
     $ printf
       "%-25.25s: %-8.8s: %7.7s -> %-7.7s @ %d"
@@ -89,8 +90,8 @@ renderEvent localTime (DebEvent from to event receivedLogical _msg) =
       to
       receivedLogical
 
-renderOutputEvent :: DebEvent -> Text
-renderOutputEvent (DebEvent _ to _ _ msg) =
+renderOutputEvent :: SendEvent -> Text
+renderOutputEvent (SendEvent _ to _ _ msg) =
   to <> ": " <> msg
 
 renderToText :: AppState -> (InstanceState -> Text) -> Widget ()

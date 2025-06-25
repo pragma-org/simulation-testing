@@ -353,7 +353,7 @@ initialEventLoopState =
 
 stepEventLoop ::
   forall s i_ i o_ o.
-  (Show s, Show i_, Show i, Show o) =>
+  (Show s, Show i_, Show i, Show o, Show o_) =>
   Node s i o
   -> Codec i_ i o_ o
   -> Runtime i_ o_
@@ -371,7 +371,13 @@ stepEventLoop node codec runtime ns es = do
           runtime.send []
           return (ns, es)
         Just incoming -> do
-          putStrLn $ "eventLoop, incoming: " <> show incoming
+          _now <- runtime.getTime
+          runtime.log
+            $ "[debug] "
+            <> textShow _now
+            <> " "
+            <> "eventLoop, incoming: "
+            <> textShow incoming
           (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
           runtime.send outgoing
           return (ns', es')
@@ -386,11 +392,29 @@ stepEventLoop node codec runtime ns es = do
           -- XXX: Which node state should we resume with? The current one,
           -- probably? Remove saving the old one in the timer wheel (`ns'`)?
           let (ns'', effects) = k (ns {theTime = now}, [])
-          -- traceM $ "timeout triggered, effects: " <> show effects
+          runtime.log
+            $ "[debug] "
+            <> textShow now
+            <> " "
+            <> "eventLoop, timeout triggered, effects: "
+            <> textShow effects
           (es', outgoing) <- handleEffects runtime codec ns'' es effects
           runtime.send outgoing
+          runtime.log
+            $ "[debug] "
+            <> textShow now
+            <> " "
+            <> "eventLoop, resuming from sleep, outgoing: "
+            <> textShow outgoing
           return (ns'', es' {pendingTimers = pendingTimers'})
         Just incoming -> do
+          _now <- runtime.getTime
+          runtime.log
+            $ "[debug] "
+            <> textShow _now
+            <> " "
+            <> "eventLoop, incoming before timer, incoming: "
+            <> textShow incoming
           (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
           runtime.send outgoing
           return (ns', es')
@@ -398,7 +422,7 @@ stepEventLoop node codec runtime ns es = do
 -- XXX: remove Show and debugging code
 eventLoop ::
   forall s i_ i o_ o.
-  (Show s, Show i_, Show i, Show o) =>
+  (Show s, Show i_, Show i, Show o, Show o_) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
@@ -742,8 +766,15 @@ prodMain port peers = undefined -- eventLoop echoNode () echoCodec =<< tcpRuntim
 
 -- start snippet pipeNodeHandle
 
+data HandleOutput i o = HandleOutput
+  { beforeState :: Text
+  , outgoing :: [Outgoing i o]
+  , afterState :: Text
+  , logs :: [Text]
+  }
+
 data NodeHandle i o = NodeHandle
-  { handle :: Time -> Incoming i o -> IO [Outgoing i o]
+  { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
   , close :: IO ()
   }
 
@@ -757,6 +788,7 @@ simulationNodeHandle node initialState = do
   ref <- newIORef (initialNodeState initialState, initialEventLoopState)
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
+  logsMVar <- newMVar []
   fakeTime <- newFakeTime epoch
   let
     recieve_ :: Timeout -> IO (Maybe [Incoming i o])
@@ -764,7 +796,10 @@ simulationNodeHandle node initialState = do
       (before, input) <- takeMVar inputMVar
       now <- readFakeTimeIO fakeTime
       if addTimeMicros micros before <= now
-        then return Nothing
+        then do
+          -- NOTE: If we get a timeout, we shouldn't consume the input.
+          putMVar inputMVar (before, input)
+          return Nothing
         else return (Just [input])
 
     send_ :: [Outgoing i o] -> IO ()
@@ -774,19 +809,30 @@ simulationNodeHandle node initialState = do
       Runtime
         { receive = recieve_
         , send = send_
-        , log = Text.hPutStrLn stderr
+        , log = \text -> modifyMVar_ logsMVar (\texts -> return (texts <> [text]))
         , getTime = readFakeTimeIO fakeTime
         }
 
-    handle_ :: Time -> Incoming i o -> IO [Outgoing i o]
+    handle_ :: Time -> Incoming i o -> IO (HandleOutput i o)
     handle_ arrivalTime incoming = do
       before <- readFakeTimeIO fakeTime
       writeFakeTimeIO fakeTime arrivalTime
       putMVar inputMVar (before, incoming)
       (ns, es) <- readIORef ref
+      let stateBefore = ns.localState
       (ns', es') <- stepEventLoop node testCodec runtime ns es
       writeIORef ref (ns', es')
-      takeMVar outputMVar
+      let stateAfter = ns'.localState
+      outgoing <- takeMVar outputMVar
+      logs <- modifyMVar logsMVar (\logs -> return ([], logs))
+      return
+        ( HandleOutput
+            { beforeState = textShow stateBefore
+            , outgoing
+            , afterState = textShow stateAfter
+            , logs
+            }
+        )
 
   return
     ( NodeHandle
