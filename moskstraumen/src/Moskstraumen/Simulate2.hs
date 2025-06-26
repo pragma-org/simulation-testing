@@ -44,14 +44,16 @@ data World i o = World
   { nodes :: Map NodeId (NodeHandle i o)
   , messages :: Heap Time (Incoming i o)
   , prng :: Prng
-  , trace :: Trace i o
-  , debugTrace :: Vector DebugEvent
+  , history :: History i o
+  , journal :: Journal
   }
+
+type Journal = Vector DebugEvent
 
 -- end snippet
 
--- start snippet Trace
-type Trace i o = [(Time, Outgoing i o)]
+-- start snippet History
+type History i o = [(Time, Outgoing i o)]
 
 -- end snippet
 
@@ -145,14 +147,14 @@ stepWorld world = case Heap.pop world.messages of
                       messages' <> Heap.fromList nodeMessages'
                   , prng = prng'
                   , -- XXX: the arrival time for client responses is arbitrary
-                    trace =
-                      world.trace ++ (arrivalTime, incomingToOutgoing message)
+                    history =
+                      world.history ++ (arrivalTime, incomingToOutgoing message)
                         : map
                           ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                           )
                           clientResponses
-                  , debugTrace =
-                      world.debugTrace
+                  , journal =
+                      world.journal
                         <> Vector.singleton
                           ( DebugEvent
                               { state =
@@ -168,7 +170,7 @@ stepWorld world = case Heap.pop world.messages of
                                     , to = unNodeId message.dest
                                     , event =
                                         Text.takeWhile (/= ' ') (either textShow textShow message.body)
-                                    , receivedLogical = Vector.length world.debugTrace
+                                    , receivedLogical = Vector.length world.journal
                                     , message =
                                         either textShow textShow message.body
                                     }
@@ -181,7 +183,7 @@ stepWorld world = case Heap.pop world.messages of
                                           , to = unNodeId outgoing.dest
                                           , event = Text.takeWhile (/= ' ') (either textShow textShow outgoing.body)
                                           , receivedLogical =
-                                              length handleOutput.outgoing + Vector.length world.debugTrace + ix -- XXX: doesn't account for other sent...
+                                              length handleOutput.outgoing + Vector.length world.journal + ix -- XXX: doesn't account for other sent...
                                           , message = either textShow textShow outgoing.body
                                           }
                                     )
@@ -196,10 +198,10 @@ stepWorld world = case Heap.pop world.messages of
 
 -- start snippet runWorld
 runWorld ::
-  (Show i, Show o) => World i o -> IO (Trace i o, Vector DebugEvent)
+  (Show i, Show o) => World i o -> IO (History i o, Journal)
 runWorld world =
   stepWorld world >>= \case
-    Right () -> return (world.trace, world.debugTrace)
+    Right () -> return (world.history, world.journal)
     Left world' -> runWorld world'
 
 -- end snippet
@@ -215,8 +217,8 @@ newWorld deployment initialMessages prng = do
       { nodes = Map.fromList (zip nodeIds nodeHandles)
       , messages = initialMessages
       , prng = prng
-      , trace = []
-      , debugTrace = Vector.empty
+      , history = []
+      , journal = Vector.empty
       }
 
 -- end snippet
@@ -226,7 +228,7 @@ newWorld deployment initialMessages prng = do
 -- start snippet TestResult
 data TestResult i o
   = Success
-  | Failure (Trace i o) (Vector DebugEvent) Reason
+  | Failure (History i o) (Vector DebugEvent) Reason
   -- end snippet
   deriving stock (Eq, Show)
 
@@ -237,8 +239,8 @@ handleResult ::
   TestResult i o
   -> Seed
   -> IO Bool
-handleResult (Failure trace debugTrace reason) seed = do
-  putStrLn "Trace: "
+handleResult (Failure history journal reason) seed = do
+  putStrLn "History: "
   mapM_
     ( Text.putStrLn
         . ( \(index, (time, message)) ->
@@ -247,13 +249,13 @@ handleResult (Failure trace debugTrace reason) seed = do
                 <> displayOutgoing time message
           )
     )
-    (zip [1 :: Int ..] trace)
+    (zip [1 :: Int ..] history)
   putStrLn ""
   putStrLn ("Seed: " <> show seed)
   putStrLn ""
   putStrLn ("Failure: " <> reason)
-  putStrLn "Debug trace: /tmp/moskstraumen.trace"
-  LBS8.writeFile "/tmp/moskstraumen.trace" (encode debugTrace)
+  putStrLn "Debug journal: /tmp/moskstraumen.journal"
+  LBS8.writeFile "/tmp/moskstraumen.journal" (encode journal)
   return False
 handleResult Success _seed = do
   putStrLn "Success!"
@@ -283,7 +285,7 @@ displayOutgoing time (OutResponse (Response {src, dest, body})) =
 
 data Property i o
   = -- LTL (Form Message)
-    TracePredicate ([Outgoing i o] -> PropertyResult)
+    HistoryPredicate ([Outgoing i o] -> PropertyResult)
 
 data PropertyResult = Pass | Fail String
 
@@ -320,15 +322,15 @@ runTest deployment workload prng runMode initialMessages = do
       deployment
       (Heap.fromList initialMessages)
       prng
-  (resultingTrace, debugTrace) <-
+  (resultingHistory, debugTrace) <-
     runWorld world `finally` traverse_ (.close) world.nodes
   let propertyResult = case workload.property of
         -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
         -- LTL formula ->
-        --   if sat formula (map snd resultingTrace) emptyEnv
+        --   if sat formula (map snd resultingHistory) emptyEnv
         --     then Pass
         --     else Fail "LTL formula failed"
-        TracePredicate predicate -> predicate (map snd resultingTrace)
+        HistoryPredicate predicate -> predicate (map snd resultingHistory)
   case propertyResult of
     Pass -> do
       when (runMode == ShrinkMode)
@@ -337,7 +339,7 @@ runTest deployment workload prng runMode initialMessages = do
     Fail reason -> do
       when (runMode == ShrinkMode)
         $ putStr "x"
-      return (Failure resultingTrace debugTrace reason)
+      return (Failure resultingHistory debugTrace reason)
 
 -- end snippet
 
@@ -390,7 +392,7 @@ runTests testConfig deployment workload initialPrng =
               -- XXX: We need the shrunkDebugTrace here...
               return (Failure shrunkTrace debugTrace reason)
 
-    testResultToMaybe :: TestResult i o -> Maybe (Trace i o)
+    testResultToMaybe :: TestResult i o -> Maybe (History i o)
     testResultToMaybe Success = Nothing
     testResultToMaybe (Failure trace _debugTrace _reason) = Just trace
 

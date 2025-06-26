@@ -270,13 +270,13 @@ broadcastWorkload testConfig =
     { name = "broadcast"
     , generate = generate (-1)
     , finallyGenerate = Just (10_000_000, generateFinalReads)
-    , property = TracePredicate tracePredicate
+    , property = HistoryPredicate historyPredicate
     , baseLatency = 200_000 -- 200 ms
     }
   where
-    tracePredicate ::
+    historyPredicate ::
       [Outgoing BroadcastInput BroadcastOutput] -> PropertyResult
-    tracePredicate outgoing =
+    historyPredicate outgoing =
       case find (\finalRead -> Set.toList broadcasted /= finalRead) finalReads of
         Nothing -> Pass
         Just finalRead ->
