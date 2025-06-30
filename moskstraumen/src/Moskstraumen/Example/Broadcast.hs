@@ -114,7 +114,7 @@ broadcast (Broadcast msg) = do
                   msg -> error ("broadcast: unexpected response: " <> show msg)
               s <- getState
               info ("About to sleep, state " <> textShow s)
-              sleep 100_000
+              sleep 10_000
               s <- getState
               info ("Awake again, state: " <> textShow s)
               go

@@ -388,6 +388,8 @@ stepEventLoop node codec runtime ns es = do
       let micros = max 0 (diffTimeMicros later now)
       runtime.receive micros >>= \case
         Nothing -> do
+          -- We didn't receive a message within `micros`, and therefor need to
+          -- handle the timer.
           now <- runtime.getTime
           -- XXX: Which node state should we resume with? The current one,
           -- probably? Remove saving the old one in the timer wheel (`ns'`)?
@@ -398,7 +400,13 @@ stepEventLoop node codec runtime ns es = do
           --   <> " "
           --   <> "eventLoop, timeout triggered, effects: "
           --   <> textShow effects
-          (es', outgoing) <- handleEffects runtime codec ns'' es effects
+          (es', outgoing) <-
+            handleEffects
+              runtime
+              codec
+              ns''
+              es {pendingTimers = pendingTimers'}
+              effects
           runtime.send outgoing
           runtime.log
             $ "[debug] "
@@ -406,7 +414,7 @@ stepEventLoop node codec runtime ns es = do
             <> " "
             <> "eventLoop, timer, outgoing: "
             <> textShow outgoing
-          return (ns'', es' {pendingTimers = pendingTimers'})
+          return (ns'', es')
         Just incoming -> do
           _now <- runtime.getTime
           -- runtime.log
