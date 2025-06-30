@@ -118,13 +118,17 @@ stepWorld world = case Heap.pop world.messages of
       Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
       Just node -> do
         timeout 5_000_000 (try (node.handle arrivalTime message)) >>= \case
-          Nothing ->
+          Nothing -> do
+            putStrLn "Writing journal to: /tmp/moskstraumen.journal"
+            LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
             error ("stepWorld: timeout when handling: " <> show message)
           Just (Left err) -> do
             putStrLn
               ( "stepWorld, failed on the message failed: "
                   <> show (arrivalTime, message, messages')
               )
+            putStrLn "Writing journal to: /tmp/moskstraumen.journal"
+            LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
             error (displayException (err :: SomeException))
           Just (Right handleOutput) -> do
             mapM_ Text.putStrLn handleOutput.logs
@@ -189,7 +193,7 @@ stepWorld world = case Heap.pop world.messages of
                                     )
                                     [0 ..]
                                     handleOutput.outgoing
-                              , receivedTime = 0
+                              , receivedTime = fromIntegral (diffTimeMicros arrivalTime epoch * 1000)
                               }
                           )
                   }
