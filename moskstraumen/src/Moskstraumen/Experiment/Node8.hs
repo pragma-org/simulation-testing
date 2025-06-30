@@ -819,18 +819,23 @@ simulationNodeHandle node initialState = do
     handle_ arrivalTime incoming = do
       before <- readFakeTimeIO fakeTime
       ok <- tryPutMVar inputMVar (before, incoming)
+      (ns, es) <- readIORef ref
+      let stateBefore = ns.localState
+
+      let step = do
+            (ns', es') <- stepEventLoop node testCodec runtime ns es
+            writeIORef ref (ns', es')
+            let stateAfter = ns'.localState
+            outgoing <- takeMVar outputMVar
+
+            -- runtime.log ("[debug] handle, input outgoing: " <> textShow outgoing)
+            logs <- modifyMVar logsMVar (\logs -> return ([], logs))
+            return (outgoing, logs, stateAfter)
+
       if ok
         then do
           writeFakeTimeIO fakeTime arrivalTime
-          (ns, es) <- readIORef ref
-          let stateBefore = ns.localState
-          (ns', es') <- stepEventLoop node testCodec runtime ns es
-          writeIORef ref (ns', es')
-          let stateAfter = ns'.localState
-          outgoing <- takeMVar outputMVar
-
-          -- runtime.log ("[debug] handle, input outgoing: " <> textShow outgoing)
-          logs <- modifyMVar logsMVar (\logs -> return ([], logs))
+          (outgoing, logs, stateAfter) <- step
           return
             ( HandleOutput
                 { beforeState = textShow stateBefore
@@ -840,19 +845,12 @@ simulationNodeHandle node initialState = do
                 }
             )
         else do
-          -- Previous call to handle caused a timeout.
+          -- Previous call to handle caused a timer to go off.
           --
           -- NOTE: it's important NOT to advance the time here, because we
           -- haven't yet got to the point in time when the incoming message
           -- arrives.
-          (ns, es) <- readIORef ref
-          let stateBefore = ns.localState
-          (ns', es') <- stepEventLoop node testCodec runtime ns es
-          writeIORef ref (ns', es')
-          let stateAfter = ns'.localState
-          outgoing <- takeMVar outputMVar
-          -- runtime.log ("[debug] handle, timeout output: " <> textShow outgoing)
-          logs <- modifyMVar logsMVar (\logs -> return ([], logs))
+          (outgoing, logs, stateAfter) <- step
           -- Try again to handle the current input again.
           handleOutput <- handle_ arrivalTime incoming
 
