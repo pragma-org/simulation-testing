@@ -50,6 +50,8 @@ library
   import:           warnings, extensions
   exposed-modules:
     Moskstraumen.Codec
+    Moskstraumen.Debugger.SequenceDiagram
+    Moskstraumen.Debugger.State
     Moskstraumen.Effect
     Moskstraumen.Error
     Moskstraumen.EventLoop2
@@ -99,8 +101,6 @@ library
     exposed-modules:
       Moskstraumen.Debugger.AnsiEscape
       Moskstraumen.Debugger.LibMain
-      Moskstraumen.Debugger.SequenceDiagram
-      Moskstraumen.Debugger.State
       Moskstraumen.Debugger.UserInterface
 
   other-modules:    Paths_moskstraumen
