@@ -340,7 +340,7 @@ data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
   , pendingRpcs :: Map MessageId (o -> Cont s i o)
   , pendingTimers ::
-      TimerWheel Time (Maybe MessageId, (NodeState s, Cont s i o))
+      TimerWheel Time (Maybe MessageId, Cont s i o)
   }
 
 initialEventLoopState :: EventLoopState s i o
@@ -381,7 +381,7 @@ stepEventLoop node codec runtime ns es = do
           (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
           runtime.send outgoing
           return (ns', es')
-    Just ((later, (_mMessageId, (ns', k))), pendingTimers') -> do
+    Just ((later, (_mMessageId, k)), pendingTimers') -> do
       now <- runtime.getTime
       -- NOTE: The `max 0` is needed because if we pass a negative value to
       -- `timeout` it won't timeout.
@@ -391,8 +391,6 @@ stepEventLoop node codec runtime ns es = do
           -- We didn't receive a message within `micros`, and therefor need to
           -- handle the timer.
           now <- runtime.getTime
-          -- XXX: Which node state should we resume with? The current one,
-          -- probably? Remove saving the old one in the timer wheel (`ns'`)?
           let (ns'', effects) = k (ns {theTime = now}, [])
           -- runtime.log
           --   $ "[debug] "
@@ -581,7 +579,7 @@ handleEffects runtime codec ns = go []
               , pendingTimers =
                   insertTimer
                     (addTimeMicros rPC_TIMEOUT_MICROS now)
-                    (Just messageId, (ns, failure Timeout))
+                    (Just messageId, failure Timeout)
                     (pendingTimers es)
               }
       go (codec.encodeOutgoing outgoing : acc) es' effects
@@ -595,7 +593,7 @@ handleEffects runtime codec ns = go []
               { pendingTimers =
                   insertTimer
                     (addTimeMicros micros now)
-                    (Nothing, (ns, k))
+                    (Nothing, k)
                     (pendingTimers es)
               }
       go acc es' effects
