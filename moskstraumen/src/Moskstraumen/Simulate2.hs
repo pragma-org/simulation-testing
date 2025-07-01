@@ -5,7 +5,7 @@ module Moskstraumen.Simulate2 (module Moskstraumen.Simulate2) where
 import Control.Exception
 import Data.Aeson (GFromJSON, GToJSON', Value, Zero, encode)
 import qualified Data.ByteString.Lazy.Char8 as LBS8
-import Data.List (partition)
+import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -20,8 +20,7 @@ import Text.Printf
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import Moskstraumen.Experiment.Node8
-import Moskstraumen.Generate (Gen)
-import qualified Moskstraumen.Generate as Gen
+import Moskstraumen.Generate
 import Moskstraumen.Heap (Heap)
 import qualified Moskstraumen.Heap as Heap
 
@@ -31,6 +30,7 @@ import Moskstraumen.Message3
 -- import Moskstraumen.NodeHandle
 
 import Moskstraumen.Debugger.State
+import Moskstraumen.Fault
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
@@ -46,6 +46,7 @@ data World i o = World
   , prng :: Prng
   , history :: History i o
   , journal :: Journal
+  , partition :: Partition
   }
 
 type Journal = Vector DebugEvent
@@ -98,10 +99,10 @@ generateRandomArrivalTimes ::
   -> Double
   -> [Incoming i o]
   -> Prng
-  -> (Prng, [(Time, Incoming i o)], Time)
+  -> (([(Time, Incoming i o)], Time), Prng)
 generateRandomArrivalTimes time0 meanMicros = go time0 0 []
   where
-    go time _i acc [] prng = (prng, reverse acc, time)
+    go time _i acc [] prng = ((reverse acc, time), prng)
     go time i acc (message : messages) prng =
       let
         (deltaMicros, prng') = exponential meanMicros prng
@@ -113,90 +114,99 @@ generateRandomArrivalTimes time0 meanMicros = go time0 0 []
 stepWorld :: (Show i, Show o) => World i o -> IO (Either (World i o) ())
 stepWorld world = case Heap.pop world.messages of
   Nothing -> return (Right ())
-  Just ((arrivalTime, message), messages') ->
-    case Map.lookup message.dest world.nodes of
-      Nothing -> error ("stepWorld: unknown destination node: " ++ show message.dest)
-      Just node -> do
-        timeout 5_000_000 (try (node.handle arrivalTime message)) >>= \case
-          Nothing -> do
-            putStrLn "Writing journal to: /tmp/moskstraumen.journal"
-            LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
-            error ("stepWorld: timeout when handling: " <> show message)
-          Just (Left err) -> do
-            putStrLn
-              ( "stepWorld, failed on the message failed: "
-                  <> show (arrivalTime, message, messages')
-              )
-            putStrLn "Writing journal to: /tmp/moskstraumen.journal"
-            LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
-            error (displayException (err :: SomeException))
-          Just (Right handleOutput) -> do
-            mapM_ Text.putStrLn handleOutput.logs
-            let aux :: Outgoing i o -> NodeId
-                aux outgoing = outgoing.dest
-            let (clientResponses, nodeMessages) =
-                  partition (isClientNodeId . aux) handleOutput.outgoing
-                meanMicros = 20000 -- 20ms
-                (prng', nodeMessages', _time) =
-                  generateRandomArrivalTimes
-                    arrivalTime
-                    meanMicros
-                    (map outgoingToIncoming nodeMessages)
-                    world.prng
-            return
-              $ Left
-                World
-                  { nodes = world.nodes
-                  , messages =
-                      messages' <> Heap.fromList nodeMessages'
-                  , prng = prng'
-                  , -- XXX: the arrival time for client responses is arbitrary
-                    history =
-                      world.history ++ (arrivalTime, incomingToOutgoing message)
-                        : map
-                          ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
-                          )
-                          clientResponses
-                  , journal =
-                      world.journal
-                        <> Vector.singleton
-                          ( DebugEvent
-                              { state =
-                                  "Node: "
-                                    <> unNodeId message.dest
-                                    <> "\nBefore: "
-                                    <> handleOutput.beforeState
-                                    <> "\nAfter:  "
-                                    <> handleOutput.afterState
-                              , currentEvent =
-                                  SendEvent
-                                    { from = unNodeId message.src
-                                    , to = unNodeId message.dest
-                                    , event =
-                                        Text.takeWhile (/= ' ') (either textShow textShow message.body)
-                                    , receivedLogical = Vector.length world.journal
-                                    , message =
-                                        either textShow textShow message.body
-                                    }
-                              , logs = handleOutput.logs
-                              , sent =
-                                  zipWith
-                                    ( \ix outgoing ->
-                                        SendEvent
-                                          { from = unNodeId outgoing.src
-                                          , to = unNodeId outgoing.dest
-                                          , event = Text.takeWhile (/= ' ') (either textShow textShow outgoing.body)
-                                          , receivedLogical =
-                                              length handleOutput.outgoing + Vector.length world.journal + ix -- XXX: doesn't account for other sent...
-                                          , message = either textShow textShow outgoing.body
-                                          }
-                                    )
-                                    [0 ..]
-                                    handleOutput.outgoing
-                              , receivedTime = fromIntegral (diffTimeMicros arrivalTime epoch * 1000)
-                              }
-                          )
-                  }
+  Just ((arrivalTime, incoming), messages') ->
+    case incoming of
+      Fault (PartitionFault partition) -> return (Left world {partition, messages = messages'})
+      -- XXX: enable faults:
+      -- _otherwise
+      --   | affected incoming.src incoming.dest world.partition ->
+      --       return (Left world {messages = messages'})
+      _otherwise ->
+        case Map.lookup incoming.dest world.nodes of
+          Nothing ->
+            error ("stepWorld: unknown destination node: " ++ show incoming.dest)
+          Just node -> do
+            timeout 5_000_000 (try (node.handle arrivalTime incoming)) >>= \case
+              Nothing -> do
+                putStrLn "Writing journal to: /tmp/moskstraumen.journal"
+                LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
+                error ("stepWorld: timeout when handling: " <> show incoming)
+              Just (Left err) -> do
+                putStrLn
+                  ( "stepWorld, failed on: "
+                      <> show (arrivalTime, incoming, messages')
+                  )
+                putStrLn "Writing journal to: /tmp/moskstraumen.journal"
+                LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
+                error (displayException (err :: SomeException))
+              Just (Right handleOutput) -> do
+                mapM_ Text.putStrLn handleOutput.logs
+                let aux :: Outgoing i o -> NodeId
+                    aux outgoing = outgoing.dest
+                let (clientResponses, nodeMessages) =
+                      List.partition (isClientNodeId . aux) handleOutput.outgoing
+                    meanMicros = 20000 -- 20ms
+                    ((nodeMessages', _time), prng') =
+                      generateRandomArrivalTimes
+                        arrivalTime
+                        meanMicros
+                        (map outgoingToIncoming nodeMessages)
+                        world.prng
+                return
+                  $ Left
+                    World
+                      { nodes = world.nodes
+                      , messages =
+                          messages' <> Heap.fromList nodeMessages'
+                      , prng = prng'
+                      , -- XXX: the arrival time for client responses is arbitrary
+                        history =
+                          world.history ++ (arrivalTime, incomingToOutgoing incoming)
+                            : map
+                              ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                              )
+                              clientResponses
+                      , journal =
+                          world.journal
+                            <> Vector.singleton
+                              ( DebugEvent
+                                  { state =
+                                      "Node: "
+                                        <> unNodeId incoming.dest
+                                        <> "\nBefore: "
+                                        <> handleOutput.beforeState
+                                        <> "\nAfter:  "
+                                        <> handleOutput.afterState
+                                  , currentEvent =
+                                      SendEvent
+                                        { from = unNodeId incoming.src
+                                        , to = unNodeId incoming.dest
+                                        , event =
+                                            Text.takeWhile (/= ' ') (either textShow textShow incoming.body)
+                                        , receivedLogical = Vector.length world.journal
+                                        , message =
+                                            either textShow textShow incoming.body
+                                        }
+                                  , logs = handleOutput.logs
+                                  , sent =
+                                      zipWith
+                                        ( \ix outgoing ->
+                                            SendEvent
+                                              { from = unNodeId outgoing.src
+                                              , to = unNodeId outgoing.dest
+                                              , event = Text.takeWhile (/= ' ') (either textShow textShow outgoing.body)
+                                              , receivedLogical =
+                                                  length handleOutput.outgoing + Vector.length world.journal + ix -- XXX: doesn't account for other sent...
+                                              , message = either textShow textShow outgoing.body
+                                              }
+                                        )
+                                        [0 ..]
+                                        handleOutput.outgoing
+                                  , receivedTime = fromIntegral (diffTimeMicros arrivalTime epoch * 1000)
+                                  }
+                              )
+                      , partition = world.partition
+                      }
 
 -- end snippet
 
@@ -223,6 +233,7 @@ newWorld deployment initialMessages prng = do
       , prng = prng
       , history = []
       , journal = Vector.empty
+      , partition = None
       }
 
 -- end snippet
@@ -365,10 +376,10 @@ runTests testConfig deployment workload initialPrng =
     loop :: NumberOfTests -> Prng -> Int -> IO (TestResult i o)
     loop 0 _prng _size = return Success
     loop n prng size = do
-      let (prng', messages) = generate size prng
+      let (prng', incoming) = generateIncoming prng size
       let (prng'', prng''') = splitPrng prng'
       result <-
-        runTest deployment workload prng'' TestMode messages
+        runTest deployment workload prng'' TestMode incoming
       case result of
         Success -> loop (n - 1) prng''' (min testConfig.maxSize ((n + 3) `div` 2))
         Failure unShrunkTrace debugTrace reason -> do
@@ -378,6 +389,8 @@ runTests testConfig deployment workload initialPrng =
               putStrLn "Shrinking:"
               let shrinker list =
                     let
+                      -- NOTE: The first `numberOfNodes` messages are always
+                      -- `Init` messages, and these should not be shrunk.
                       (initMessages, list') = splitAt deployment.numberOfNodes list
                     in
                       map (initMessages ++) (shrinkList (const []) list')
@@ -386,7 +399,7 @@ runTests testConfig deployment workload initialPrng =
                 shrink
                   (fmap testResultToMaybe . runTest deployment workload prng ShrinkMode)
                   shrinker
-                  messages
+                  incoming
               let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
               putStrLn
                 ( "\nShrunk: "
@@ -400,27 +413,34 @@ runTests testConfig deployment workload initialPrng =
     testResultToMaybe Success = Nothing
     testResultToMaybe (Failure trace _debugTrace _reason) = Just trace
 
-    generate :: Int -> Prng -> (Prng, [(Time, Incoming i o)])
-    generate size prng =
-      let (prng', initialMessages) =
-            Gen.runGen workload.generate prng size
-          (prng'', initialMessages', time) =
-            generateRandomArrivalTimes
+    generateIncoming :: Prng -> Int -> (Prng, [(Time, Incoming i o)])
+    generateIncoming prng size = runGen prng size $ do
+      initialMessages <- workload.generate
+      (initialMessages', time) <-
+        liftGen
+          ( generateRandomArrivalTimes
               epoch
               workload.baseLatency
               (map InMessage initialMessages)
-              prng'
-      in  case workload.finallyGenerate of
-            Nothing -> (prng'', addMessageIds initialMessages')
-            Just (delay, finallyGen) ->
-              let (prng''', finalMessages) = Gen.runGen finallyGen prng'' size
-                  (prng'''', finalMessages', _time) =
-                    generateRandomArrivalTimes
-                      (addTimeMicros delay time)
-                      workload.baseLatency
-                      (map InMessage finalMessages)
-                      prng'''
-              in  (prng'''', addMessageIds (initialMessages' <> finalMessages'))
+          )
+      faults <-
+        map (fmap (Fault . PartitionFault))
+          <$> generatePartitions
+            (map makeNodeId [1 .. testConfig.numberOfNodes])
+            (epoch, time)
+            (floor workload.baseLatency * 3)
+      case workload.finallyGenerate of
+        Nothing -> return (addMessageIds initialMessages')
+        Just (delay, finallyGen) -> do
+          finalMessages <- finallyGen
+          (finalMessages', _time) <-
+            liftGen
+              ( generateRandomArrivalTimes
+                  (addTimeMicros delay time)
+                  workload.baseLatency
+                  (map InMessage finalMessages)
+              )
+          return (addMessageIds (initialMessages' <> finalMessages') <> faults)
 
 -- end snippet
 

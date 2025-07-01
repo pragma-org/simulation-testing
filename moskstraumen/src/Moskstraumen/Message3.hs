@@ -18,6 +18,7 @@ import Debug.Trace
 import GHC.Generics (Rep)
 import GHC.Records
 
+import Moskstraumen.Fault
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 
@@ -53,6 +54,7 @@ data Incoming i o
   = InMessage (Message i)
   | InResponse (Response o)
   | InRpcError RpcError
+  | Fault Fault
   deriving stock (Show, Eq)
 
 instance HasField "src" (Incoming i o) NodeId where

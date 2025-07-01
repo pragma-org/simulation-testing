@@ -72,6 +72,7 @@ library
     Moskstraumen.Experiment.SourceSinkNode2
     Moskstraumen.Experiment.SourceSinkNode3
     Moskstraumen.FakeTime
+    Moskstraumen.Fault
     Moskstraumen.FreeMonad
     Moskstraumen.Generate
     Moskstraumen.Heap

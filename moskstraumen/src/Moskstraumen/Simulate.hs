@@ -268,7 +268,7 @@ runTests testConfig deployment workload initialPrng =
     generate :: Int -> Prng -> (Prng, [Message])
     generate size prng =
       let (prng', initialMessages) =
-            Gen.runGen workload.generate prng size
+            Gen.runGen prng size workload.generate
 
           messages :: [Message]
           messages =

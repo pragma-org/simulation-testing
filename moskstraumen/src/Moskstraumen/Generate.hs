@@ -25,10 +25,13 @@ instance Applicative Gen where
 instance Functor Gen where
   fmap = liftM
 
-runGen :: Gen a -> Prng -> Size -> (Prng, a)
-runGen (Gen k) prng size = (prng', x)
+runGen :: Prng -> Size -> Gen a -> (Prng, a)
+runGen prng size (Gen k) = (prng', x)
   where
     (x, prng') = k prng size
+
+liftGen :: (Prng -> (a, Prng)) -> Gen a
+liftGen g = Gen (\prng _size -> g prng)
 
 ------------------------------------------------------------------------
 
@@ -52,7 +55,7 @@ resize size (Gen f) = Gen (\prng _size -> f prng size)
 
 -- NOTE: This can be optimised later (if needed), see QuickCheck.
 chooseInt :: (Int, Int) -> Gen Int
-chooseInt (lo, hi) = Gen (\prng _size -> randomR (lo, hi) prng)
+chooseInt (lo, hi) = liftGen (randomR (lo, hi))
 
 elements :: [a] -> Gen a
 elements [] = error "elements used with empty list"

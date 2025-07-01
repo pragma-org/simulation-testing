@@ -174,7 +174,7 @@ t = do
           size = 30
       mapM_ print
         $ snd
-        $ runGen (generateInputs (recreateTree blocks)) prng size
+        $ runGen prng size (generateInputs (recreateTree blocks))
 
 chainTree :: IO Text
 chainTree = do
@@ -219,9 +219,9 @@ ss = do
       let messages =
             snd
               $ runGen
-                (fmap inputsToMessages (generateInputs (recreateTree blocks)))
                 prng
                 size
+                (fmap inputsToMessages (generateInputs (recreateTree blocks)))
       putStrLn "messages: "
       mapM_
         ( \message ->
