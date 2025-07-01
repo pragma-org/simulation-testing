@@ -403,7 +403,7 @@ stepEventLoop node codec runtime ns es = do
               runtime
               codec
               ns''
-              es {pendingTimers = pendingTimers'}
+              es
               effects
           runtime.send outgoing
           runtime.log
@@ -412,7 +412,7 @@ stepEventLoop node codec runtime ns es = do
             <> " "
             <> "eventLoop, timer, outgoing: "
             <> textShow outgoing
-          return (ns'', es')
+          return (ns'', es' {pendingTimers = pendingTimers'})
         Just incoming -> do
           _now <- runtime.getTime
           -- runtime.log
@@ -504,7 +504,7 @@ handleIncoming node codec runtime = go []
                     es
                       { pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)
                       , pendingTimers =
-                          filterTimer ((== Just response.inReplyTo) . fst) (pendingTimers es)
+                          filterTimer ((/= Just response.inReplyTo) . fst) (pendingTimers es)
                       }
               (es'', outgoing) <-
                 handleEffects
