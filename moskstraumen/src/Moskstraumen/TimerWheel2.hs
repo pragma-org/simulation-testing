@@ -9,7 +9,8 @@ import Moskstraumen.Prelude
 
 -- XXX: Use a heap instead.
 newtype TimerWheel time a = TimerWheel [(time, a)]
-  deriving (Show)
+  deriving stock (Show, Functor)
+  deriving newtype (Semigroup, Monoid)
 
 emptyTimerWheel :: TimerWheel time a
 emptyTimerWheel = TimerWheel []
@@ -26,3 +27,6 @@ filterTimer p (TimerWheel agenda) =
 popTimer :: TimerWheel time a -> Maybe ((time, a), TimerWheel time a)
 popTimer (TimerWheel []) = Nothing
 popTimer (TimerWheel (next : agenda)) = Just (next, TimerWheel agenda)
+
+toListTimer :: TimerWheel time a -> [(time, a)]
+toListTimer (TimerWheel agenda) = agenda

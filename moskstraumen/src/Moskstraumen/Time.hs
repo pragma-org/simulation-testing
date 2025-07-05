@@ -13,7 +13,7 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 
 newtype Time = Time UTCTime
-  deriving newtype (Eq, Ord, Show)
+  deriving newtype (Eq, Ord, Show, Read)
 
 getCurrentTime :: IO Time
 getCurrentTime = Time <$> Time.getCurrentTime
@@ -37,6 +37,10 @@ diffTimeMicros (Time t1) (Time t2) = micros
 
 iso8601Format :: Time -> Text
 iso8601Format (Time utcTime) = Text.pack (iso8601Show utcTime)
+
+displayTime :: Time -> Text
+displayTime (Time utcTime) =
+  Text.pack (formatTime defaultTimeLocale "%H:%M:%S.%q" utcTime)
 
 fromNanosSinceEpoch :: Int64 -> Time
 fromNanosSinceEpoch =

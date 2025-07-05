@@ -45,6 +45,7 @@ common extensions
     OverloadedStrings
     ScopedTypeVariables
     StrictData
+    ViewPatterns
 
 library
   import:           warnings, extensions

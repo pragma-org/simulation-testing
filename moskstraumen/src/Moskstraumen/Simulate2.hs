@@ -9,6 +9,7 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Ord (comparing)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import GHC.Generics (Rep)
@@ -116,11 +117,31 @@ stepWorld world = case Heap.pop world.messages of
   Nothing -> return (Right ())
   Just ((arrivalTime, incoming), messages') ->
     case incoming of
-      Fault (PartitionFault partition) -> return (Left world {partition, messages = messages'})
+      InFault fault@(PartitionFault partition) ->
+        return
+          ( Left
+              world
+                { partition
+                , messages = messages'
+                , history = world.history <> [(arrivalTime, OutFault fault)]
+                }
+          )
       -- XXX: enable faults:
-      -- _otherwise
-      --   | affected incoming.src incoming.dest world.partition ->
-      --       return (Left world {messages = messages'})
+      _otherwise
+        | incoming.src
+            /= "c0"
+            && affected incoming.src incoming.dest world.partition -> do
+            putStrLn
+              ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
+              )
+            return
+              ( Left
+                  world
+                    { messages = messages'
+                    , history =
+                        world.history <> [(arrivalTime, Dropped incoming)]
+                    }
+              )
       _otherwise ->
         case Map.lookup incoming.dest world.nodes of
           Nothing ->
@@ -243,7 +264,7 @@ newWorld deployment initialMessages prng = do
 -- start snippet TestResult
 data TestResult i o
   = Success
-  | Failure (History i o) (Vector DebugEvent) Reason
+  | Failure [(Time, Incoming i o)] (History i o) (Vector DebugEvent) Reason
   -- end snippet
   deriving stock (Eq, Show)
 
@@ -254,8 +275,33 @@ handleResult ::
   TestResult i o
   -> Seed
   -> IO Bool
-handleResult (Failure history journal reason) seed = do
-  putStrLn "History: "
+handleResult (Failure (List.sortBy (comparing fst) -> program) history journal reason) seed = do
+  putStrLn "Program:"
+  putStrLn ""
+  putStr "  ["
+  mapM_
+    ( \(time, incoming) ->
+        Text.putStr
+          ( " (read \""
+              <> textShow time
+              <> "\",\n     "
+              <> textShow incoming
+              <> ")\n  ,"
+          )
+    )
+    (take (length program - 1) program)
+  let (lastTime, lastIncoming) = last program
+  Text.putStrLn
+    ( " (read \""
+        <> textShow lastTime
+        <> "\",\n     "
+        <> textShow lastIncoming
+        <> ")"
+    )
+  putStrLn "  ]"
+  putStrLn ""
+
+  putStrLn "History:"
   mapM_
     ( Text.putStrLn
         . ( \(index, (time, message)) ->
@@ -283,7 +329,7 @@ displayOutgoing time (OutMessage (Message {src, dest, body})) =
     , if isClientNodeId src then " ==> " else " --> "
     , unNodeId dest
     , "   "
-    , textShow time
+    , displayTime time
     , "   " <> textShow body
     ]
 displayOutgoing time (OutResponse (Response {src, dest, body})) =
@@ -292,9 +338,25 @@ displayOutgoing time (OutResponse (Response {src, dest, body})) =
     , if isClientNodeId dest then " <== " else " <-- "
     , unNodeId src
     , "   "
-    , textShow time
+    , displayTime time
     , "   " <> textShow body
     ]
+displayOutgoing time (OutFault fault) =
+  Text.concat
+    [ "            "
+    , displayTime time
+    , "   " <> textShow fault
+    ]
+displayOutgoing time (Dropped incoming) =
+  Text.concat
+    [ unNodeId incoming.dest
+    , if isClientNodeId incoming.dest then " </= " else " </- "
+    , unNodeId incoming.src
+    , "   "
+    , displayTime time
+    , "   " <> textShow incoming.body
+    ]
+displayOutgoing _time (OutRpcError _err) = undefined
 
 -- start snippet Workload
 
@@ -331,21 +393,21 @@ runTest ::
   -> RunMode
   -> [(Time, Incoming i o)]
   -> IO (TestResult i o)
-runTest deployment workload prng runMode initialMessages = do
+runTest deployment workload prng runMode program = do
   world <-
     newWorld
       deployment
-      (Heap.fromList initialMessages)
+      (Heap.fromList program)
       prng
-  (resultingHistory, debugTrace) <-
+  (history, journal) <-
     runWorld world `finally` traverse_ (.close) world.nodes
   let propertyResult = case workload.property of
         -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
         -- LTL formula ->
-        --   if sat formula (map snd resultingHistory) emptyEnv
+        --   if sat formula (map snd history) emptyEnv
         --     then Pass
         --     else Fail "LTL formula failed"
-        HistoryPredicate predicate -> predicate (map snd resultingHistory)
+        HistoryPredicate predicate -> predicate (map snd history)
   case propertyResult of
     Pass -> do
       when (runMode == ShrinkMode)
@@ -354,7 +416,7 @@ runTest deployment workload prng runMode initialMessages = do
     Fail reason -> do
       when (runMode == ShrinkMode)
         $ putStr "x"
-      return (Failure resultingHistory debugTrace reason)
+      return (Failure program history journal reason)
 
 -- end snippet
 
@@ -378,13 +440,15 @@ runTests testConfig deployment workload initialPrng =
     loop n prng size = do
       let (prng', incoming) = generateIncoming prng size
       let (prng'', prng''') = splitPrng prng'
+      putStrLn
+        "\nNEW TEST ===================================================\n"
       result <-
         runTest deployment workload prng'' TestMode incoming
       case result of
         Success -> loop (n - 1) prng''' (min testConfig.maxSize ((n + 3) `div` 2))
-        Failure unShrunkTrace debugTrace reason -> do
+        Failure program unShrunkTrace debugTrace reason -> do
           if testConfig.disableShrinking
-            then return (Failure unShrunkTrace debugTrace reason)
+            then return (Failure program unShrunkTrace debugTrace reason)
             else do
               putStrLn "Shrinking:"
               let shrinker list =
@@ -407,11 +471,11 @@ runTests testConfig deployment workload initialPrng =
                     <> " times"
                 )
               -- XXX: We need the shrunkDebugTrace here...
-              return (Failure shrunkTrace debugTrace reason)
+              return (Failure program shrunkTrace debugTrace reason)
 
     testResultToMaybe :: TestResult i o -> Maybe (History i o)
     testResultToMaybe Success = Nothing
-    testResultToMaybe (Failure trace _debugTrace _reason) = Just trace
+    testResultToMaybe (Failure _program history _journal _reason) = Just history
 
     generateIncoming :: Prng -> Int -> (Prng, [(Time, Incoming i o)])
     generateIncoming prng size = runGen prng size $ do
@@ -424,10 +488,14 @@ runTests testConfig deployment workload initialPrng =
               (map InMessage initialMessages)
           )
       faults <-
-        map (fmap (Fault . PartitionFault))
+        map (fmap InFault)
           <$> generatePartitions
             (map makeNodeId [1 .. testConfig.numberOfNodes])
-            (epoch, time)
+            ( addTimeMicros
+                (floor workload.baseLatency * testConfig.numberOfNodes * 2)
+                epoch
+            , time
+            )
             (floor workload.baseLatency * 3)
       case workload.finallyGenerate of
         Nothing -> return (addMessageIds initialMessages')
@@ -514,3 +582,27 @@ simulationTest ::
   -> Workload input output
   -> IO Bool
 simulationTest = simulationTestWith defaultTestConfig
+
+regressionTestWith ::
+  (Show state, Show input, Show output) =>
+  TestConfig
+  -> Node state input output
+  -> state
+  -> Workload input output
+  -> [(Time, Incoming input output)]
+  -> IO Bool
+regressionTestWith testConfig node initialState workload program = do
+  (prng, seed) <- newPrng testConfig.replaySeed
+  let deployment =
+        Deployment
+          { numberOfNodes = testConfig.numberOfNodes
+          , spawn = simulationNodeHandle node initialState
+          }
+  result <-
+    runTest
+      deployment
+      workload
+      prng
+      TestMode
+      program
+  handleResult result seed

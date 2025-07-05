@@ -11,11 +11,13 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 
 import Moskstraumen.Experiment.Node8
+import Moskstraumen.Fault
 import Moskstraumen.Generate
 import Moskstraumen.Message3
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate2
+import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
@@ -114,10 +116,10 @@ broadcast (Broadcast msg) = do
                   msg -> error ("broadcast: unexpected response: " <> show msg)
               s <- getState
               info ("About to sleep, state " <> textShow s)
-              sleep 10_000
-              s <- getState
-              info ("Awake again, state: " <> textShow s)
-              go
+              sleep 10_000 $ do
+                s <- getState
+                info ("Awake again, state: " <> textShow s)
+                go
     go
 broadcast Read = do
   seenMessages <- seen <$> getState
@@ -399,3 +401,83 @@ gridTopology nodes =
 
 totalTopology :: [NodeId] -> Map NodeId [NodeId]
 totalTopology nodes = Map.fromList [(node, nodes \\ [node]) | node <- nodes]
+
+unit_test :: IO Bool
+unit_test =
+  regressionTestWith
+    defaultTestConfig
+      { replaySeed = Just 1047159807563293908
+      , numberOfNodes = 2
+      }
+    broadcast
+    initialState
+    (broadcastWorkload defaultTestConfig)
+    program
+  where
+    program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
+    program =
+      [
+        ( read "1970-01-01 00:00:00.445538 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n1"
+                , msgId = Just 0
+                , body = Init {node_id = "n1", node_ids = ["n2"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:01.104663 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n2"
+                , msgId = Just 1
+                , body = Init {node_id = "n2", node_ids = ["n1"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:01.4 UTC"
+        , InFault (PartitionFault (One "n1"))
+        )
+      ,
+        ( read "1970-01-01 00:00:01.605313 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 4
+                , body = Broadcast {message = 0}
+                }
+            )
+        )
+      , -- XXX: Why is this message to n2 needed? (Doesn't seem to matter what
+        -- the body is, but it does matter that n2 is the dest)
+
+        ( read "1970-01-01 00:00:01.932328 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n2", msgId = Just 5, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:02 UTC"
+        , InFault (PartitionFault None)
+        )
+      ,
+        ( read "1970-01-01 00:00:02.378725 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 6
+                , body = Broadcast {message = 1}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:12.728164 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n1", msgId = Just 7, body = Read})
+        )
+      ]

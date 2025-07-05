@@ -32,14 +32,16 @@ affected src dest (Majority majority) =
 affected _src _dest None = False
 
 generatePartitions ::
-  [NodeId] -> (Time, Time) -> Int -> Gen [(Time, Partition)]
+  [NodeId] -> (Time, Time) -> Int -> Gen [(Time, Fault)]
 generatePartitions nodes (start, end) durationMicros = go start []
   where
     go time acc
       | time' >= end = return (reverse acc)
       | otherwise = do
           partition <- generatePartition nodes
-          go time' ((time', None) : (time, partition) : acc)
+          go
+            time'
+            ((time', PartitionFault None) : (time, PartitionFault partition) : acc)
       where
         time' = addTimeMicros durationMicros time
 

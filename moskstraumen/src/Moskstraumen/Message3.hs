@@ -54,7 +54,7 @@ data Incoming i o
   = InMessage (Message i)
   | InResponse (Response o)
   | InRpcError RpcError
-  | Fault Fault
+  | InFault Fault
   deriving stock (Show, Eq)
 
 instance HasField "src" (Incoming i o) NodeId where
@@ -91,17 +91,21 @@ data Outgoing i o
   = OutMessage (Message i)
   | OutResponse (Response o)
   | OutRpcError RpcError
+  | OutFault Fault
+  | Dropped (Incoming i o)
   deriving stock (Show, Eq)
 
 incomingToOutgoing :: Incoming i o -> Outgoing i o
 incomingToOutgoing (InMessage msg) = OutMessage msg
 incomingToOutgoing (InResponse resp) = OutResponse resp
 incomingToOutgoing (InRpcError err) = OutRpcError err
+incomingToOutgoing (InFault fault) = OutFault fault
 
 outgoingToIncoming :: Outgoing i o -> Incoming i o
 outgoingToIncoming (OutMessage msg) = InMessage msg
 outgoingToIncoming (OutResponse resp) = InResponse resp
 outgoingToIncoming (OutRpcError err) = InRpcError err
+outgoingToIncoming (OutFault _fault) = error "outgoingToIncoming: fault"
 
 isClientResponse :: Outgoing i o -> Bool
 isClientResponse OutMessage {} = False
@@ -318,3 +322,5 @@ pairReplies outgoing =
         go ms rs (OutResponse r : os) =
           go ms (Map.insert r.inReplyTo r rs) os
         go _ms _rs (OutRpcError _e : _os) = error "pariReplies: RpcError"
+        go ms rs (OutFault _e : os) = go ms rs os
+        go ms rs (Dropped _i : os) = go ms rs os
