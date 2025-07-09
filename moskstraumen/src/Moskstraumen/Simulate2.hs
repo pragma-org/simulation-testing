@@ -112,19 +112,43 @@ generateRandomArrivalTimes time0 meanMicros = go time0 0 []
         go arrivalTime (i + 1) ((arrivalTime, message) : acc) messages prng'
 
 -- start snippet stepWorld
-stepWorld :: (Show i, Show o) => World i o -> IO (Either (World i o) ())
+
+data StepSuccess i o
+  = StepDone
+  | StepContinue (World i o)
+
+data StepFailure
+  = StepSomeException SomeException
+  | StepUnknownDestination NodeId
+  | StepTimeoutWhenHandling String
+
+data StepResult i o
+  = StepFailure StepFailure
+  | StepSuccess (StepSuccess i o)
+
+displayStepFailure :: StepFailure -> String
+displayStepFailure (StepSomeException err) = displayException err
+displayStepFailure (StepUnknownDestination nodeId) =
+  "unknown destination node: " <> Text.unpack (unNodeId nodeId)
+displayStepFailure (StepTimeoutWhenHandling incoming) =
+  "timeout when handling: " <> incoming
+
+stepWorld ::
+  (Show i, Show o) => World i o -> IO (StepResult i o)
 stepWorld world = case Heap.pop world.messages of
-  Nothing -> return (Right ())
+  Nothing -> return (StepSuccess StepDone)
   Just ((arrivalTime, incoming), messages') ->
     case incoming of
       InFault fault@(PartitionFault partition) ->
         return
-          ( Left
-              world
-                { partition
-                , messages = messages'
-                , history = world.history <> [(arrivalTime, OutFault fault)]
-                }
+          ( StepSuccess
+              ( StepContinue
+                  world
+                    { partition
+                    , messages = messages'
+                    , history = world.history <> [(arrivalTime, OutFault fault)]
+                    }
+              )
           )
       -- XXX: enable faults:
       _otherwise
@@ -135,31 +159,35 @@ stepWorld world = case Heap.pop world.messages of
               ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
               )
             return
-              ( Left
-                  world
-                    { messages = messages'
-                    , history =
-                        world.history <> [(arrivalTime, Dropped incoming)]
-                    }
+              ( StepSuccess
+                  ( StepContinue
+                      world
+                        { messages = messages'
+                        , history =
+                            world.history <> [(arrivalTime, Dropped incoming)]
+                        }
+                  )
               )
       _otherwise ->
         case Map.lookup incoming.dest world.nodes of
           Nothing ->
-            error ("stepWorld: unknown destination node: " ++ show incoming.dest)
-          Just node -> do
+            return
+              ( StepFailure
+                  (StepUnknownDestination incoming.dest)
+              )
+          Just node ->
             timeout 5_000_000 (try (node.handle arrivalTime incoming)) >>= \case
-              Nothing -> do
-                putStrLn "Writing journal to: /tmp/moskstraumen.journal"
-                LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
-                error ("stepWorld: timeout when handling: " <> show incoming)
+              Nothing ->
+                return
+                  ( StepFailure
+                      (StepTimeoutWhenHandling (show incoming))
+                  )
               Just (Left err) -> do
                 putStrLn
                   ( "stepWorld, failed on: "
                       <> show (arrivalTime, incoming, messages')
                   )
-                putStrLn "Writing journal to: /tmp/moskstraumen.journal"
-                LBS8.writeFile "/tmp/moskstraumen.journal" (encode world.journal)
-                error (displayException (err :: SomeException))
+                return (StepFailure (StepSomeException err))
               Just (Right handleOutput) -> do
                 mapM_ Text.putStrLn handleOutput.logs
                 let aux :: Outgoing i o -> NodeId
@@ -174,7 +202,8 @@ stepWorld world = case Heap.pop world.messages of
                         (map outgoingToIncoming nodeMessages)
                         world.prng
                 return
-                  $ Left
+                  $ StepSuccess
+                  $ StepContinue
                     World
                       { nodes = world.nodes
                       , messages =
@@ -233,11 +262,14 @@ stepWorld world = case Heap.pop world.messages of
 
 -- start snippet runWorld
 runWorld ::
-  (Show i, Show o) => World i o -> IO (History i o, Journal)
+  (Show i, Show o) =>
+  World i o
+  -> IO (Maybe StepFailure, History i o, Journal)
 runWorld world =
   stepWorld world >>= \case
-    Right () -> return (world.history, world.journal)
-    Left world' -> runWorld world'
+    StepSuccess StepDone -> return (Nothing, world.history, world.journal)
+    StepSuccess (StepContinue world') -> runWorld world'
+    StepFailure err -> return (Just err, world.history, world.journal)
 
 -- end snippet
 
@@ -399,24 +431,25 @@ runTest deployment workload prng runMode program = do
       deployment
       (Heap.fromList program)
       prng
-  (history, journal) <-
-    runWorld world `finally` traverse_ (.close) world.nodes
-  let propertyResult = case workload.property of
-        -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
-        -- LTL formula ->
-        --   if sat formula (map snd history) emptyEnv
-        --     then Pass
-        --     else Fail "LTL formula failed"
-        HistoryPredicate predicate -> predicate (map snd history)
-  case propertyResult of
-    Pass -> do
-      when (runMode == ShrinkMode)
-        $ putStr "."
-      return Success
-    Fail reason -> do
-      when (runMode == ShrinkMode)
-        $ putStr "x"
-      return (Failure program history journal reason)
+  runWorld world `finally` traverse_ (.close) world.nodes >>= \case
+    (Just err, history, journal) -> return (Failure program history journal (displayStepFailure err))
+    (Nothing, history, journal) -> do
+      let propertyResult = case workload.property of
+            -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
+            -- LTL formula ->
+            --   if sat formula (map snd history) emptyEnv
+            --     then Pass
+            --     else Fail "LTL formula failed"
+            HistoryPredicate predicate -> predicate (map snd history)
+      case propertyResult of
+        Pass -> do
+          when (runMode == ShrinkMode)
+            $ putStr "."
+          return Success
+        Fail reason -> do
+          when (runMode == ShrinkMode)
+            $ putStr "x"
+          return (Failure program history journal reason)
 
 -- end snippet
 
