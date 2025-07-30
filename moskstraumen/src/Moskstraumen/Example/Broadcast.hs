@@ -26,7 +26,7 @@ data BroadcastInput
   | Topology {topology :: Map NodeId [NodeId]}
   | Broadcast {message :: Int}
   | Read
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastOutput
@@ -34,7 +34,7 @@ data BroadcastOutput
   | Topology_Ok
   | Broadcast_Ok
   | Read_Ok {messages :: [Int]}
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastState = BroadcastState
@@ -85,7 +85,7 @@ broadcast (Broadcast msg) = do
     modifyState
       (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
     let go = do
-          unAckedNodes <- Map.findWithDefault [] msg . unAcked <$> getState
+          unAckedNodes <- (Map.! msg) . unAcked <$> getState
           if null unAckedNodes
             then info ("Done with message: " <> fromString (show msg))
             else do
@@ -276,6 +276,7 @@ broadcastWorkload testConfig =
     , baseLatency = 200_000 -- 200 ms
     }
   where
+    -- XXX: assert that there are numberOfNodes Read_Oks!
     historyPredicate ::
       [Outgoing BroadcastInput BroadcastOutput] -> PropertyResult
     historyPredicate outgoing =
@@ -402,8 +403,8 @@ gridTopology nodes =
 totalTopology :: [NodeId] -> Map NodeId [NodeId]
 totalTopology nodes = Map.fromList [(node, nodes \\ [node]) | node <- nodes]
 
-unit_test :: IO Bool
-unit_test =
+unit_btest :: IO Bool
+unit_btest =
   regressionTestWith
     defaultTestConfig
       { replaySeed = Just 1047159807563293908
@@ -411,7 +412,7 @@ unit_test =
       }
     broadcast
     initialState
-    (broadcastWorkload defaultTestConfig)
+    (broadcastWorkload defaultTestConfig).property
     program
   where
     program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
@@ -479,5 +480,70 @@ unit_test =
         ( read "1970-01-01 00:00:12.728164 UTC"
         , InMessage
             (Message {src = "c1", dest = "n1", msgId = Just 7, body = Read})
+        )
+      ]
+
+unit_btest2 :: IO Bool
+unit_btest2 =
+  regressionTestWith
+    defaultTestConfig
+      { replaySeed = Just 4894465900423837377
+      , numberOfNodes = 2
+      }
+    broadcast
+    initialState
+    (broadcastWorkload defaultTestConfig).property
+    program
+  where
+    program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
+    program =
+      [
+        ( read "1970-01-01 00:00:00.057553 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n1"
+                , msgId = Just 0
+                , body = Init {node_id = "n1", node_ids = ["n2"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:00.415157 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n2"
+                , msgId = Just 1
+                , body = Init {node_id = "n2", node_ids = ["n1"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:00.578764 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n1"
+                , msgId = Just 2
+                , body = Broadcast {message = 0}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:01.013294 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 3
+                , body = Broadcast {message = 1}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:11.469462 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n1", msgId = Just 4, body = Read})
         )
       ]

@@ -59,6 +59,7 @@ library
     Moskstraumen.Example.Amaru
     Moskstraumen.Example.Broadcast
     Moskstraumen.Example.CRDT.GSet
+    Moskstraumen.Example.DebugSleep
     Moskstraumen.Example.Echo
     Moskstraumen.Example.KeyValueStore
     Moskstraumen.Example.Raft

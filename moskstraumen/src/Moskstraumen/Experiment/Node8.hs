@@ -7,7 +7,7 @@ module Moskstraumen.Experiment.Node8 (module Moskstraumen.Experiment.Node8) wher
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception (assert)
+import Control.Exception (SomeException, assert, catch)
 import Data.Aeson
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Types as Json
@@ -33,6 +33,7 @@ import Moskstraumen.Random
 import Moskstraumen.Simulate (blackboxTest)
 import Moskstraumen.Time
 import Moskstraumen.TimerWheel2
+import qualified Moskstraumen.TimerWheel2 as TimerWheel
 import Moskstraumen.VarId
 
 ------------------------------------------------------------------------
@@ -64,7 +65,10 @@ data NodeF s i o x
   | Put (NodeState s) (() -> x)
   | Send NodeId i (() -> x)
   | Rpc NodeId i (RpcError -> x) (o -> x) (() -> x)
-  | After Int x (() -> x)
+  | -- NOTE: It can't be `After Int x (() -> x)`, because then the effects of
+    -- the continuation (second `x`) will be part of the suspension (first `x`),
+    -- I think because of how `iterM` works...
+    After Int (NodeBody s i o ()) (() -> x)
   | Log Text (() -> x)
   | GetTime (Time -> x)
   | -- end snippet
@@ -80,7 +84,7 @@ instance Functor (NodeF s i o) where
   fmap f (Put s' k) = Put s' (f . k)
   fmap f (Send nodeId i k) = Send nodeId i (f . k)
   fmap f (Rpc nodeId i failure success k) = Rpc nodeId i (f . failure) (f . success) (f . k)
-  fmap f (After micros task k) = After micros (f task) (f . k)
+  fmap f (After micros task k) = After micros task (f . k)
   fmap f (Log text k) = Log text (f . k)
   fmap f (GetTime k) = GetTime (f . k)
   -- fmap _f (Fail string) = Fail string
@@ -182,7 +186,7 @@ info text = do
     )
 
 sleep :: Int -> NodeBody s i o () -> NodeBody s i o ()
-sleep micros body = generic (After micros (unNodeBody body))
+sleep micros body = generic (After micros body)
 
 syncRpc ::
   NodeId
@@ -328,7 +332,7 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
     go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
     go (GetTime k) (ns, acc) = k ns.theTime (ns, acc)
     go (After micros m k) (ns, acc) =
-      k () (ns, acc <> [AFTER micros m])
+      k () (ns, acc <> [AFTER micros (\(ns', _eff) -> runNodeBody m ns')])
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
@@ -373,6 +377,11 @@ stepEventLoop node codec runtime ns es = do
     <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
   case popTimer es.pendingTimers of
     Nothing -> do
+      runtime.log
+        $ "[debug] "
+        <> textShow _now
+        <> " "
+        <> "eventLoop, waiting to receive (with 20s timeout)"
       runtime.receive 20_000_000 >>= \case
         Nothing -> do
           -- NOTE: This `send` is needed for simulation handle, otherwise
@@ -681,7 +690,8 @@ readFakeTime (FakeTime tvar) = readTVar tvar
 writeFakeTime :: FakeTime -> Time -> STM ()
 writeFakeTime (FakeTime tvar) newTime = do
   oldTime <- readTVar tvar
-  if oldTime < newTime
+  -- NOTE:: <= because there can be several timers scheduled at the exact same time
+  if oldTime <= newTime
     then writeTVar tvar newTime
     else
       error
@@ -829,6 +839,8 @@ data HandleOutput i o = HandleOutput
 
 data NodeHandle i o = NodeHandle
   { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
+  , nextTimer :: IO (Maybe Time)
+  , advanceToTime :: Time -> IO (HandleOutput i o)
   , close :: IO ()
   }
 
@@ -846,36 +858,31 @@ simulationNodeHandle node initialState = do
   fakeTime <- newFakeTime epoch
 
   let recieve_ :: Timeout -> IO (Maybe [Incoming i o])
+      recieve_ 0 = return Nothing
       recieve_ micros = do
         (arrivalTime, input) <- takeMVar inputMVar
-        now <- readFakeTimeIO fakeTime
-        let timerTime = addTimeMicros micros now
-        if timerTime <= arrivalTime
-          then do
-            -- NOTE: If we get a timer, we shouldn't consume the input!
-            putMVar inputMVar (arrivalTime, input)
-            Text.putStrLn
-              $ "[debug] "
-              <> textShow now
-              <> " recieve: timer fired at: "
-              <> textShow timerTime
-            writeFakeTimeIO fakeTime timerTime
-            return Nothing
-          else do
-            writeFakeTimeIO fakeTime arrivalTime
-            Text.putStrLn
-              $ "[debug] "
-              <> textShow now
-              <> " recieve: advancing time: to "
-              <> textShow arrivalTime
-              <> ", and delivering: "
-              <> textShow input
-            return (Just [input])
+        writeFakeTimeIO fakeTime arrivalTime
+        _now <- readFakeTimeIO fakeTime
+        Text.putStrLn
+          $ "[debug] "
+          <> textShow _now
+          <> " recieve: advancing time: to "
+          <> textShow arrivalTime
+          <> ", and delivering: "
+          <> textShow
+            input
+        return (Just [input])
 
   let send_ :: [Outgoing i o] -> IO ()
       send_ = putMVar outputMVar
 
-  let runtime =
+  let nextTimer_ :: IO (Maybe Time)
+      nextTimer_ = do
+        (_ns, es) <- readIORef ref
+        return (TimerWheel.nextTimer es.pendingTimers)
+
+  let runtime :: Runtime (Incoming i o) (Outgoing i o)
+      runtime =
         Runtime
           { receive = recieve_
           , send = send_
@@ -883,29 +890,52 @@ simulationNodeHandle node initialState = do
           , getTime = readFakeTimeIO fakeTime
           }
 
-  let step = do
+  let step :: Bool -> IO (HandleOutput i o)
+      step timer = do
         (ns, es) <- readIORef ref
-        _now <- readFakeTimeIO fakeTime
-        runtime.log
-          $ "[debug] "
-          <> textShow _now
-          <> " handle_, before step pendingTimers: "
-          <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
-        (ns', es') <- stepEventLoop node testCodec runtime ns es
-        _now <- readFakeTimeIO fakeTime
-        runtime.log
-          $ "[debug] "
-          <> textShow _now
-          <> " handle_, after step pendingTimers: "
-          <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
-        writeIORef ref (ns', es')
-        let stateBefore = ns.localState
-        let stateAfter = ns'.localState
-        outgoing <- takeMVar outputMVar
+        -- NOTE: If we are stepping a timer and there's no pending timers, then we stop.
+        if timer && null es.pendingTimers
+          then
+            return
+              HandleOutput
+                { beforeState = ""
+                , afterState = ""
+                , outgoing = []
+                , logs = []
+                }
+          else do
+            -- _now <- readFakeTimeIO fakeTime
+            -- runtime.log
+            --   $ "[debug] "
+            --   <> textShow _now
+            --   <> " handle_, before step pendingTimers: "
+            --   <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
+            (ns', es') <- stepEventLoop node testCodec runtime ns es
+            -- _now <- readFakeTimeIO fakeTime
+            -- runtime.log
+            --   $ "[debug] "
+            --   <> textShow _now
+            --   <> " handle_, after step pendingTimers: "
+            --   <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
+            writeIORef ref (ns', es')
+            let stateBefore = ns.localState
+            let stateAfter = ns'.localState
+            outgoing <- takeMVar outputMVar
 
-        -- runtime.log ("[debug] handle, input outgoing: " <> textShow outgoing)
-        logs <- modifyMVar logsMVar (\logs -> return ([], logs))
-        return (outgoing, logs, stateBefore, stateAfter)
+            -- runtime.log ("[debug] handle, input outgoing: " <> textShow outgoing)
+            logs <- modifyMVar logsMVar (\logs -> return ([], logs))
+            return
+              HandleOutput
+                { beforeState = textShow stateBefore
+                , outgoing
+                , logs
+                , afterState = textShow stateAfter
+                }
+
+  let advanceToTime_ :: Time -> IO (HandleOutput i o)
+      advanceToTime_ time = do
+        writeFakeTimeIO fakeTime time
+        step True
 
   let handle_ :: Int -> Time -> Incoming i o -> IO (HandleOutput i o)
       handle_ level arrivalTime incoming = do
@@ -931,7 +961,7 @@ simulationNodeHandle node initialState = do
               then error "handle: impossible"
               else return ()
             putMVar inputMVar waiting
-            (outgoing, logs, stateBefore, stateAfter) <- step
+            HandleOutput {outgoing, logs, beforeState, afterState} <- step False
             _now <- readFakeTimeIO fakeTime
             runtime.log
               $ "\n[debug] "
@@ -942,50 +972,53 @@ simulationNodeHandle node initialState = do
               <> " HANDLE 1<<<<<<<<<<<<<<<<<<<<<<<<<<\n"
             return
               ( HandleOutput
-                  { beforeState = textShow stateBefore
+                  { beforeState
                   , outgoing
-                  , afterState = textShow stateAfter
+                  , afterState
                   , logs
                   }
               )
           else do
-            -- Previous call to handle caused a timer to go off.
-            runtime.log
-              "[debug] handle_, previous call to handle caused timer to go off"
-            waiting <- takeMVar inputMVar
-            runtime.log
-              ("[debug] handle_, processing waiting: " <> textShow waiting)
-            putMVar inputMVar waiting
+            error "impossible"
+  -- Previous call to handle caused a timer to go off.
+  -- runtime.log
+  --   "[debug] handle_, previous call to handle caused timer to go off"
+  -- waiting <- takeMVar inputMVar
+  -- runtime.log
+  --   ("[debug] handle_, processing waiting: " <> textShow waiting)
+  -- putMVar inputMVar waiting
 
-            --
-            -- NOTE: it's important NOT to advance the time here, because we
-            -- haven't yet got to the point in time when the incoming message
-            -- arrives.
-            (outgoing, logs, stateBefore, stateAfter) <- step
-            -- Try again to handle the current input again.
-            handleOutput <- handle_ (level + 1) arrivalTime incoming
+  -- --
+  -- -- NOTE: it's important NOT to advance the time here, because we
+  -- -- haven't yet got to the point in time when the incoming message
+  -- -- arrives.
+  -- HandleOutput {outgoing, logs, beforeState} <- step
+  -- -- Try again to handle the current input again.
+  -- handleOutput <- handle_ (level + 1) arrivalTime incoming
 
-            _now <- readFakeTimeIO fakeTime
-            runtime.log
-              $ "\n[debug] "
-              <> textShow _now
-              <> " ("
-              <> unNodeId incoming.dest
-              <> ")"
-              <> " HANDLE 2<<<<<<<<<<<<<<<<<<<<<<<<<<\n"
+  -- _now <- readFakeTimeIO fakeTime
+  -- runtime.log
+  --   $ "\n[debug] "
+  --   <> textShow _now
+  --   <> " ("
+  --   <> unNodeId incoming.dest
+  --   <> ")"
+  --   <> " HANDLE 2<<<<<<<<<<<<<<<<<<<<<<<<<<\n"
 
-            return
-              ( HandleOutput
-                  { beforeState = textShow stateBefore
-                  , outgoing = outgoing <> handleOutput.outgoing
-                  , afterState = handleOutput.afterState
-                  , logs = logs <> handleOutput.logs
-                  }
-              )
+  -- return
+  --   ( HandleOutput
+  --       { beforeState
+  --       , outgoing = outgoing <> handleOutput.outgoing
+  --       , afterState = handleOutput.afterState
+  --       , logs = logs <> handleOutput.logs
+  --       }
+  --   )
 
   return
     ( NodeHandle
         { handle = handle_ 0
+        , nextTimer = nextTimer_
+        , advanceToTime = advanceToTime_
         , close = return ()
         }
     )

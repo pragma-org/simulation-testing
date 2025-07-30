@@ -8,7 +8,7 @@ import Moskstraumen.Time
 ------------------------------------------------------------------------
 
 data Fault = PartitionFault Partition
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 data Partition
   = None
@@ -16,7 +16,7 @@ data Partition
     One NodeId
   | -- | A majority and minority split.
     Majority [NodeId]
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 affected :: NodeId -> NodeId -> Partition -> Bool
 affected src dest (One isolated) = src == isolated || dest == isolated

@@ -35,7 +35,7 @@ data Message i = Message
   , msgId :: Maybe MessageId
   , body :: i
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
 
 data Response o = Response
   { src :: NodeId
@@ -44,10 +44,10 @@ data Response o = Response
   , inReplyTo :: MessageId
   , body :: o
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
 
 data RpcError = Timeout
-  deriving stock (Show, Eq, Generic)
+  deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (FromJSON)
 
 data Incoming i o
@@ -55,12 +55,14 @@ data Incoming i o
   | InResponse (Response o)
   | InRpcError RpcError
   | InFault Fault
-  deriving stock (Show, Eq)
+  | InTimer NodeId
+  deriving stock (Show, Eq, Ord)
 
 instance HasField "src" (Incoming i o) NodeId where
   getField (InMessage msg) = msg.src
   getField (InResponse resp) = resp.src
   getField (InRpcError _err) = error "Incoming.src InRpcError"
+  getField (InTimer nodeId) = error "Incoming.src InTimer"
 
 instance HasField "dest" (Incoming i o) NodeId where
   getField (InMessage msg) = msg.dest
@@ -100,6 +102,7 @@ incomingToOutgoing (InMessage msg) = OutMessage msg
 incomingToOutgoing (InResponse resp) = OutResponse resp
 incomingToOutgoing (InRpcError err) = OutRpcError err
 incomingToOutgoing (InFault fault) = OutFault fault
+incomingToOutgoing (InTimer {}) = error "incomingToOutgoing: timer"
 
 outgoingToIncoming :: Outgoing i o -> Incoming i o
 outgoingToIncoming (OutMessage msg) = InMessage msg

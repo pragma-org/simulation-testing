@@ -1,3 +1,5 @@
+{-# LANGUAGE StandaloneDeriving #-}
+
 module Moskstraumen.TimerWheel2 (module Moskstraumen.TimerWheel2) where
 
 import Data.List (sortBy)
@@ -11,6 +13,8 @@ import Moskstraumen.Prelude
 newtype TimerWheel time a = TimerWheel [(time, a)]
   deriving stock (Show, Functor)
   deriving newtype (Semigroup, Monoid)
+
+deriving instance Foldable (TimerWheel time)
 
 emptyTimerWheel :: TimerWheel time a
 emptyTimerWheel = TimerWheel []
@@ -27,6 +31,9 @@ filterTimer p (TimerWheel agenda) =
 popTimer :: TimerWheel time a -> Maybe ((time, a), TimerWheel time a)
 popTimer (TimerWheel []) = Nothing
 popTimer (TimerWheel (next : agenda)) = Just (next, TimerWheel agenda)
+
+nextTimer :: TimerWheel time a -> Maybe time
+nextTimer = fmap (fst . fst) . popTimer
 
 toListTimer :: TimerWheel time a -> [(time, a)]
 toListTimer (TimerWheel agenda) = agenda
