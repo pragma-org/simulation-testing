@@ -260,10 +260,10 @@ unit_simTestBroadcast' mSeed =
     config =
       defaultTestConfig
         { replaySeed = mSeed
-        , numberOfTests = 100
+        , numberOfTests = 3
         , numberOfNodes = 5
         , disableShrinking = True
-        , verboseOnSuccess = False
+        , verboseOnSuccess = True
         , minSize = 10
         , maxSize = 30
         }

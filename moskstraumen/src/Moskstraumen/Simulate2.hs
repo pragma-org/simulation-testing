@@ -249,14 +249,17 @@ stepWorld world = do
                       { partition
                       , messages = messages'
                       , history = world.history <> [(arrivalTime, OutFault fault)]
+                      , metrics =
+                          world.metrics
+                            { partitions =
+                                world.metrics.partitions + (if partition == None then 0 else 1)
+                            }
                       }
                 )
             )
         -- XXX: enable faults:
         _otherwise
-          | incoming.src
-              /= "c0"
-              && affected incoming.src incoming.dest world.partition -> do
+          | affected incoming.src incoming.dest world.partition -> do
               -- putStrLn
               --   ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
               --   )
@@ -373,15 +376,15 @@ stepWorld world = do
 runWorld ::
   (Show i, Show o, Ord i, Ord o) =>
   World i o
-  -> IO (Maybe StepFailure, History i o, Journal)
+  -> IO (Maybe StepFailure, World i o)
 runWorld = go 10000
   where
-    go 0 world = return (Just StepTooManySteps, world.history, world.journal)
+    go 0 world = return (Just StepTooManySteps, world)
     go n world =
       stepWorld world >>= \case
-        StepSuccess StepDone -> return (Nothing, world.history, world.journal)
+        StepSuccess StepDone -> return (Nothing, world)
         StepSuccess (StepContinue world') -> go (n - 1) world'
-        StepFailure err -> return (Just err, world.history, world.journal)
+        StepFailure err -> return (Just err, world)
 
 -- end snippet
 
@@ -561,28 +564,30 @@ runTest testConfig deployment property prng runMode program = do
       (Heap.fromList program)
       prng
   runWorld world `finally` traverse_ (.close) world.nodes >>= \case
-    (Just err, history, journal) -> return (Failure program history journal (displayStepFailure err))
-    (Nothing, history, journal) -> do
+    (Just err, world') ->
+      return
+        (Failure program world'.history world'.journal (displayStepFailure err))
+    (Nothing, world') -> do
       let propertyResult = case property of
             -- XXX: we are throwing away arrival times here, we should use them in the LTL checker!
             -- LTL formula ->
             --   if sat formula (map snd history) emptyEnv
             --     then Pass
             --     else Fail "LTL formula failed"
-            HistoryPredicate predicate -> predicate (map snd history)
+            HistoryPredicate predicate -> predicate (map snd world'.history)
       case propertyResult of
         Pass -> do
           when (runMode == ShrinkMode)
             $ putStr "."
           return
             ( Success
-                (if testConfig.verboseOnSuccess then [history] else [])
-                world.metrics
+                (if testConfig.verboseOnSuccess then [world'.history] else [])
+                world'.metrics
             )
         Fail reason -> do
           when (runMode == ShrinkMode)
             $ putStr "x"
-          return (Failure program history journal reason)
+          return (Failure program world'.history world'.journal reason)
 
 -- end snippet
 
@@ -696,7 +701,7 @@ runTests testConfig deployment workload initialPrng =
               workload.baseLatency
               (map InMessage initialMessages)
           )
-      let meanPartitionDuration = 5_000_000
+      let meanPartitionDuration = 1_000_000
       faults <-
         map (fmap InFault)
           <$> generatePartitions

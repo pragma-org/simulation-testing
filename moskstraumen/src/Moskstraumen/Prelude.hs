@@ -10,6 +10,7 @@ import Data.String as X
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word as X
+import Debug.Trace as X
 import GHC.Generics (Generic)
 import Prelude as X hiding (log)
 
