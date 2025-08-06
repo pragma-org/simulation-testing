@@ -1,5 +1,7 @@
 module Moskstraumen.Fault (module Moskstraumen.Fault) where
 
+import qualified Data.Text as Text
+
 import Moskstraumen.Generate
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
@@ -8,28 +10,50 @@ import Moskstraumen.Time
 ------------------------------------------------------------------------
 
 data Fault = PartitionFault Partition
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 data Partition
   = None
-  | -- | Isolate a single node.
-    One NodeId
-  | -- | A majority and minority split.
-    Majority [NodeId]
-  deriving (Eq, Ord, Show)
+  | Split SplitKind [NodeId]
+  deriving stock (Eq, Ord, Show)
+
+data SplitKind = Single | Majority | Minority | MinorityThird
+  deriving stock (Eq, Ord, Show)
+
+------------------------------------------------------------------------
 
 affected :: NodeId -> NodeId -> Partition -> Bool
-affected src dest (One isolated) = src == isolated || dest == isolated
-affected src dest (Majority majority) =
+affected src _dest _partition | isClientNodeId src = False
+affected src dest (Split _kind nodes) =
   src
-    `elem` majority
+    `elem` nodes
     && dest
-    `notElem` majority
+    `notElem` nodes
     || src
-    `notElem` majority
+    `notElem` nodes
     && dest
-    `elem` majority
+    `elem` nodes
 affected _src _dest None = False
+
+------------------------------------------------------------------------
+
+majority :: Int -> Int
+majority n = (n `div` 2) + 1
+
+unit_majority :: Bool
+unit_majority =
+  map majority [0 .. 19]
+    == [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10]
+
+minorityThird :: Int -> Int
+minorityThird n = max 0 (n - 1) `div` 3
+
+unit_minorityThird :: Bool
+unit_minorityThird =
+  map minorityThird [0 .. 19]
+    == [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6]
+
+------------------------------------------------------------------------
 
 generatePartitions ::
   [NodeId] -> (Time, Time) -> Int -> Gen [(Time, Fault)]
@@ -46,4 +70,10 @@ generatePartitions nodes (start, end) durationMicros = go start []
         time' = addTimeMicros durationMicros time
 
 generatePartition :: [NodeId] -> Gen Partition
-generatePartition nodes = frequency [(1, One <$> elements nodes)]
+generatePartition nodes =
+  frequency
+    [ (1, Split Single <$> subset 1 nodes)
+    , (1, Split Majority <$> subset (majority (length nodes)) nodes)
+    , (1, Split Minority <$> subset (majority (length nodes) - 1) nodes)
+    , (1, Split MinorityThird <$> subset (minorityThird (length nodes)) nodes)
+    ]

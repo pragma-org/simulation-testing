@@ -1,5 +1,6 @@
 module Moskstraumen.Generate (module Moskstraumen.Generate) where
 
+import Data.List ((\\))
 import Data.Maybe
 
 import Moskstraumen.Prelude
@@ -60,6 +61,15 @@ chooseInt (lo, hi) = liftGen (randomR (lo, hi))
 elements :: [a] -> Gen a
 elements [] = error "elements used with empty list"
 elements xs = (xs !!) `fmap` chooseInt (0, length xs - 1)
+
+subset :: (Eq a) => Int -> [a] -> Gen [a]
+subset n = go []
+  where
+    go acc _ | length acc >= n = return acc
+    go acc [] = error "subset using with empty list"
+    go acc xs = do
+      x <- elements xs
+      go (x : acc) (xs \\ [x])
 
 oneof :: [Gen a] -> Gen a
 oneof [] = error "oneof used with empty list"

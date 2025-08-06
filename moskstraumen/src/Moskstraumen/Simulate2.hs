@@ -33,6 +33,7 @@ import Moskstraumen.Message3
 
 import Moskstraumen.Debugger.State
 import Moskstraumen.Fault
+import Moskstraumen.Metrics as Metrics
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Random
@@ -49,6 +50,7 @@ data World i o = World
   , history :: History i o
   , journal :: Journal
   , partition :: Partition
+  , metrics :: Metrics
   }
 
 type Journal = Vector DebugEvent
@@ -79,6 +81,8 @@ data TestConfig = TestConfig
   , numberOfNodes :: Int
   , replaySeed :: Maybe Int
   , disableShrinking :: Bool
+  , verboseOnSuccess :: Bool
+  , minSize :: Int
   , maxSize :: Int
   }
 
@@ -92,6 +96,8 @@ defaultTestConfig =
     , numberOfNodes = 5
     , replaySeed = Nothing
     , disableShrinking = False
+    , verboseOnSuccess = False
+    , minSize = 0
     , maxSize = 100
     }
 
@@ -125,6 +131,7 @@ data StepFailure
   = StepSomeException SomeException
   | StepUnknownDestination NodeId
   | StepTimeoutWhenHandling String
+  | StepTooManySteps
 
 data StepResult i o
   = StepFailure StepFailure
@@ -136,16 +143,17 @@ displayStepFailure (StepUnknownDestination nodeId) =
   "unknown destination node: " <> Text.unpack (unNodeId nodeId)
 displayStepFailure (StepTimeoutWhenHandling incoming) =
   "timeout when handling: " <> incoming
+displayStepFailure StepTooManySteps = "too many steps"
 
 stepWorld ::
   (Show i, Show o, Ord i, Ord o) => World i o -> IO (StepResult i o)
 stepWorld world = do
-  putStrLn $ "STEP WORLD, messages: "
-  mapM_ (putStrLn . ("  " ++) . show) world.messages
+  --  putStrLn $ "STEP WORLD, messages: "
+  --  mapM_ (putStrLn . ("  " ++) . show) (Heap.toList world.messages)
   case Heap.pop world.messages of
     Nothing -> return (StepSuccess StepDone)
     Just ((arrivalTime, incoming), messages') -> do
-      putStrLn ("[debug] stepWorld, popped: " <> show (arrivalTime, incoming))
+      -- putStrLn ("[debug] stepWorld, popped: " <> show (arrivalTime, incoming))
       case incoming of
         InTimer nodeId -> case Map.lookup nodeId world.nodes of
           Nothing ->
@@ -155,20 +163,22 @@ stepWorld world = do
               )
           Just nodeHandle -> do
             handleOutput <- nodeHandle.advanceToTime arrivalTime
-            mapM_ Text.putStrLn handleOutput.logs
+            -- XXX: don't always show logs
+            -- mapM_ Text.putStrLn handleOutput.logs
             mTime <- nodeHandle.nextTimer
             let (clientResponses, nodeMessages) =
                   List.partition (isClientNodeId . (.dest)) handleOutput.outgoing
-            let meanMicros = 20000 -- 20ms
+            -- XXX: Make this configurable via workload?
+            let meanMicros = 200_000 -- 200ms
             let ((nodeMessages', _time), prng') =
                   generateRandomArrivalTimes
                     arrivalTime
                     meanMicros
                     (map outgoingToIncoming nodeMessages)
                     world.prng
-            print
-              $ messages'
-            print mTime
+            -- print
+            --  $ messages'
+            -- print mTime
             return
               $ StepSuccess
               $ StepContinue
@@ -229,6 +239,7 @@ stepWorld world = do
                               }
                           )
                   , partition = world.partition
+                  , metrics = world.metrics
                   }
         InFault fault@(PartitionFault partition) ->
           return
@@ -246,9 +257,9 @@ stepWorld world = do
           | incoming.src
               /= "c0"
               && affected incoming.src incoming.dest world.partition -> do
-              putStrLn
-                ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
-                )
+              -- putStrLn
+              --   ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
+              --   )
               return
                 ( StepSuccess
                     ( StepContinue
@@ -256,6 +267,8 @@ stepWorld world = do
                           { messages = messages'
                           , history =
                               world.history <> [(arrivalTime, Dropped incoming)]
+                          , metrics =
+                              world.metrics {droppedMessages = world.metrics.droppedMessages + 1}
                           }
                     )
                 )
@@ -280,7 +293,7 @@ stepWorld world = do
                     )
                   return (StepFailure (StepSomeException err))
                 Just (Right handleOutput) -> do
-                  mapM_ Text.putStrLn handleOutput.logs
+                  -- mapM_ Text.putStrLn handleOutput.logs
                   let (clientResponses, nodeMessages) =
                         List.partition (isClientNodeId . (.dest)) handleOutput.outgoing
                   let meanMicros = 20000 -- 20ms
@@ -351,6 +364,7 @@ stepWorld world = do
                                     }
                                 )
                         , partition = world.partition
+                        , metrics = world.metrics
                         }
 
 -- end snippet
@@ -360,11 +374,14 @@ runWorld ::
   (Show i, Show o, Ord i, Ord o) =>
   World i o
   -> IO (Maybe StepFailure, History i o, Journal)
-runWorld world =
-  stepWorld world >>= \case
-    StepSuccess StepDone -> return (Nothing, world.history, world.journal)
-    StepSuccess (StepContinue world') -> runWorld world'
-    StepFailure err -> return (Just err, world.history, world.journal)
+runWorld = go 10000
+  where
+    go 0 world = return (Just StepTooManySteps, world.history, world.journal)
+    go n world =
+      stepWorld world >>= \case
+        StepSuccess StepDone -> return (Nothing, world.history, world.journal)
+        StepSuccess (StepContinue world') -> go (n - 1) world'
+        StepFailure err -> return (Just err, world.history, world.journal)
 
 -- end snippet
 
@@ -382,6 +399,7 @@ newWorld deployment initialMessages prng = do
       , history = []
       , journal = Vector.empty
       , partition = None
+      , metrics = emptyMetrics
       }
 
 -- end snippet
@@ -390,7 +408,7 @@ newWorld deployment initialMessages prng = do
 
 -- start snippet TestResult
 data TestResult i o
-  = Success (History i o)
+  = Success [History i o] Metrics
   | Failure [(Time, Incoming i o)] (History i o) (Vector DebugEvent) Reason
   -- end snippet
   deriving stock (Eq, Show)
@@ -442,20 +460,25 @@ handleResult (Failure (List.sortBy (comparing fst) -> program) history journal r
   putStrLn ("Seed: " <> show seed)
   putStrLn ""
   putStrLn ("Failure: " <> reason)
-  putStrLn "Debug journal: /tmp/moskstraumen.journal"
-  LBS8.writeFile "/tmp/moskstraumen.journal" (encode journal)
+  -- BUG: calls .src/.dest/.body on InTimer, which doesn't make sense?
+  -- putStrLn "Debug journal: /tmp/moskstraumen.journal"
+  -- LBS8.writeFile "/tmp/moskstraumen.journal" (encode journal)
   return False
-handleResult (Success history) _seed = do
-  putStrLn "History:"
-  mapM_
-    ( Text.putStrLn
-        . ( \(index, (time, message)) ->
-              Text.pack (printf "%3d" index)
-                <> ". "
-                <> displayOutgoing time message
-          )
-    )
-    (zip [1 :: Int ..] history)
+handleResult (Success histories metrics) _seed = do
+  forM_ (zip [1 :: Int ..] histories) $ \(historyIndex, history) -> do
+    putStrLn ("\nHistory #" <> show historyIndex <> ":\n")
+    mapM_
+      ( Text.putStrLn
+          . ( \(index, (time, message)) ->
+                Text.pack (printf "%3d" index)
+                  <> ". "
+                  <> displayOutgoing time message
+            )
+      )
+      (zip [1 :: Int ..] history)
+  putStrLn ""
+  Text.putStrLn (displayMetrics metrics)
+  putStrLn ""
   putStrLn "Success!"
   return True
 
@@ -524,13 +547,14 @@ data RunMode = TestMode | ShrinkMode
 
 runTest ::
   (Show i, Show o, Ord i, Ord o) =>
-  Deployment i o
+  TestConfig
+  -> Deployment i o
   -> Property i o
   -> Prng
   -> RunMode
   -> [(Time, Incoming i o)]
   -> IO (TestResult i o)
-runTest deployment property prng runMode program = do
+runTest testConfig deployment property prng runMode program = do
   world <-
     newWorld
       deployment
@@ -550,7 +574,11 @@ runTest deployment property prng runMode program = do
         Pass -> do
           when (runMode == ShrinkMode)
             $ putStr "."
-          return (Success history)
+          return
+            ( Success
+                (if testConfig.verboseOnSuccess then [history] else [])
+                world.metrics
+            )
         Fail reason -> do
           when (runMode == ShrinkMode)
             $ putStr "x"
@@ -568,24 +596,46 @@ runTests ::
   -> Prng
   -> IO (TestResult i o)
 runTests testConfig deployment workload initialPrng =
-  loop testConfig.numberOfTests initialPrng initialSize emptyHistory
+  loop
+    testConfig.numberOfTests
+    initialPrng
+    initialSize
+    []
+    emptyMetrics
   where
     initialSize :: Int
     initialSize = 0
 
     loop ::
-      NumberOfTests -> Prng -> Int -> History i o -> IO (TestResult i o)
-    loop 0 _prng _size history = return (Success history)
-    loop n prng size _history = do
+      NumberOfTests
+      -> Prng
+      -> Int
+      -> [History i o]
+      -> Metrics
+      -> IO (TestResult i o)
+    loop 0 _prng _size histories metrics =
+      return
+        ( Success
+            (reverse histories)
+            metrics
+              { Metrics.numberOfTests = fromIntegral (testConfig.numberOfTests)
+              }
+        )
+    loop n prng size histories metrics = do
       let (prng', incoming) = generateIncoming prng size
       let (prng'', prng''') = splitPrng prng'
-      putStrLn
-        "\nNEW TEST ===================================================\n"
+      -- putStrLn
+      --   "\nNEW TEST ===================================================\n"
       result <-
-        runTest deployment workload.property prng'' TestMode incoming
+        runTest testConfig deployment workload.property prng'' TestMode incoming
       case result of
-        Success history ->
-          loop (n - 1) prng''' (min testConfig.maxSize ((n + 3) `div` 2)) history
+        Success histories' metrics' ->
+          loop
+            (n - 1)
+            prng'''
+            (((n + 3) `div` 2) `min` testConfig.maxSize `max` testConfig.minSize)
+            (histories' ++ histories)
+            (metrics <> metrics')
         Failure program unShrunkTrace debugTrace reason -> do
           if testConfig.disableShrinking
             then return (Failure program unShrunkTrace debugTrace reason)
@@ -599,21 +649,38 @@ runTests testConfig deployment workload initialPrng =
                     in
                       map (initMessages ++) (shrinkList (const []) list')
 
-              initialMessagesAndTrace <-
-                shrink
-                  ( fmap testResultToMaybe
-                      . runTest deployment workload.property prng ShrinkMode
+              shrinkSteps <-
+                shrinkSimple
+                  ( fmap (testResultToBool reason)
+                      . runTest testConfig deployment workload.property prng ShrinkMode
                   )
                   shrinker
                   incoming
-              let (_shrunkMessages, shrunkTrace) = NonEmpty.last initialMessagesAndTrace
-              putStrLn
-                ( "\nShrunk: "
-                    <> show (NonEmpty.length initialMessagesAndTrace)
-                    <> " times"
-                )
-              -- XXX: We need the shrunkDebugTrace here...
-              return (Failure program shrunkTrace debugTrace reason)
+              let shrunkProgram = NonEmpty.last shrinkSteps
+              assertM (program == NonEmpty.head shrinkSteps)
+              -- NOTE: we need to run the shrunk program once more to get the
+              -- history, etc.
+              result' <-
+                runTest
+                  testConfig
+                  deployment
+                  workload.property
+                  prng
+                  ShrinkMode
+                  shrunkProgram
+              case result' of
+                Success {} -> error "impossible"
+                Failure {} -> do
+                  putStrLn
+                    ( "\nShrunk: "
+                        <> show (NonEmpty.length shrinkSteps)
+                        <> " times"
+                    )
+                  return result'
+
+    testResultToBool :: Reason -> TestResult i o -> Bool
+    testResultToBool _reason Success {} = True
+    testResultToBool reason (Failure _ _ _ reason') = reason == reason'
 
     testResultToMaybe :: TestResult i o -> Maybe (History i o)
     testResultToMaybe Success {} = Nothing
@@ -629,6 +696,7 @@ runTests testConfig deployment workload initialPrng =
               workload.baseLatency
               (map InMessage initialMessages)
           )
+      let meanPartitionDuration = 5_000_000
       faults <-
         map (fmap InFault)
           <$> generatePartitions
@@ -638,7 +706,7 @@ runTests testConfig deployment workload initialPrng =
                 epoch
             , time
             )
-            (floor workload.baseLatency * 3)
+            meanPartitionDuration
       case workload.finallyGenerate of
         Nothing -> return (addMessageIds initialMessages')
         Just (delay, finallyGen) -> do
@@ -746,6 +814,7 @@ regressionTestWith testConfig node initialState property program = do
           }
   result <-
     runTest
+      testConfig
       deployment
       property
       prng

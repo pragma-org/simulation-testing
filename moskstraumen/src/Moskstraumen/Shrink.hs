@@ -3,6 +3,7 @@ module Moskstraumen.Shrink (module Moskstraumen.Shrink) where
 import Data.Containers.ListUtils (nubOrd)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Debug.Trace
 
 import Moskstraumen.Prelude
 
@@ -82,22 +83,45 @@ shrink p shr x0 = go (unfoldTree shr x0)
     go (Node x xs) = do
       xys' <- mapMaybeM' (p . root) xs
       case xys' of
-        [] -> do
-          my <- p x
-          case my of
-            Nothing -> undefined
-            Just y -> return (NonEmpty.singleton (x, y))
+        [] -> error "shrink: impossible?"
+        -- my <- p x
+        -- case my of
+        --   Nothing -> error "shrink: impossible?"
+        --   Just y -> return (NonEmpty.singleton (x, y))
         ((x', y') : _) ->
           NonEmpty.cons <$> pure (x, y') <*> go x'
+    {-# INLINE go #-}
+{-# INLINE shrink #-}
 
-mapMaybeM' :: (Monad m) => (a -> m (Maybe b)) -> [a] -> m [(a, b)]
-mapMaybeM' op = foldr f (pure [])
+mapMaybeM' ::
+  forall m a b.
+  (Monad m) =>
+  (a -> m (Maybe b))
+  -> [a]
+  -> m [(a, b)]
+mapMaybeM' op = foldrM f []
   where
+    f :: a -> [(a, b)] -> m [(a, b)]
     f x ih = do
       my <- op x
       case my of
-        Nothing -> ih
-        Just y -> do
-          xys <- ih
-          return ((x, y) : xys)
+        Nothing -> return ih
+        Just y -> return ((x, y) : ih)
 {-# INLINE mapMaybeM' #-}
+
+------------------------------------------------------------------------
+
+shrinkSimple ::
+  forall a.
+  (a -> IO Bool)
+  -> (a -> [a])
+  -> a
+  -> IO (NonEmpty a)
+shrinkSimple p shr x0 = go (unfoldTree shr x0)
+  where
+    go :: Tree a -> IO (NonEmpty a)
+    go (Node x xs) = do
+      xs' <- filterM (fmap not . p . root) xs
+      case xs' of
+        [] -> return (NonEmpty.singleton x)
+        x' : _ -> NonEmpty.cons <$> pure x <*> go x'

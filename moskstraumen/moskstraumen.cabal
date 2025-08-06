@@ -83,6 +83,7 @@ library
     Moskstraumen.Message
     Moskstraumen.Message2
     Moskstraumen.Message3
+    Moskstraumen.Metrics
     Moskstraumen.Node4
     Moskstraumen.NodeHandle
     Moskstraumen.NodeId
@@ -97,6 +98,7 @@ library
     Moskstraumen.Simulate2
     Moskstraumen.Time
     Moskstraumen.TimerWheel2
+    Moskstraumen.Topology
     Moskstraumen.VarId
     Moskstraumen.Workload
 

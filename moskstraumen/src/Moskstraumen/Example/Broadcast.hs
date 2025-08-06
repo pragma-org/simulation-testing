@@ -3,7 +3,7 @@ module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) wh
 import Control.Concurrent (forkIO, killThread)
 import Control.Exception (bracket)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.List (delete, (\\))
+import Data.List (delete, intersect, (\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -18,6 +18,7 @@ import Moskstraumen.NodeId
 import Moskstraumen.Prelude
 import Moskstraumen.Simulate2
 import Moskstraumen.Time
+import Moskstraumen.Topology
 
 ------------------------------------------------------------------------
 
@@ -116,7 +117,7 @@ broadcast (Broadcast msg) = do
                   msg -> error ("broadcast: unexpected response: " <> show msg)
               s <- getState
               info ("About to sleep, state " <> textShow s)
-              sleep 10_000 $ do
+              sleep 1_000_000 $ do
                 s <- getState
                 info ("Awake again, state: " <> textShow s)
                 go
@@ -260,9 +261,11 @@ unit_simTestBroadcast' mSeed =
       defaultTestConfig
         { replaySeed = mSeed
         , numberOfTests = 100
-        , numberOfNodes = 2
+        , numberOfNodes = 5
         , disableShrinking = True
-        , maxSize = 3
+        , verboseOnSuccess = False
+        , minSize = 10
+        , maxSize = 30
         }
 
 broadcastWorkload ::
@@ -276,21 +279,40 @@ broadcastWorkload testConfig =
     , baseLatency = 200_000 -- 200 ms
     }
   where
-    -- XXX: assert that there are numberOfNodes Read_Oks!
     historyPredicate ::
       [Outgoing BroadcastInput BroadcastOutput] -> PropertyResult
-    historyPredicate outgoing =
-      case find (\finalRead -> Set.toList broadcasted /= finalRead) finalReads of
-        Nothing -> Pass
-        Just finalRead ->
+    historyPredicate outgoing
+      | length finalReads /= testConfig.numberOfNodes =
           Fail
-            ( show finalRead
-                <> " /= "
-                <> show (Set.toList broadcasted)
-                -- <> "\nTrace predicate outgoing (for debugging only):"
-                -- <> Text.unpack (Text.unlines (map (displayOutgoing epoch) outgoing))
+            ( "Expected "
+                <> show testConfig.numberOfNodes
+                <> " final reads, but only got "
+                <> show (length finalReads)
             )
+      | otherwise =
+          let expected = [0 .. maxSuccessfulBroadcast]
+          in  case find
+                (\finalRead -> expected /= finalRead)
+                finalReads of
+                Nothing -> Pass
+                Just finalRead ->
+                  Fail
+                    ( show finalRead
+                        <> " /= "
+                        <> show expected
+                        <> ", missing: "
+                        <> show (expected \\ (finalRead `intersect` expected))
+                        -- <> "\nTrace predicate outgoing (for debugging only):"
+                        -- <> Text.unpack (Text.unlines (map (displayOutgoing epoch) outgoing))
+                    )
       where
+        -- NOTE: that [0..-1] == [], which is what we want in the finalRead
+        -- comparison above.
+        maxSuccessfulBroadcast :: Int
+        maxSuccessfulBroadcast
+          | Set.null broadcasted = -1
+          | otherwise = maximum broadcasted
+
         broadcasted :: Set Int
         broadcasted =
           foldMap
@@ -309,7 +331,7 @@ broadcastWorkload testConfig =
                 OutResponse (Response {body = Read_Ok values}) -> [values]
                 _otherwise -> []
             )
-            (take testConfig.numberOfNodes (reverse outgoing))
+            (take (testConfig.numberOfNodes * 2) (reverse outgoing))
 
     allNodes :: [NodeId]
     allNodes = map makeNodeId [1 .. testConfig.numberOfNodes]
@@ -332,7 +354,8 @@ broadcastWorkload testConfig =
               { src = "c0"
               , dest = nodeId
               , msgId = Nothing
-              , body = Topology (gridTopology allNodes)
+              , -- , body = Topology (gridTopology allNodes)
+                body = Topology (treeTopology 4 allNodes)
               }
             | nodeId <- allNodes
             ]
@@ -369,50 +392,18 @@ broadcastWorkload testConfig =
 
 ------------------------------------------------------------------------
 
--- | Arrange nodes in a square grid topology, such that each node has at most four neighbours.
-gridTopology :: [NodeId] -> Map NodeId [NodeId]
-gridTopology nodes =
-  Map.fromList
-    [ ( n
-      , concat
-          [ node (i + 1) j
-          , node (i - 1) j
-          , node i (j + 1)
-          , node i (j - 1)
-          ]
-      )
-    | i <- [0 .. side - 1]
-    , j <- [0 .. side - 1]
-    , n <- node i j
-    ]
-  where
-    len :: Int
-    len = length nodes
-
-    side :: Int
-    side = ceiling (sqrt (fromIntegral len))
-
-    node :: Int -> Int -> [NodeId]
-    node i j
-      | 0 <= idx && idx < len = [nodes !! idx]
-      | otherwise = []
-      where
-        idx :: Int
-        idx = i * side + j
-
-totalTopology :: [NodeId] -> Map NodeId [NodeId]
-totalTopology nodes = Map.fromList [(node, nodes \\ [node]) | node <- nodes]
-
 unit_btest :: IO Bool
-unit_btest =
+unit_btest = do
+  let config =
+        defaultTestConfig
+          { replaySeed = Just 1047159807563293908
+          , numberOfNodes = 2
+          }
   regressionTestWith
-    defaultTestConfig
-      { replaySeed = Just 1047159807563293908
-      , numberOfNodes = 2
-      }
+    config
     broadcast
     initialState
-    (broadcastWorkload defaultTestConfig).property
+    (broadcastWorkload config).property
     program
   where
     program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
@@ -441,7 +432,7 @@ unit_btest =
         )
       ,
         ( read "1970-01-01 00:00:01.4 UTC"
-        , InFault (PartitionFault (One "n1"))
+        , InFault (PartitionFault (Split Single ["n1"]))
         )
       ,
         ( read "1970-01-01 00:00:01.605313 UTC"
@@ -481,18 +472,25 @@ unit_btest =
         , InMessage
             (Message {src = "c1", dest = "n1", msgId = Just 7, body = Read})
         )
+      ,
+        ( read "1970-01-01 00:00:12.828164 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n2", msgId = Just 8, body = Read})
+        )
       ]
 
 unit_btest2 :: IO Bool
-unit_btest2 =
+unit_btest2 = do
+  let config =
+        defaultTestConfig
+          { replaySeed = Just 4894465900423837377
+          , numberOfNodes = 2
+          }
   regressionTestWith
-    defaultTestConfig
-      { replaySeed = Just 4894465900423837377
-      , numberOfNodes = 2
-      }
+    config
     broadcast
     initialState
-    (broadcastWorkload defaultTestConfig).property
+    (broadcastWorkload config).property
     program
   where
     program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
@@ -545,5 +543,293 @@ unit_btest2 =
         ( read "1970-01-01 00:00:11.469462 UTC"
         , InMessage
             (Message {src = "c1", dest = "n1", msgId = Just 4, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:11.569462 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n2", msgId = Just 5, body = Read})
+        )
+      ]
+
+unit_btest3 :: IO Bool
+unit_btest3 = do
+  let config =
+        defaultTestConfig
+          { replaySeed = Just 1249130125818355095
+          , numberOfNodes = 5
+          }
+  regressionTestWith
+    config
+    broadcast
+    initialState
+    (broadcastWorkload config).property
+    program
+  where
+    program :: [(Time, Incoming BroadcastInput BroadcastOutput)]
+    program =
+      [
+        ( read "1970-01-01 00:00:00.011766 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n1"
+                , msgId = Just 0
+                , body = Init {node_id = "n1", node_ids = ["n2", "n3", "n4", "n5"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:00.042117 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n2"
+                , msgId = Just 1
+                , body = Init {node_id = "n2", node_ids = ["n1", "n3", "n4", "n5"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:00.45681 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n3"
+                , msgId = Just 2
+                , body = Init {node_id = "n3", node_ids = ["n1", "n2", "n4", "n5"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:01.866705 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n4"
+                , msgId = Just 3
+                , body = Init {node_id = "n4", node_ids = ["n1", "n2", "n3", "n5"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:02 UTC"
+        , InFault (PartitionFault (Split Majority ["n1", "n2", "n3"]))
+        )
+      ,
+        ( read "1970-01-01 00:00:02.234879 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n5"
+                , msgId = Just 4
+                , body = Init {node_id = "n5", node_ids = ["n1", "n2", "n3", "n4"]}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:02.828689 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n1"
+                , msgId = Just 5
+                , body =
+                    Topology
+                      { topology =
+                          Map.fromList
+                            [ ("n1", ["n4", "n2"])
+                            , ("n2", ["n5", "n3", "n1"])
+                            , ("n3", ["n4", "n2"])
+                            , ("n4", ["n1", "n5", "n3"])
+                            ,
+                              ( "n5"
+                              ,
+                                [ "n2"
+                                , "n4"
+                                ]
+                              )
+                            ]
+                      }
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:02.954377 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n2"
+                , msgId = Just 6
+                , body =
+                    Topology
+                      { topology =
+                          Map.fromList
+                            [ ("n1", ["n4", "n2"])
+                            , ("n2", ["n5", "n3", "n1"])
+                            , ("n3", ["n4", "n2"])
+                            , ("n4", ["n1", "n5", "n3"])
+                            ,
+                              ( "n5"
+                              ,
+                                [ "n2"
+                                , "n4"
+                                ]
+                              )
+                            ]
+                      }
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:03.452165 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n3"
+                , msgId = Just 7
+                , body =
+                    Topology
+                      { topology =
+                          Map.fromList
+                            [ ("n1", ["n4", "n2"])
+                            , ("n2", ["n5", "n3", "n1"])
+                            , ("n3", ["n4", "n2"])
+                            , ("n4", ["n1", "n5", "n3"])
+                            , ("n5", ["n2", "n4"])
+                            ]
+                      }
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:03.464941 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n4"
+                , msgId = Just 8
+                , body =
+                    Topology
+                      { topology =
+                          Map.fromList
+                            [ ("n1", ["n4", "n2"])
+                            , ("n2", ["n5", "n3", "n1"])
+                            , ("n3", ["n4", "n2"])
+                            , ("n4", ["n1", "n5", "n3"])
+                            , ("n5", ["n2", "n4"])
+                            ]
+                      }
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:03.525122 UTC"
+        , InMessage
+            ( Message
+                { src = "c0"
+                , dest = "n5"
+                , msgId = Just 9
+                , body =
+                    Topology
+                      { topology =
+                          Map.fromList
+                            [ ("n1", ["n4", "n2"])
+                            , ("n2", ["n5", "n3", "n1"])
+                            , ("n3", ["n4", "n2"])
+                            , ("n4", ["n1", "n5", "n3"])
+                            , ("n5", ["n2", "n4"])
+                            ]
+                      }
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:03.540268 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n4"
+                , msgId = Just 10
+                , body = Broadcast {message = 0}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:03.575754 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 11
+                , body = Broadcast {message = 1}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:04.491381 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n5", msgId = Just 12, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:04.895583 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 13
+                , body = Broadcast {message = 2}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:05 UTC"
+        , InFault (PartitionFault None)
+        )
+      ,
+        ( read "1970-01-01 00:00:05.179292 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 14
+                , body = Broadcast {message = 3}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:05.309916 UTC"
+        , InMessage
+            ( Message
+                { src = "c1"
+                , dest = "n2"
+                , msgId = Just 15
+                , body = Broadcast {message = 4}
+                }
+            )
+        )
+      ,
+        ( read "1970-01-01 00:00:15.508996 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n1", msgId = Just 16, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:15.977401 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n2", msgId = Just 17, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:16.543683 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n3", msgId = Just 18, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:16.675896 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n4", msgId = Just 19, body = Read})
+        )
+      ,
+        ( read "1970-01-01 00:00:16.735482 UTC"
+        , InMessage
+            (Message {src = "c1", dest = "n5", msgId = Just 20, body = Read})
         )
       ]
