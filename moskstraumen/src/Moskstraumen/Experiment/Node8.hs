@@ -7,7 +7,7 @@ module Moskstraumen.Experiment.Node8 (module Moskstraumen.Experiment.Node8) wher
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception (SomeException, assert, catch)
+import Control.Exception (SomeException, assert, catch, finally)
 import Data.Aeson
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Types as Json
@@ -64,11 +64,16 @@ data NodeF s i o x
   | Get (NodeState s -> x)
   | Put (NodeState s) (() -> x)
   | Send NodeId i (() -> x)
-  | Rpc NodeId i (RpcError -> x) (o -> x) (() -> x)
   | -- NOTE: It can't be `After Int x (() -> x)`, because then the effects of
     -- the continuation (second `x`) will be part of the suspension (first `x`),
-    -- I think because of how `iterM` works...
+    -- I think because of how `iterM` works... Same with Rpc.
     After Int (NodeBody s i o ()) (() -> x)
+  | Rpc
+      NodeId
+      i
+      (RpcError -> NodeBody s i o ())
+      (o -> NodeBody s i o ())
+      (() -> x)
   | Log Text (() -> x)
   | GetTime (Time -> x)
   | -- end snippet
@@ -83,7 +88,7 @@ instance Functor (NodeF s i o) where
   fmap f (Get k) = Get (f . k)
   fmap f (Put s' k) = Put s' (f . k)
   fmap f (Send nodeId i k) = Send nodeId i (f . k)
-  fmap f (Rpc nodeId i failure success k) = Rpc nodeId i (f . failure) (f . success) (f . k)
+  fmap f (Rpc nodeId i failure success k) = Rpc nodeId i failure success (f . k)
   fmap f (After micros task k) = After micros task (f . k)
   fmap f (Log text k) = Log text (f . k)
   fmap f (GetTime k) = GetTime (f . k)
@@ -171,7 +176,7 @@ rpc ::
   -> NodeBody s i o ()
 rpc nodeId i failure success = do
   -- info $ "RPC to " <> unNodeId nodeId
-  generic (Rpc nodeId i (unNodeBody . failure) (unNodeBody . success))
+  generic (Rpc nodeId i failure success)
 
 getNodeTime :: NodeBody s i o Time
 getNodeTime = generic GetTime
@@ -199,8 +204,8 @@ syncRpc nodeId i failure = do
     $ Rpc
       nodeId
       i
-      (unNodeBody . failure)
-      (\o -> unNodeBody $ generic_ (DeliverVar varId o))
+      failure
+      (\o -> generic_ (DeliverVar varId o))
   generic (AwaitVar varId)
 
 ------------------------------------------------------------------------
@@ -233,6 +238,7 @@ data Runtime i o = Runtime
   , send :: [o] -> IO ()
   , getTime :: IO Time
   , log :: Text -> IO ()
+  , close :: IO ()
   }
 
 -- end snippet
@@ -327,7 +333,13 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
       k
         ()
         ( ns
-        , acc <> [RPC nodeId i failure success]
+        , acc
+            <> [ RPC
+                  nodeId
+                  i
+                  (\rpcError (ns', _eff) -> runNodeBody (failure rpcError) ns')
+                  (\o (ns', _eff) -> runNodeBody (success o) ns')
+               ]
         )
     go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
     go (GetTime k) (ns, acc) = k ns.theTime (ns, acc)
@@ -477,6 +489,7 @@ eventLoop ::
   -> IO ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
   where
     loop :: NodeState s -> EventLoopState s i o -> IO ()
     loop ns es = do
@@ -661,6 +674,7 @@ consoleRuntime = do
       , send = consoleSend
       , getTime = getCurrentTime
       , log = Text.hPutStrLn stderr
+      , close = return ()
       }
   where
     consoleReceive :: IO [ByteString]
@@ -678,6 +692,41 @@ consoleRuntime = do
       BS8.hPutStrLn stdout bytes
 
 -- end snippet
+
+concurrentConsoleRuntime :: IO (Runtime ByteString ByteString)
+concurrentConsoleRuntime = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  receiveQueue <- newTBQueueIO 128
+  sendQueue <- newTBQueueIO 128
+  rtid <- forkIO $ forever $ do
+    line <- BS8.hGetLine stdin
+    if BS8.null line
+      then return ()
+      else atomically (writeTBQueue receiveQueue line)
+  stid <- forkIO $ forever $ do
+    bytes <- atomically (readTBQueue sendQueue)
+    BS8.hPutStrLn stdout bytes
+  return
+    Runtime
+      { receive = \micros -> Timeout.timeout micros (consoleReceive receiveQueue)
+      , send = consoleSend sendQueue
+      , getTime = getCurrentTime
+      , log = Text.hPutStrLn stderr
+      , close = killThread rtid >> killThread stid
+      }
+  where
+    consoleReceive :: TBQueue ByteString -> IO [ByteString]
+    consoleReceive receiveQueue = do
+      line <- atomically (readTBQueue receiveQueue)
+      -- BS8.hPutStrLn stderr ("consoleRuntime: received: " <> line)
+      return [line]
+
+    consoleSend :: TBQueue ByteString -> [ByteString] -> IO ()
+    consoleSend sendQueue = mapM_ $ \bytes -> do
+      -- BS8.hPutStrLn stderr ("consoleRuntime: sent: " <> bytes)
+      atomically (writeTBQueue sendQueue bytes)
 
 data FakeTime = FakeTime (TVar Time)
 
@@ -782,6 +831,7 @@ testRuntime = do
         , send = atomically . mapM_ (writeTQueue outgoing)
         , getTime = readFakeTimeIO fakeTime
         , log = Text.hPutStrLn stderr
+        , close = return ()
         }
     , TestHandle
         { fakeTime = fakeTime
@@ -889,6 +939,7 @@ simulationNodeHandle node initialState = do
           , log = \text -> modifyMVar_ logsMVar (\texts -> return (texts <> [text]))
           , --  \text -> Text.putStrLn text
             getTime = readFakeTimeIO fakeTime
+          , close = return ()
           }
 
   let step :: Bool -> IO (HandleOutput i o)

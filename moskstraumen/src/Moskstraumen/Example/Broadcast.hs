@@ -76,7 +76,8 @@ broadcast (Topology nodeIds) = do
   reply Topology_Ok
 broadcast (Broadcast msg) = do
   sender <- getSender
-  info ("Got broadcast " <> textShow msg <> " from " <> textShow sender)
+  info
+    ("Acking broadcast " <> textShow msg <> " from " <> textShow sender)
   -- Acknowledge the request.
   reply Broadcast_Ok
   seenMessages <- seen <$> getState
@@ -96,25 +97,28 @@ broadcast (Broadcast msg) = do
                     <> "\" to "
                     <> Text.pack (show unAckedNodes)
                 )
-              forM_ unAckedNodes $ \nodeId -> rpc
-                nodeId
-                (Broadcast msg)
-                ( \rpcError ->
-                    info
-                      ( "Failed to deliver "
-                          <> fromString (show msg)
-                          <> " to "
-                          <> unNodeId nodeId
-                          <> ": "
-                          <> fromString (show rpcError)
-                      )
-                )
-                $ \case
-                  Broadcast_Ok -> do
-                    info ("Got ack from: " <> unNodeId nodeId)
-                    modifyState
-                      (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
-                  msg -> error ("broadcast: unexpected response: " <> show msg)
+              forM_ unAckedNodes $ \nodeId -> do
+                info ("Sending RPC to: " <> unNodeId nodeId)
+                rpc
+                  nodeId
+                  (Broadcast msg)
+                  ( \rpcError ->
+                      info
+                        ( "Failed to deliver "
+                            <> fromString (show msg)
+                            <> " to "
+                            <> unNodeId nodeId
+                            <> ": "
+                            <> fromString (show rpcError)
+                        )
+                  )
+                  ( \case
+                      Broadcast_Ok -> do
+                        info ("Got ack from: " <> unNodeId nodeId)
+                        modifyState
+                          (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
+                      msg -> error ("broadcast: unexpected response: " <> show msg)
+                  )
               s <- getState
               info ("About to sleep, state " <> textShow s)
               sleep 1_000_000 $ do
@@ -131,7 +135,7 @@ broadcast Read = do
 
 libMain :: IO ()
 libMain = do
-  runtime <- consoleRuntime
+  runtime <- concurrentConsoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
 
 test_broadcast :: IO ()
