@@ -47,7 +47,7 @@ totalTopology nodes = Map.fromList [(node, nodes \\ [node]) | node <- nodes]
 -- XXX: Hardcoded to 5 nodes and b = 4.
 -- Arranges nodes into a tree with branch factor b.
 treeTopology :: Int -> [NodeId] -> Map NodeId [NodeId]
-treeTopology b nodes =
+treeTopology 4 [_, _, _, _, _] =
   Map.fromList
     [ (makeNodeId 1, [makeNodeId 2, makeNodeId 3, makeNodeId 4, makeNodeId 5])
     , (makeNodeId 2, [makeNodeId 1])
@@ -55,3 +55,4 @@ treeTopology b nodes =
     , (makeNodeId 4, [makeNodeId 1])
     , (makeNodeId 5, [makeNodeId 1])
     ]
+treeTopology _ _ = error "treeTopology: not implemented yet"
