@@ -190,8 +190,8 @@ info text = do
         ("[info] (" <> textShow now <> ") [" <> unNodeId self <> "] " <> text)
     )
 
-sleep :: Int -> NodeBody s i o () -> NodeBody s i o ()
-sleep micros body = generic (After micros body)
+after :: Int -> NodeBody s i o () -> NodeBody s i o ()
+after micros body = generic (After micros body)
 
 syncRpc ::
   NodeId

@@ -40,7 +40,7 @@ debugSleep (Init self nodeIds) = do
     )
   setSelf self
   setNeighbours nodeIds
-  sleep 3_000_000 $ do
+  after 3_000_000 $ do
     b <- getState
     info ("State is: " <> textShow b)
   reply Init_Ok

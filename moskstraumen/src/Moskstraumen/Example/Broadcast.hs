@@ -121,7 +121,7 @@ broadcast (Broadcast msg) = do
                   )
               s <- getState
               info ("About to sleep, state " <> textShow s)
-              sleep 1_000_000 $ do
+              after 1_000_000 $ do
                 s <- getState
                 info ("Awake again, state: " <> textShow s)
                 go
