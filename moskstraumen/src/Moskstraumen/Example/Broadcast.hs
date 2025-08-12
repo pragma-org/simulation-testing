@@ -157,12 +157,12 @@ unit_simTestBroadcast' mSeed =
     config =
       defaultTestConfig
         { replaySeed = mSeed
-        , numberOfTests = 3
+        , numberOfTests = 100
         , numberOfNodes = 5
         , disableShrinking = True
         , verboseOnSuccess = True
-        , minSize = 10
-        , maxSize = 30
+        , minSize = 30
+        , maxSize = 100
         }
 
 broadcastWorkload ::

@@ -74,8 +74,8 @@ data NodeF s i o x
       (RpcError -> NodeBody s i o ())
       (o -> NodeBody s i o ())
       (() -> x)
-  | Log Text (() -> x)
   | GetTime (Time -> x)
+  | Log Text (() -> x)
   | -- end snippet
     -- Fail String
     NewVar (VarId -> x)
@@ -152,7 +152,7 @@ modifyState f = do
 setSelf :: NodeId -> NodeBody s i o ()
 setSelf self = do
   ns <- generic Get
-  generic (Put ns {self = self})
+  generic (Put ns {self})
 
 getSelf :: NodeBody s i o NodeId
 getSelf = self <$> generic Get
@@ -160,7 +160,7 @@ getSelf = self <$> generic Get
 setNeighbours :: [NodeId] -> NodeBody s i o ()
 setNeighbours neighbours = do
   ns <- generic Get
-  generic (Put ns {neighbours = neighbours})
+  generic (Put ns {neighbours})
 
 getNeighbours :: NodeBody s i o [NodeId]
 getNeighbours = neighbours <$> generic Get
@@ -223,7 +223,7 @@ syncRpc nodeId i failure = do
 -- echoNode (Echo input) = reply (Echo_Ok input)
 --
 reply :: o -> NodeBody s i o ()
-reply output = NodeBody (Free (Reply output Pure))
+reply output = generic (Reply output)
 
 -- end snippet
 
@@ -279,7 +279,7 @@ runNode ::
   -> NodeState s
   -> i
   -> (NodeState s, [Effect s i o])
-runNode node s i = runNodeBody (node i) s
+runNode node ns i = runNodeBody (node i) (ns, [])
 
 -- end snippet
 
@@ -289,9 +289,9 @@ runNode node s i = runNodeBody (node i) s
 runNodeBody ::
   forall s i o a.
   NodeBody s i o a
-  -> NodeState s
   -> (NodeState s, [Effect s i o])
-runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
+  -> (NodeState s, [Effect s i o])
+runNodeBody (NodeBody m) = iterM go done m
   where
     done ::
       a -> (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
@@ -302,7 +302,7 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
         (NodeF s i o)
         ((NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o]))
     go (Reply o k) (ns, acc) = k () (ns, acc <> [REPLY o])
-    go (Send nodeId i k) (s, acc) = k () (ns, acc <> [SEND nodeId i])
+    go (Send nodeId i k) (ns, acc) = k () (ns, acc <> [SEND nodeId i])
     go (Get k) (s, acc) = k s (s, acc)
     go (Put s' k) (s, acc) = k () (s', acc)
     go (Rpc nodeId i failure success k) (ns, acc) =
@@ -313,14 +313,14 @@ runNodeBody (NodeBody m) ns = iterM go done m (ns, [])
             <> [ RPC
                   nodeId
                   i
-                  (\rpcError (ns', _eff) -> runNodeBody (failure rpcError) ns')
-                  (\o (ns', _eff) -> runNodeBody (success o) ns')
+                  (\rpcError -> runNodeBody (failure rpcError))
+                  (\o -> runNodeBody (success o))
                ]
         )
     go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
     go (GetTime k) (ns, acc) = k ns.theTime (ns, acc)
     go (After micros m k) (ns, acc) =
-      k () (ns, acc <> [AFTER micros (\(ns', _eff) -> runNodeBody m ns')])
+      k () (ns, acc <> [AFTER micros (runNodeBody m)])
     -- end snippet
     --    go (NewVar k) (s, acc) = do
     --      let varId = s.nextVarId
