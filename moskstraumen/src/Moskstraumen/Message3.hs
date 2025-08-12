@@ -68,7 +68,7 @@ instance HasField "dest" (Incoming i o) NodeId where
   getField (InMessage msg) = msg.dest
   getField (InResponse resp) = resp.dest
   getField (InRpcError _err) = error "Incoming.dest InRpcError"
-  getField (InTimer nodeId) = error "Incoming.dest InTimer"
+  getField (InTimer _nodeId) = error "Incoming.dest InTimer"
 
 instance HasField "body" (Incoming i o) (Either i o) where
   getField (InMessage msg) = Left msg.body

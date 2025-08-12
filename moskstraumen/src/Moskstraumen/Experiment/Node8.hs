@@ -229,30 +229,6 @@ reply output = NodeBody (Free (Reply output Pure))
 
 ------------------------------------------------------------------------
 
--- start snippet Runtime
-
-type Timeout = Int
-
-data Runtime i o = Runtime
-  { receive :: Timeout -> IO (Maybe [i])
-  , send :: [o] -> IO ()
-  , getTime :: IO Time
-  , log :: Text -> IO ()
-  , close :: IO ()
-  }
-
--- end snippet
--- , log :: Text -> m ()
--- , timeout ::
---     Microseconds
---     -> m [(Time, Message)]
---     -> m (Maybe [(Time, Message)])
--- , getCurrentTime :: m Time
--- , shutdown :: m ()
-
--- , rpcs :: Map MessageId (Message Value -> NodeBody s i o ())
--- , nextVarId :: VarId
-
 -- start snippet initialNodeState
 initialNodeState :: s -> NodeState s
 initialNodeState s =
@@ -757,90 +733,6 @@ writeFakeTimeIO fakeTime time = do
   -- putStrLn ("writeFakeTimeIO: new time:" <> show time)
   atomically (writeFakeTime fakeTime time)
 
-data TestHandle i o = TestHandle
-  { fakeTime :: FakeTime
-  , inQueue :: TQueue (Time, Incoming i o)
-  , outQueue :: TQueue (Outgoing i o)
-  , lock :: MVar ()
-  }
-
-withLock :: MVar () -> String -> IO a -> IO a
-withLock lock who io = do
-  withMVar lock $ \_ -> do
-    putStrLn (who <> " taking lock")
-    x <- io
-    putStrLn (who <> " releasing lock")
-    return x
-
-testRuntime ::
-  forall i o.
-  IO (Runtime (Incoming i o) (Outgoing i o), TestHandle i o)
-testRuntime = do
-  fakeTime <- newFakeTime epoch
-  incoming <- newTQueueIO
-  outgoing <- newTQueueIO
-  lock <- newMVar ()
-  return
-    ( Runtime
-        { receive = \micros ->
-            do
-              start <- readFakeTimeIO fakeTime
-
-              let timeoutTime = addTimeMicros micros start
-
-              let step :: Time -> STM (Either () (Maybe [Incoming i o]))
-                  step timeoutTime = do
-                    now <- readFakeTime fakeTime
-                    -- traceM $ "timeoutTime: " <> show timeoutTime <> ", now: " <> show now
-                    if timeoutTime < now
-                      then return (Right Nothing)
-                      else do
-                        tryReadTQueue incoming >>= \case
-                          Nothing -> return (Left ())
-                          Just (arrivalTime, msg) -> do
-                            -- traceM $ "arrivalTime: " <> show arrivalTime
-                            if timeoutTime < arrivalTime
-                              then
-                                if now >= arrivalTime
-                                  then -- Next message got receieved.
-                                    return (Right (Just [msg]))
-                                  else do
-                                    -- Still waiting.
-                                    unGetTQueue incoming (arrivalTime, msg)
-                                    return (Left ())
-                              else
-                                if now >= arrivalTime
-                                  then return (Right (Just [msg]))
-                                  else
-                                    if now > timeoutTime
-                                      then do
-                                        unGetTQueue incoming (arrivalTime, msg)
-                                        return (Right Nothing)
-                                      else do
-                                        unGetTQueue incoming (arrivalTime, msg)
-                                        return (Left ())
-
-              let loop :: IO (Maybe [Incoming i o])
-                  loop = do
-                    result <- withLock lock "loop" (atomically (step timeoutTime))
-                    case result of
-                      -- FIXME: shorter sleep results in node receiving client responses?!
-                      Left () -> threadDelay 10000 >> loop
-                      Right mIncoming -> return mIncoming
-              loop
-        , send = atomically . mapM_ (writeTQueue outgoing)
-        , getTime = readFakeTimeIO fakeTime
-        , log = Text.hPutStrLn stderr
-        , close = return ()
-        }
-    , TestHandle
-        { fakeTime = fakeTime
-        , inQueue = incoming
-        , outQueue = outgoing
-        , lock = lock
-        }
-    )
-
 -- (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
 jsonCodec ::
   ( Generic i
@@ -886,6 +778,20 @@ data HandleOutput i o = HandleOutput
   , afterState :: Text
   , logs :: [Text]
   }
+
+-- start snippet Runtime
+
+type Timeout = Int
+
+data Runtime i o = Runtime
+  { receive :: Timeout -> IO (Maybe [i])
+  , send :: [o] -> IO ()
+  , getTime :: IO Time
+  , log :: Text -> IO ()
+  , close :: IO ()
+  }
+
+-- end snippet
 
 data NodeHandle i o = NodeHandle
   { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
@@ -1116,104 +1022,3 @@ testCodec =
     { decodeIncoming = Right
     , encodeOutgoing = id
     }
-
--- test_echo :: IO ()
--- test_echo = do
---   (runtime, testHandle) <- testRuntime
---   pid <- forkIO (eventLoop echoNode () testCodec runtime)
---   sendTest
---     testHandle
---     1
---     ( Message
---         { src = "test"
---         , dest = "n1"
---         , msgId = Just 5
---         , body = Echo "hi"
---         }
---     )
---   expectNoRecv testHandle
---   advanceTime testHandle 1
---   expectRecv
---     testHandle
---     ( Response
---         { src = "uninitialised"
---         , dest = "test"
---         , msgId = Just 0
---         , inReplyTo = 5
---         , body = Echo_Ok "hi"
---         }
---     )
---
-
-sendTest :: (Show i) => TestHandle i o -> Int -> Message i -> IO ()
-sendTest testHandle afterMicros input = withLock testHandle.lock "sendTest" $ do
-  hPutStrLn stderr $ ">> sendTest: " <> show input
-  atomically $ do
-    now <- readFakeTime testHandle.fakeTime
-    writeTQueue
-      testHandle.inQueue
-      (addTimeMicros afterMicros now, InMessage input)
-
-respondTest :: (Show o) => TestHandle i o -> Int -> Response o -> IO ()
-respondTest testHandle afterMicros input = withLock testHandle.lock "respondTest" $ do
-  hPutStrLn stderr $ ">> respondTest: " <> show input
-  atomically $ do
-    now <- readFakeTime testHandle.fakeTime
-    writeTQueue
-      testHandle.inQueue
-      (addTimeMicros afterMicros now, InResponse input)
-
-expectRecv ::
-  (Eq o, Show i, Show o) => TestHandle i o -> Response o -> IO ()
-expectRecv testHandle expectedOutput = do
-  -- withLock testHandle.lock "expectRecv" $ do
-  atomically (readTQueue testHandle.outQueue) >>= \case
-    OutMessage input ->
-      error
-        ("expectRecv: expected response, but got message:\n" <> show input)
-    OutResponse actualOutput ->
-      if actualOutput == expectedOutput
-        then hPutStrLn stderr $ ">> expectRecv: " <> show expectedOutput
-        else
-          error
-            ( "\nExpected: "
-                <> show expectedOutput
-                <> "\nGot:      "
-                <> show actualOutput
-            )
-
-expectRecvMessage ::
-  (Eq i, Show i, Show o) => TestHandle i o -> Message i -> IO ()
-expectRecvMessage testHandle expectedOutput = do
-  -- withLock testHandle.lock "expectRecvMessage" $ do
-  atomically (readTQueue testHandle.outQueue) >>= \case
-    OutMessage actualOutput ->
-      if actualOutput == expectedOutput
-        then hPutStrLn stderr $ ">> expectRecvMessage: " <> show expectedOutput
-        else
-          error
-            ( "\nExpected: "
-                <> show expectedOutput
-                <> "\nGot:      "
-                <> show actualOutput
-            )
-    OutResponse _ -> error "Expecting message, but got reponse"
-
-expectNoRecv :: TestHandle i o -> IO ()
-expectNoRecv testHandle =
-  withLock testHandle.lock "expectNoRecv"
-    $ assertM
-    =<< atomically (isEmptyTQueue testHandle.outQueue)
-
-advanceTime :: TestHandle i o -> Int -> IO ()
-advanceTime testHandle micros = withLock testHandle.lock "advanceTime"
-  $ atomically
-  $ do
-    now <- readFakeTime testHandle.fakeTime
-    writeFakeTime testHandle.fakeTime (addTimeMicros micros now)
-
--- hPutStrLn stderr
---   $ ">> advanceTime, now: "
---   <> show now
---   <> ", later: "
---   <> show later
