@@ -10,9 +10,7 @@ import Moskstraumen.LinearTemporalLogic
 import Moskstraumen.Message
 import Moskstraumen.NodeId
 import Moskstraumen.Prelude
-import Moskstraumen.Simulate
 import Moskstraumen.Workload
-import System.Process (readProcess)
 
 ------------------------------------------------------------------------
 

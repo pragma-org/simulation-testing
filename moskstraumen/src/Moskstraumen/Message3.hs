@@ -25,7 +25,7 @@ import Moskstraumen.Prelude
 ------------------------------------------------------------------------
 --
 newtype MessageId = MessageId Word64
-  deriving newtype (Eq, Ord, Show, Num, Enum)
+  deriving newtype (Eq, Ord, Show, Read, Num, Enum)
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -35,7 +35,7 @@ data Message i = Message
   , msgId :: Maybe MessageId
   , body :: i
   }
-  deriving stock (Show, Eq, Ord)
+  deriving stock (Show, Read, Eq, Ord)
 
 data Response o = Response
   { src :: NodeId
@@ -44,10 +44,10 @@ data Response o = Response
   , inReplyTo :: MessageId
   , body :: o
   }
-  deriving stock (Show, Eq, Ord)
+  deriving stock (Show, Read, Eq, Ord)
 
 data RpcError = Timeout
-  deriving stock (Show, Eq, Ord, Generic)
+  deriving stock (Show, Read, Eq, Ord, Generic)
   deriving anyclass (FromJSON)
 
 data Incoming i o
@@ -56,7 +56,7 @@ data Incoming i o
   | InRpcError RpcError
   | InFault Fault
   | InTimer NodeId
-  deriving stock (Show, Eq, Ord)
+  deriving stock (Show, Read, Eq, Ord)
 
 instance HasField "src" (Incoming i o) NodeId where
   getField (InMessage msg) = msg.src
@@ -96,7 +96,7 @@ data Outgoing i o
   | OutRpcError RpcError
   | OutFault Fault
   | Dropped (Incoming i o)
-  deriving stock (Show, Eq)
+  deriving stock (Show, Read, Eq)
 
 incomingToOutgoing :: Incoming i o -> Outgoing i o
 incomingToOutgoing (InMessage msg) = OutMessage msg

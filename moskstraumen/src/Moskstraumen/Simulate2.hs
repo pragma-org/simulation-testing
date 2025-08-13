@@ -789,7 +789,7 @@ simulationTestWith testConfig node initialState workload = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = simulationNodeHandle node initialState
+          , spawn = inProcessSimulationNodeHandle node initialState
           }
   result <- runTests testConfig deployment workload prng
   handleResult result seed
@@ -815,7 +815,7 @@ regressionTestWith testConfig node initialState property program = do
   let deployment =
         Deployment
           { numberOfNodes = testConfig.numberOfNodes
-          , spawn = simulationNodeHandle node initialState
+          , spawn = inProcessSimulationNodeHandle node initialState
           }
   result <-
     runTest

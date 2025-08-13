@@ -10,15 +10,15 @@ import Moskstraumen.Time
 ------------------------------------------------------------------------
 
 data Fault = PartitionFault Partition
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Show, Read, Eq, Ord)
 
 data Partition
   = None
   | Split SplitKind [NodeId]
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Show, Read, Eq, Ord)
 
 data SplitKind = Single | Majority | Minority | MinorityThird
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Show, Read, Eq, Ord)
 
 ------------------------------------------------------------------------
 

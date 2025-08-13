@@ -23,6 +23,7 @@ import GHC.Generics (Rep)
 import System.IO
 import System.Process
 import qualified System.Timeout as Timeout
+import Text.Read (readEither)
 
 import Moskstraumen.FreeMonad
 import Moskstraumen.Message3
@@ -43,18 +44,6 @@ import Moskstraumen.VarId
 type Node s i o = i -> NodeBody s i o ()
 
 newtype NodeBody s i o a = NodeBody {unNodeBody :: Free (NodeF s i o) a}
-
--- end snippet
-
--- start snippet NodeState
-data NodeState s = NodeState
-  { localState :: s
-  , self :: NodeId
-  , theTime :: Time
-  , neighbours :: [NodeId]
-  , sender :: NodeId
-  , inReplyTo :: MessageId
-  }
 
 -- end snippet
 
@@ -82,6 +71,18 @@ data NodeF s i o x
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
   | At Time x (() -> x)
+
+-- start snippet NodeState
+data NodeState s = NodeState
+  { localState :: s
+  , self :: NodeId
+  , nodeTime :: Time
+  , neighbours :: [NodeId]
+  , sender :: NodeId
+  , inReplyTo :: MessageId
+  }
+
+-- end snippet
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
@@ -235,7 +236,7 @@ initialNodeState s =
   NodeState
     { localState = s
     , self = "uninitialised"
-    , theTime = epoch
+    , nodeTime = epoch
     , neighbours = []
     , sender = "uninitialised"
     , inReplyTo = -1
@@ -318,7 +319,7 @@ runNodeBody (NodeBody m) = iterM go done m
                ]
         )
     go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
-    go (GetTime k) (ns, acc) = k ns.theTime (ns, acc)
+    go (GetTime k) (ns, acc) = k ns.nodeTime (ns, acc)
     go (After micros m k) (ns, acc) =
       k () (ns, acc <> [AFTER micros (runNodeBody m)])
     -- end snippet
@@ -409,7 +410,7 @@ stepEventLoop node codec runtime ns es = do
           -- We didn't receive a message within `micros`, and therefor need to
           -- handle the timer.
           now <- runtime.getTime
-          let (ns'', effects) = k (ns {theTime = now}, [])
+          let (ns'', effects) = k (ns {nodeTime = now}, [])
           -- runtime.log
           --   $ "[debug] "
           --   <> textShow now
@@ -472,6 +473,87 @@ eventLoop node initialState codec runtime =
       (ns', es') <- stepEventLoop node codec runtime ns es
       loop ns' es'
 
+data SimulationCommand i o
+  = Handle Time (Incoming i o)
+  | NextTimer
+  | AdvanceToTime Time
+  deriving stock (Show, Read)
+
+data SimulationResponse i o
+  = HandleResponse [Outgoing i o]
+  | NextTimerResponse (Maybe Time)
+  | AdvanceToTimeResponse [Outgoing i o]
+  deriving stock (Show, Read)
+
+simulationRuntime ::
+  MVar (Incoming i o)
+  -> MVar [Outgoing i o]
+  -> IO (Runtime (Incoming i o) (Outgoing i o))
+simulationRuntime inputMVar outputMVar = do
+  return
+    Runtime
+      { send = putMVar outputMVar
+      , receive = \timeout -> case timeout of
+          0 -> return Nothing
+          _ -> Just . (: []) <$> takeMVar inputMVar
+      , getTime = undefined
+      , log = undefined
+      , close = return ()
+      }
+
+simulationEventLoop ::
+  forall s i o.
+  (Show s, Show i, Show o, Read i, Read o) =>
+  Node s i o
+  -> s
+  -> IO ()
+simulationEventLoop node initialState = do
+  inputMVar <- newEmptyMVar
+  outputMVar <- newEmptyMVar
+  runtime <- simulationRuntime inputMVar outputMVar
+  loop
+    inputMVar
+    outputMVar
+    runtime
+    (initialNodeState initialState)
+    initialEventLoopState
+    `finally` runtime.close
+  where
+    loop ::
+      MVar (Incoming i o)
+      -> MVar [Outgoing i o]
+      -> Runtime (Incoming i o) (Outgoing i o)
+      -> NodeState s
+      -> EventLoopState s i o
+      -> IO ()
+    loop inputMVar outputMVar runtime ns es = do
+      line <- hGetLine stdin
+      case readEither line of
+        Right (Handle arrivalTime incoming) -> do
+          putMVar inputMVar incoming
+          (ns', es') <-
+            stepEventLoop node testCodec runtime ns {nodeTime = arrivalTime} es
+          outgoing <- takeMVar outputMVar
+          hPutStrLn
+            stdout
+            (show (HandleResponse outgoing))
+          loop inputMVar outputMVar runtime ns' es'
+        Right NextTimer -> do
+          let mNextTimer = TimerWheel.nextTimer es.pendingTimers
+          hPutStrLn
+            stdout
+            (show (NextTimerResponse mNextTimer :: SimulationResponse i o))
+          loop inputMVar outputMVar runtime ns es
+        Right (AdvanceToTime newTime) -> do
+          (ns', es') <-
+            stepEventLoop node testCodec runtime ns {nodeTime = newTime} es
+          outgoing <- takeMVar outputMVar
+          hPutStrLn
+            stdout
+            (show (AdvanceToTimeResponse outgoing))
+          loop inputMVar outputMVar runtime ns' es'
+        Left err -> error ("simulationEventLoop, failed to parse input: " <> err)
+
 handleIncoming ::
   forall s i_ i o_ o.
   (Show s, Show i_, Show i, Show o) =>
@@ -516,7 +598,7 @@ handleIncoming node codec runtime = go []
                           error
                             ("handleIncoming: message doesn't have msgId set: " <> show message)
                         Just msgId -> msgId
-                    , theTime = now
+                    , nodeTime = now
                     }
                   message.body
           -- hPutStrLn stderr ("InMessage, effects: " <> show effects)
@@ -528,7 +610,7 @@ handleIncoming node codec runtime = go []
             Just k -> do
               now <- runtime.getTime
               -- hPutStrLn stderr ("Resuming success with state: " <> show ns.localState)
-              let (ns', effects) = k response.body (ns {theTime = now}, [])
+              let (ns', effects) = k response.body (ns {nodeTime = now}, [])
               -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
               let es' =
                     es
@@ -802,11 +884,44 @@ data NodeHandle i o = NodeHandle
 
 simulationNodeHandle ::
   forall s i o.
+  FilePath
+  -> [String]
+  -> IO (NodeHandle i o)
+simulationNodeHandle filePath args = do
+  --  (Just hin, Just hout, _, processHandle) <-
+  --    createProcess
+  --      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
+  --  return
+  --    NodeHandle
+  --      { handle = \_arrivalTime incoming -> do
+  --          LBS8.hPutStr hin (encodeIncoming incoming)
+  --          BS8.hPutStr hin "\n"
+  --          hFlush hin
+  --          line <- BS8.hGetLine hout
+  --          case decodeOutgoing line of
+  --            Left err -> hPutStrLn stderr err >> return []
+  --            Right outgoing -> return [outgoing]
+  --      , close = terminateProcess processHandle
+  --      }
+  let handle = \arrivalTime incoming -> undefined
+  let nextTimer = undefined
+  let advanceToTime = undefined
+  let close = return ()
+  return
+    NodeHandle
+      { handle
+      , nextTimer
+      , advanceToTime
+      , close
+      }
+
+inProcessSimulationNodeHandle ::
+  forall s i o.
   (Show s, Show i, Show o) =>
   Node s i o
   -> s
   -> IO (NodeHandle i o)
-simulationNodeHandle node initialState = do
+inProcessSimulationNodeHandle node initialState = do
   ref <- newIORef (initialNodeState initialState, initialEventLoopState)
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar

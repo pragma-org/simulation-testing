@@ -11,7 +11,7 @@ import Moskstraumen.Prelude
 newtype NodeId = NodeId Text
   -- end snippet
   deriving stock (Generic)
-  deriving newtype (Eq, Ord, Show, IsString, ToJSONKey, FromJSONKey)
+  deriving newtype (Eq, Ord, Show, Read, IsString, ToJSONKey, FromJSONKey)
   deriving anyclass (FromJSON, ToJSON)
 
 unNodeId :: NodeId -> Text
