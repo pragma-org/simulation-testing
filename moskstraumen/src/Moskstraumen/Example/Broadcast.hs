@@ -1,7 +1,5 @@
 module Moskstraumen.Example.Broadcast (module Moskstraumen.Example.Broadcast) where
 
-import Control.Concurrent (forkIO, killThread)
-import Control.Exception (bracket)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.List (delete, intersect, (\\))
 import Data.Map.Strict (Map)
@@ -164,6 +162,8 @@ unit_simTestBroadcast' mSeed =
         , numberOfNodes = 5
         , disableShrinking = True
         , verboseOnSuccess = True
+        , minSize = 30
+        , maxSize = 100
         }
 
 broadcastWorkload ::

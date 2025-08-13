@@ -488,15 +488,19 @@ data SimulationResponse i o
 simulationRuntime ::
   MVar (Incoming i o)
   -> MVar [Outgoing i o]
+  -> FakeTime
   -> IO (Runtime (Incoming i o) (Outgoing i o))
-simulationRuntime inputMVar outputMVar = do
+simulationRuntime inputMVar outputMVar fakeTime = do
   return
     Runtime
       { send = putMVar outputMVar
       , receive = \timeout -> case timeout of
           0 -> return Nothing
-          _ -> Just . (: []) <$> takeMVar inputMVar
-      , getTime = return epoch
+          _ ->
+            Just . (: [])
+              <$> takeMVar inputMVar
+                `catch` (\(_err :: SomeException) -> error "takeMVar input")
+      , getTime = readFakeTimeIO fakeTime
       , log = Text.hPutStrLn stderr
       , close = return ()
       }
@@ -510,10 +514,15 @@ simulationEventLoop ::
 simulationEventLoop node initialState = do
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
-  runtime <- simulationRuntime inputMVar outputMVar
+  fakeTime <- newFakeTime epoch
+  runtime <- simulationRuntime inputMVar outputMVar fakeTime
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
   loop
     inputMVar
     outputMVar
+    fakeTime
     runtime
     (initialNodeState initialState)
     initialEventLoopState
@@ -522,36 +531,41 @@ simulationEventLoop node initialState = do
     loop ::
       MVar (Incoming i o)
       -> MVar [Outgoing i o]
+      -> FakeTime
       -> Runtime (Incoming i o) (Outgoing i o)
       -> NodeState s
       -> EventLoopState s i o
       -> IO ()
-    loop inputMVar outputMVar runtime ns es = do
+    loop inputMVar outputMVar fakeTime runtime ns es = do
       line <- hGetLine stdin
       case readEither line of
         Right (Handle arrivalTime incoming) -> do
           putMVar inputMVar incoming
+          -- XXX: This `writeFakeTimeIO` is key, otherwise we get a timeout in
+          -- the `takeMVar input`?! Why?
+          writeFakeTimeIO fakeTime arrivalTime
           (ns', es') <-
             stepEventLoop node testCodec runtime ns {nodeTime = arrivalTime} es
           outgoing <- takeMVar outputMVar
           hPutStrLn
             stdout
             (show (HandleResponse outgoing))
-          loop inputMVar outputMVar runtime ns' es'
+          loop inputMVar outputMVar fakeTime runtime ns' es'
         Right NextTimer -> do
           let mNextTimer = TimerWheel.nextTimer es.pendingTimers
           hPutStrLn
             stdout
             (show (NextTimerResponse mNextTimer :: SimulationResponse i o))
-          loop inputMVar outputMVar runtime ns es
+          loop inputMVar outputMVar fakeTime runtime ns es
         Right (AdvanceToTime newTime) -> do
+          writeFakeTimeIO fakeTime newTime
           (ns', es') <-
             stepEventLoop node testCodec runtime ns {nodeTime = newTime} es
           outgoing <- takeMVar outputMVar
           hPutStrLn
             stdout
             (show (AdvanceToTimeResponse outgoing))
-          loop inputMVar outputMVar runtime ns' es'
+          loop inputMVar outputMVar fakeTime runtime ns' es'
         Left err -> error ("simulationEventLoop, failed to parse input: " <> err)
 
 handleIncoming ::
@@ -895,6 +909,9 @@ simulationNodeHandle binaryFilePath arguments = do
         { std_in = CreatePipe
         , std_out = CreatePipe
         }
+  hSetBuffering hin LineBuffering
+  hSetBuffering hout LineBuffering
+  hSetBuffering stderr LineBuffering
   return
     NodeHandle
       { handle = \arrivalTime incoming -> do
