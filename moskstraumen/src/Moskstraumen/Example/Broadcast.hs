@@ -138,6 +138,9 @@ libMain = do
   runtime <- concurrentConsoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
 
+simulationLibMain :: IO ()
+simulationLibMain = simulationEventLoop broacast initialState
+
 ------------------------------------------------------------------------
 
 unit_simTestBroadcast :: IO Bool
@@ -161,8 +164,6 @@ unit_simTestBroadcast' mSeed =
         , numberOfNodes = 5
         , disableShrinking = True
         , verboseOnSuccess = True
-        , minSize = 30
-        , maxSize = 100
         }
 
 broadcastWorkload ::
