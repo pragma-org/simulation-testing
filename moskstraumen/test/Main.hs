@@ -26,11 +26,22 @@ unitTests =
         "UnitTests"
         [messageCodecTests]
     , testGroup
-        "ExampleTests"
+        "Simulation"
         [ testCase
             "Broadcast"
-            (assertBool "" =<< unit_simTestBroadcastReplay 4894465900423837377)
-            -- (assertBool "" =<< unit_simTestBroadcast)
+            (assertBool "" =<< unit_simTestBroadcast)
+        ]
+    , testGroup
+        "Regression"
+        [ testCase
+            "Broadcast1"
+            (assertBool "" =<< unit_btest)
+        , testCase
+            "Broadcast2"
+            (assertBool "" =<< unit_btest2)
+        , testCase
+            "Broadcast3"
+            (assertBool "" =<< unit_btest3)
         ]
     ]
 
