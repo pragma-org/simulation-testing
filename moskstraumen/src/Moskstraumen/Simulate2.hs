@@ -826,3 +826,40 @@ regressionTestWith testConfig node initialState property program = do
       TestMode
       program
   handleResult result seed
+
+outOfProcessSimulationTestWith ::
+  ( Show input
+  , Show output
+  , Read input
+  , Read output
+  , Ord input
+  , Ord output
+  ) =>
+  TestConfig
+  -> FilePath
+  -> [String]
+  -> Workload input output
+  -> IO Bool
+outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
+  (prng, seed) <- newPrng testConfig.replaySeed
+  let deployment =
+        Deployment
+          { numberOfNodes = testConfig.numberOfNodes
+          , spawn = simulationNodeHandle binaryFilePath arguments
+          }
+  result <- runTests testConfig deployment workload prng
+  handleResult result seed
+
+outOfProcessSimulationTest ::
+  ( Show input
+  , Show output
+  , Read input
+  , Read output
+  , Ord input
+  , Ord output
+  ) =>
+  FilePath
+  -> [String]
+  -> Workload input output
+  -> IO Bool
+outOfProcessSimulationTest = outOfProcessSimulationTestWith defaultTestConfig

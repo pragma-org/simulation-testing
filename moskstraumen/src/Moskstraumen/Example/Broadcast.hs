@@ -27,7 +27,7 @@ data BroadcastInput
   | Topology {topology :: Map NodeId [NodeId]}
   | Broadcast {message :: Int}
   | Read
-  deriving stock (Eq, Ord, Show, Generic)
+  deriving stock (Eq, Ord, Show, Read, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastOutput
@@ -35,7 +35,7 @@ data BroadcastOutput
   | Topology_Ok
   | Broadcast_Ok
   | Read_Ok {messages :: [Int]}
-  deriving stock (Eq, Ord, Show, Generic)
+  deriving stock (Eq, Ord, Show, Read, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
 data BroadcastState = BroadcastState
@@ -139,7 +139,7 @@ libMain = do
   eventLoop broadcast initialState jsonCodec runtime
 
 simulationLibMain :: IO ()
-simulationLibMain = simulationEventLoop broacast initialState
+simulationLibMain = simulationEventLoop broadcast initialState
 
 ------------------------------------------------------------------------
 

@@ -496,8 +496,8 @@ simulationRuntime inputMVar outputMVar = do
       , receive = \timeout -> case timeout of
           0 -> return Nothing
           _ -> Just . (: []) <$> takeMVar inputMVar
-      , getTime = undefined
-      , log = undefined
+      , getTime = return epoch
+      , log = Text.hPutStrLn stderr
       , close = return ()
       }
 
@@ -884,35 +884,61 @@ data NodeHandle i o = NodeHandle
 
 simulationNodeHandle ::
   forall s i o.
+  (Show i, Read i, Show o, Read o) =>
   FilePath
   -> [String]
   -> IO (NodeHandle i o)
-simulationNodeHandle filePath args = do
-  --  (Just hin, Just hout, _, processHandle) <-
-  --    createProcess
-  --      (proc fp args) {std_in = CreatePipe, std_out = CreatePipe}
-  --  return
-  --    NodeHandle
-  --      { handle = \_arrivalTime incoming -> do
-  --          LBS8.hPutStr hin (encodeIncoming incoming)
-  --          BS8.hPutStr hin "\n"
-  --          hFlush hin
-  --          line <- BS8.hGetLine hout
-  --          case decodeOutgoing line of
-  --            Left err -> hPutStrLn stderr err >> return []
-  --            Right outgoing -> return [outgoing]
-  --      , close = terminateProcess processHandle
-  --      }
-  let handle = \arrivalTime incoming -> undefined
-  let nextTimer = undefined
-  let advanceToTime = undefined
-  let close = return ()
+simulationNodeHandle binaryFilePath arguments = do
+  (Just hin, Just hout, _, processHandle) <-
+    createProcess
+      (proc binaryFilePath arguments)
+        { std_in = CreatePipe
+        , std_out = CreatePipe
+        }
   return
     NodeHandle
-      { handle
-      , nextTimer
-      , advanceToTime
-      , close
+      { handle = \arrivalTime incoming -> do
+          hPutStrLn hin (show (Handle arrivalTime incoming))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (HandleResponse outgoing) ->
+              return
+                HandleOutput {beforeState = "", afterState = "", outgoing, logs = []}
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> do
+              hPutStrLn stderr err
+              return
+                HandleOutput
+                  { beforeState = ""
+                  , afterState = ""
+                  , outgoing = []
+                  , logs = []
+                  }
+      , nextTimer = do
+          hPutStrLn hin (show (NextTimer :: SimulationCommand i o))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (NextTimerResponse mTime) -> return mTime
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> error ("simulationNodeHandle, nextTimer error: " <> err)
+      , advanceToTime = \newTime -> do
+          hPutStrLn hin (show (AdvanceToTime newTime :: SimulationCommand i o))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (AdvanceToTimeResponse outgoing) ->
+              return
+                HandleOutput
+                  { beforeState = ""
+                  , afterState = ""
+                  , outgoing
+                  , logs = []
+                  }
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
+      , close = terminateProcess processHandle
       }
 
 inProcessSimulationNodeHandle ::
