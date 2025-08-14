@@ -61,6 +61,11 @@ forward and thus, for example, triggering a timeout without having to wait.
 
 * Event loop code
 * Codec?
+* Code paths in stepEventLoop that are never taken in simulation?
+* In the node DSL if we do t1 <- getTime, t2 <- getTime then t1 == t2 as time
+  doesn't move during a step
+  - Alternative: We could make getTime into an effect which would suspend and get a callback
+    once runtime.getTime finishes
 
 [^1]: The other main feature that sets deterministic simulation testing apart
     from Jepsen is the fact that the tests are deterministic and failures can

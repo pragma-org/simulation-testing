@@ -378,7 +378,7 @@ stepEventLoop node codec runtime ns es = do
           -- times out.
           runtime.send []
           return (ns, es)
-        Just incoming -> do
+        Just (arrivalTime, incoming) -> do
           -- _now <- runtime.getTime
           -- runtime.log
           --   $ "[debug] "
@@ -386,11 +386,18 @@ stepEventLoop node codec runtime ns es = do
           --   <> " "
           --   <> "eventLoop, incoming (no timer): "
           --   <> textShow incoming
-          (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
+          (ns', es', outgoing) <-
+            handleIncoming
+              node
+              codec
+              runtime
+              ns {nodeTime = arrivalTime}
+              es
+              incoming
           runtime.send outgoing
           return (ns', es')
     Just ((later, (mMessageId, k)), pendingTimers') -> do
-      now <- runtime.getTime
+      let now = ns.nodeTime
       -- NOTE: The `max 0` is needed because if we pass a negative value to
       -- `timeout` it won't timeout.
       let micros = max 0 (diffTimeMicros later now)
@@ -409,7 +416,7 @@ stepEventLoop node codec runtime ns es = do
         Nothing -> do
           -- We didn't receive a message within `micros`, and therefor need to
           -- handle the timer.
-          now <- runtime.getTime
+          let now = ns.nodeTime
           let (ns'', effects) = k (ns {nodeTime = now}, [])
           -- runtime.log
           --   $ "[debug] "
@@ -443,15 +450,21 @@ stepEventLoop node codec runtime ns es = do
           --   <> "eventLoop, remaining timers: "
           --   <> textShow (map (fmap fst) (toListTimer es''.pendingTimers))
           return (ns'', es'')
-        Just incoming -> do
-          _now <- runtime.getTime
+        Just (arrivalTime, incoming) -> do
           -- runtime.log
           --   $ "[debug] "
           --   <> textShow _now
           --   <> " "
           --   <> "eventLoop, incoming before timer, incoming: "
           --   <> textShow incoming
-          (ns', es', outgoing) <- handleIncoming node codec runtime ns es incoming
+          (ns', es', outgoing) <-
+            handleIncoming
+              node
+              codec
+              runtime
+              ns {nodeTime = arrivalTime}
+              es
+              incoming
           runtime.send outgoing
           return (ns', es')
 
@@ -486,21 +499,19 @@ data SimulationResponse i o
   deriving stock (Show, Read)
 
 simulationRuntime ::
-  MVar (Incoming i o)
+  MVar (Time, Incoming i o)
   -> MVar [Outgoing i o]
-  -> FakeTime
   -> IO (Runtime (Incoming i o) (Outgoing i o))
-simulationRuntime inputMVar outputMVar fakeTime = do
+simulationRuntime inputMVar outputMVar = do
   return
     Runtime
       { send = putMVar outputMVar
       , receive = \timeout -> case timeout of
           0 -> return Nothing
           _ ->
-            Just . (: [])
+            Just . fmap (: [])
               <$> takeMVar inputMVar
                 `catch` (\(_err :: SomeException) -> error "takeMVar input")
-      , getTime = readFakeTimeIO fakeTime
       , log = Text.hPutStrLn stderr
       , close = return ()
       }
@@ -514,58 +525,51 @@ simulationEventLoop ::
 simulationEventLoop node initialState = do
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
-  fakeTime <- newFakeTime epoch
-  runtime <- simulationRuntime inputMVar outputMVar fakeTime
+  runtime <- simulationRuntime inputMVar outputMVar
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
   loop
     inputMVar
     outputMVar
-    fakeTime
     runtime
     (initialNodeState initialState)
     initialEventLoopState
     `finally` runtime.close
   where
     loop ::
-      MVar (Incoming i o)
+      MVar (Time, Incoming i o)
       -> MVar [Outgoing i o]
-      -> FakeTime
       -> Runtime (Incoming i o) (Outgoing i o)
       -> NodeState s
       -> EventLoopState s i o
       -> IO ()
-    loop inputMVar outputMVar fakeTime runtime ns es = do
+    loop inputMVar outputMVar runtime ns es = do
       line <- hGetLine stdin
       case readEither line of
         Right (Handle arrivalTime incoming) -> do
-          putMVar inputMVar incoming
-          -- XXX: This `writeFakeTimeIO` is key, otherwise we get a timeout in
-          -- the `takeMVar input`?! Why?
-          writeFakeTimeIO fakeTime arrivalTime
+          putMVar inputMVar (arrivalTime, incoming)
           (ns', es') <-
             stepEventLoop node testCodec runtime ns {nodeTime = arrivalTime} es
           outgoing <- takeMVar outputMVar
           hPutStrLn
             stdout
             (show (HandleResponse outgoing))
-          loop inputMVar outputMVar fakeTime runtime ns' es'
+          loop inputMVar outputMVar runtime ns' es'
         Right NextTimer -> do
           let mNextTimer = TimerWheel.nextTimer es.pendingTimers
           hPutStrLn
             stdout
             (show (NextTimerResponse mNextTimer :: SimulationResponse i o))
-          loop inputMVar outputMVar fakeTime runtime ns es
+          loop inputMVar outputMVar runtime ns es
         Right (AdvanceToTime newTime) -> do
-          writeFakeTimeIO fakeTime newTime
           (ns', es') <-
             stepEventLoop node testCodec runtime ns {nodeTime = newTime} es
           outgoing <- takeMVar outputMVar
           hPutStrLn
             stdout
             (show (AdvanceToTimeResponse outgoing))
-          loop inputMVar outputMVar fakeTime runtime ns' es'
+          loop inputMVar outputMVar runtime ns' es'
         Left err -> error ("simulationEventLoop, failed to parse input: " <> err)
 
 handleIncoming ::
@@ -601,7 +605,7 @@ handleIncoming node codec runtime = go []
             )
           go acc ns es incoming
         Right (InMessage message) -> do
-          now <- runtime.getTime
+          let now = ns.nodeTime
           let (ns', effects) =
                 runNode
                   node
@@ -622,7 +626,7 @@ handleIncoming node codec runtime = go []
           case Map.lookup response.inReplyTo es.pendingRpcs of
             Nothing -> undefined
             Just k -> do
-              now <- runtime.getTime
+              let now = ns.nodeTime
               -- hPutStrLn stderr ("Resuming success with state: " <> show ns.localState)
               let (ns', effects) = k response.body (ns {nodeTime = now}, [])
               -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
@@ -697,7 +701,7 @@ handleEffects runtime codec ns = go []
                 , msgId = Just messageId
                 , body = i
                 }
-      now <- runtime.getTime
+      let now = ns.nodeTime
       let es' =
             es
               { nextMessageId = messageId + 1
@@ -713,7 +717,7 @@ handleEffects runtime codec ns = go []
       runtime.log text
       go acc es effects
     go acc es (AFTER micros k : effects) = do
-      now <- runtime.getTime
+      let now = ns.nodeTime
       let es' =
             es
               { pendingTimers =
@@ -744,19 +748,19 @@ consoleRuntime = do
     Runtime
       { receive = \micros -> Timeout.timeout micros consoleReceive
       , send = consoleSend
-      , getTime = getCurrentTime
       , log = Text.hPutStrLn stderr
       , close = return ()
       }
   where
-    consoleReceive :: IO [ByteString]
+    consoleReceive :: IO (Time, [ByteString])
     consoleReceive = do
       line <- BS8.hGetLine stdin
       if BS8.null line
-        then return []
+        then return (epoch, []) -- XXX: epoch?
         else do
           BS8.hPutStrLn stderr ("consoleRuntime: received: " <> line)
-          return [line]
+          arrivalTime <- getCurrentTime
+          return (arrivalTime, [line])
 
     consoleSend :: [ByteString] -> IO ()
     consoleSend = mapM_ $ \bytes -> do
@@ -784,50 +788,21 @@ concurrentConsoleRuntime = do
     Runtime
       { receive = \micros -> Timeout.timeout micros (consoleReceive receiveQueue)
       , send = consoleSend sendQueue
-      , getTime = getCurrentTime
       , log = Text.hPutStrLn stderr
       , close = killThread rtid >> killThread stid
       }
   where
-    consoleReceive :: TBQueue ByteString -> IO [ByteString]
+    consoleReceive :: TBQueue ByteString -> IO (Time, [ByteString])
     consoleReceive receiveQueue = do
       line <- atomically (readTBQueue receiveQueue)
       -- BS8.hPutStrLn stderr ("consoleRuntime: received: " <> line)
-      return [line]
+      arrivalTime <- getCurrentTime
+      return (arrivalTime, [line])
 
     consoleSend :: TBQueue ByteString -> [ByteString] -> IO ()
     consoleSend sendQueue = mapM_ $ \bytes -> do
       -- BS8.hPutStrLn stderr ("consoleRuntime: sent: " <> bytes)
       atomically (writeTBQueue sendQueue bytes)
-
-data FakeTime = FakeTime (TVar Time)
-
-newFakeTime :: Time -> IO FakeTime
-newFakeTime time = FakeTime <$> newTVarIO time
-
-readFakeTime :: FakeTime -> STM Time
-readFakeTime (FakeTime tvar) = readTVar tvar
-
-writeFakeTime :: FakeTime -> Time -> STM ()
-writeFakeTime (FakeTime tvar) newTime = do
-  oldTime <- readTVar tvar
-  -- NOTE:: <= because there can be several timers scheduled at the exact same time
-  if oldTime <= newTime
-    then writeTVar tvar newTime
-    else
-      error
-        $ "writeFakeTime: not advancing in time, old time: "
-        <> show oldTime
-        <> ", new time: "
-        <> show newTime
-
-readFakeTimeIO :: FakeTime -> IO Time
-readFakeTimeIO = atomically . readFakeTime
-
-writeFakeTimeIO :: FakeTime -> Time -> IO ()
-writeFakeTimeIO fakeTime time = do
-  -- putStrLn ("writeFakeTimeIO: new time:" <> show time)
-  atomically (writeFakeTime fakeTime time)
 
 -- (Generic a, FromJSON a, Json.GFromJSON Json.Zero (Rep a)) =>
 jsonCodec ::
@@ -880,9 +855,8 @@ data HandleOutput i o = HandleOutput
 type Timeout = Int
 
 data Runtime i o = Runtime
-  { receive :: Timeout -> IO (Maybe [i])
+  { receive :: Timeout -> IO (Maybe (Time, [i]))
   , send :: [o] -> IO ()
-  , getTime :: IO Time
   , log :: Text -> IO ()
   , close :: IO ()
   }
@@ -969,13 +943,11 @@ inProcessSimulationNodeHandle node initialState = do
   inputMVar <- newEmptyMVar
   outputMVar <- newEmptyMVar
   logsMVar <- newMVar []
-  fakeTime <- newFakeTime epoch
 
-  let recieve_ :: Timeout -> IO (Maybe [Incoming i o])
+  let recieve_ :: Timeout -> IO (Maybe (Time, [Incoming i o]))
       recieve_ 0 = return Nothing
       recieve_ micros = do
-        (arrivalTime, input) <- takeMVar inputMVar
-        writeFakeTimeIO fakeTime arrivalTime
+        (arrivalTime, incoming) <- takeMVar inputMVar
         -- _now <- readFakeTimeIO fakeTime
         -- Text.putStrLn
         --   $ "[debug] "
@@ -985,7 +957,7 @@ inProcessSimulationNodeHandle node initialState = do
         --   <> ", and delivering: "
         --   <> textShow
         --     input
-        return (Just [input])
+        return (Just (arrivalTime, [incoming]))
 
   let send_ :: [Outgoing i o] -> IO ()
       send_ = putMVar outputMVar
@@ -1002,8 +974,7 @@ inProcessSimulationNodeHandle node initialState = do
           , send = send_
           , log = \text -> modifyMVar_ logsMVar (\texts -> return (texts <> [text]))
           , --  \text -> Text.putStrLn text
-            getTime = readFakeTimeIO fakeTime
-          , close = return ()
+            close = return ()
           }
 
   let step :: Bool -> IO (HandleOutput i o)
@@ -1050,12 +1021,10 @@ inProcessSimulationNodeHandle node initialState = do
 
   let advanceToTime_ :: Time -> IO (HandleOutput i o)
       advanceToTime_ time = do
-        writeFakeTimeIO fakeTime time
         step True
 
   let handle_ :: Int -> Time -> Incoming i o -> IO (HandleOutput i o)
       handle_ level arrivalTime incoming = do
-        _now <- readFakeTimeIO fakeTime
         -- runtime.log
         --   $ "\n[debug] "
         --   <> textShow _now
