@@ -6,6 +6,7 @@ import Data.Foldable as X
 import Data.Functor.Identity as X
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe as X
 import Data.String as X
 import Data.Text (Text)
 import qualified Data.Text as Text

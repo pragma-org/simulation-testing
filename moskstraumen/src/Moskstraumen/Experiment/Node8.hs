@@ -977,11 +977,11 @@ inProcessSimulationNodeHandle node initialState = do
             close = return ()
           }
 
-  let step :: Bool -> IO (HandleOutput i o)
-      step timer = do
+  let step :: Maybe Time -> IO (HandleOutput i o)
+      step mTime = do
         (ns, es) <- readIORef ref
         -- NOTE: If we are stepping a timer and there's no pending timers, then we stop.
-        if timer && null es.pendingTimers
+        if isJust mTime && null es.pendingTimers
           then
             return
               HandleOutput
@@ -997,7 +997,9 @@ inProcessSimulationNodeHandle node initialState = do
             --   <> textShow _now
             --   <> " handle_, before step pendingTimers: "
             --   <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
-            (ns', es') <- stepEventLoop node testCodec runtime ns es
+            let time' = maybe ns.nodeTime id mTime
+            (ns', es') <-
+              stepEventLoop node testCodec runtime ns {nodeTime = time'} es
             -- _now <- readFakeTimeIO fakeTime
             -- runtime.log
             --   $ "[debug] "
@@ -1020,8 +1022,7 @@ inProcessSimulationNodeHandle node initialState = do
                 }
 
   let advanceToTime_ :: Time -> IO (HandleOutput i o)
-      advanceToTime_ time = do
-        step True
+      advanceToTime_ time = step (Just time)
 
   let handle_ :: Int -> Time -> Incoming i o -> IO (HandleOutput i o)
       handle_ level arrivalTime incoming = do
@@ -1046,7 +1047,7 @@ inProcessSimulationNodeHandle node initialState = do
               then error "handle: impossible"
               else return ()
             putMVar inputMVar waiting
-            HandleOutput {outgoing, logs, beforeState, afterState} <- step False
+            HandleOutput {outgoing, logs, beforeState, afterState} <- step Nothing
             -- _now <- readFakeTimeIO fakeTime
             -- runtime.log
             --   $ "\n[debug] "
