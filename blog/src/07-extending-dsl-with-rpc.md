@@ -61,10 +61,10 @@ forward and thus, for example, triggering a timeout without having to wait.
           |                           Simulator |     |               SUT |
  Workload |                                     |     |                   |
  -------->| - Heap Time Incoming   +---------+  |     |      +---------+  |
-          | - PRNG               ⋰|        ⋰ |  |     |    ⋰|        ⋰ |  |
+          | - PRNG               ⋰|        ⋰|   |     |    ⋰|        ⋰|   |
           | - History           +---------+  |  |     |   +---------+  |  |
           |                     |   Node  |  |  |     |   |   Nodes |  |  |
-          |                     | Handles |-+ <---------> |         |-+   |
+          |                     | Handles |--+ <--------> |         |--+  |
           |                     |         |⋰    |     |   |         |⋰    |
           |                     +---------+     |     |   +---------+     |
           |                                     |     |                   |
