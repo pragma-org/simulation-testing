@@ -56,12 +56,12 @@ forward and thus, for example, triggering a timeout without having to wait.
 
 ## Big picture
 
-```text
+```
           +-------------------------------------+     +-------------------+
           |                           Simulator |     |               SUT |
  Workload |                                     |     |                   |
  -------->| - Heap Time Incoming   +---------+  |     |      +---------+  |
-          | - PRNG               ⋰|        ⋰|  |      |    ⋰|        ⋰|  |
+          | - PRNG               ⋰|        ⋰|  |      |   ⋰|        ⋰|  |
           | - History           +---------+  |  |     |   +---------+  |  |
           |                     |   Node  |  |  |     |   |   Nodes |  |  |
           |                     | Handles |--+ <--------> |         |--+  |
@@ -71,7 +71,7 @@ forward and thus, for example, triggering a timeout without having to wait.
           +-------------------------------------+     +-------------------+
 ```
 
-```text
+```
 
   +---------------+
   |   Node handle |
