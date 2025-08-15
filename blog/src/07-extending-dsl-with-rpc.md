@@ -56,6 +56,9 @@ forward and thus, for example, triggering a timeout without having to wait.
 
 ## Big picture
 
+Let's start by recalling how the simulator interacts with the system under test
+(SUT):
+
 ```
           +-------------------------------------+     +-------------------+
           |                           Simulator |     |               SUT |
@@ -71,8 +74,21 @@ forward and thus, for example, triggering a timeout without having to wait.
           +-------------------------------------+     +-------------------+
 ```
 
-```
+The simulation testing process starts by the developer prodiving a workload,
+which is comprised of a generator of incoming messages to the SUT and a
+property to check. The simulator generates some initial incoming messages and
+their arrival times using the generator from the workload and spawns so called
+"node handles" (one per node in the SUT).
 
+The node handles are the simulator's API to the SUT which allows it to perform
+the test (feed the nodes incoming messages using `handle` and get outgoing
+messages back) and control time (via `nextTimer` and `advancetoTime`) so that
+we can fast-forward past sleeps and timeouts (which would slow down the test).
+
+The picture from the node handle's perspective looks like this (we'll explain
+the interaction with the node in more detail below):
+
+```
   +---------------+
   |   Node handle |
   |               |
@@ -109,6 +125,16 @@ forward and thus, for example, triggering a timeout without having to wait.
   +-----------------------------------------------------------------------+
 ```
 
+We want the node that we test to be as close to the node that we deploy (in
+production) as possible. However in real deployments we can't fast forward
+time, so `nextTimer` and `advanceToTime` are only part of simulation testing. A
+small shim component takes care of this during simulation. This shim isn't
+part of the deployed node, but otherwise the code that gets tested and deployed
+is identical, with one exception: the timeout in `receive` is mocked/faked and
+can be advanced using `advancetoTime` in order to speed up testing.
+
+
+XXX: 
 
 ## The gap between simulation and reality
 
