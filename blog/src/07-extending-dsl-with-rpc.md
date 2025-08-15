@@ -56,6 +56,59 @@ forward and thus, for example, triggering a timeout without having to wait.
 
 ## Big picture
 
+```text
+          +-------------------------------------+     +-------------------+
+          |                           Simulator |     |               SUT |
+ Workload |                                     |     |                   |
+ -------->| - Heap Time Incoming  +---------+   |     |     +---------+   |
+          | - PRNG               ⋰|        ⋰|   |     |    ⋰|        ⋰|   |
+          | - History           +---------+ |   |     |   +---------+ |   |
+          |                     |   Node  | |   |     |   |   Nodes | |   |
+          |                     | Handles |-+ <---------> |         |-+   |
+          |                     |         |⋰    |     |   |         |⋰    |
+          |                     +---------+     |     |   +---------+     |
+          |                                     |     |                   |
+          +-------------------------------------+     +-------------------+
+```
+
+```text
+
+  +---------------+
+  |   Node handle |
+  |               |
+  |               |
+  +-------+-------+
+          |
+          |   handle        : Time -> Incoming -> [Outgoing]
+          |   nextTimer     : Maybe Time
+          |   advanceToTime : Time -> [Outgoing] 
+          |
+          |
+  +-------|---------------------------------------------------------------+
+  |       v                                                          Node |
+  | +-------------+ +-------------------------------------------------+   |
+  | |        Shim | |                                   State machine |   |
+  | |             | |                                                 |   |
+  | |             | | Incoming -> NodeState -> (NodeState, [Effect])  |   |
+  | +-----+-------+ +----^-------------------------------+------------+   |
+  |       |              |                               |                |
+  |       |              |                               |                |
+  | +-----v--------------+-------------------------------v-------------+  |
+  | |                                                       Event loop |  |
+  | | +----------------------------------+                             |  |
+  | | |                        Runtime   |     - Pending timers        |  |
+  | | |                                  |     - Pending RPCs          |  |
+  | | | send    : Outgoing -> ()         |     - Node state            |  |
+  | | | receive : Timeout ->             |                             |  |
+  | | |           Maybe (Time, Incoming) |                             |  |
+  | | |                                  |                             |  |
+  | | +----------------------------------+                             |  |
+  | |                                                                  |  |
+  | +------------------------------------------------------------------+  |
+  |                                                                       |
+  +-----------------------------------------------------------------------+
+```
+
 
 ## The gap between simulation and reality
 
@@ -66,6 +119,9 @@ forward and thus, for example, triggering a timeout without having to wait.
   doesn't move during a step
   - Alternative: We could make getTime into an effect which would suspend and get a callback
     once runtime.getTime finishes
+
+* XXX: use profiler to check?
+* XXX: can we use a faketime version of timeout to have a smaller gap?
 
 [^1]: The other main feature that sets deterministic simulation testing apart
     from Jepsen is the fact that the tests are deterministic and failures can
