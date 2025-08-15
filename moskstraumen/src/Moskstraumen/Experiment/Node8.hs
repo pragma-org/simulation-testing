@@ -508,10 +508,11 @@ simulationRuntime inputMVar outputMVar = do
       { send = putMVar outputMVar
       , receive = \timeout -> case timeout of
           0 -> return Nothing
-          _ ->
-            Just . fmap (: [])
-              <$> takeMVar inputMVar
-                `catch` (\(_err :: SomeException) -> error "takeMVar input")
+          _ -> do
+            (arrivalTime, incoming) <- takeMVar inputMVar
+            -- now <- readFaketime
+            -- assert (now - arrivalTime == 0)
+            return (Just (arrivalTime, [incoming]))
       , log = Text.hPutStrLn stderr
       , close = return ()
       }
@@ -944,9 +945,9 @@ inProcessSimulationNodeHandle node initialState = do
   outputMVar <- newEmptyMVar
   logsMVar <- newMVar []
 
-  let recieve_ :: Timeout -> IO (Maybe (Time, [Incoming i o]))
-      recieve_ 0 = return Nothing
-      recieve_ micros = do
+  let receive_ :: Timeout -> IO (Maybe (Time, [Incoming i o]))
+      receive_ 0 = return Nothing
+      receive_ micros = do
         (arrivalTime, incoming) <- takeMVar inputMVar
         -- _now <- readFakeTimeIO fakeTime
         -- Text.putStrLn
@@ -970,7 +971,7 @@ inProcessSimulationNodeHandle node initialState = do
   let runtime :: Runtime (Incoming i o) (Outgoing i o)
       runtime =
         Runtime
-          { receive = recieve_
+          { receive = receive_
           , send = send_
           , log = \text -> modifyMVar_ logsMVar (\texts -> return (texts <> [text]))
           , --  \text -> Text.putStrLn text
