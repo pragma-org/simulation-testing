@@ -149,11 +149,18 @@ on, next let's try to make things more concrete by looking at the code.
 
 ## Extending the DSL
 
+First, let's have a look at what the DSL looks like. The new constructs are,
+`After`, `Rpc`, `GetTime` which are all time-related and `Log` which is used
+for logging.
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Node}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeF}
 ```
+
+The `Get` and `Put` constructs have been generalised slightly, since last time,
+to operate over a so called node stae.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeState}
 ```

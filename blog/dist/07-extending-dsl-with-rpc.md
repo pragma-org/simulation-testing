@@ -145,6 +145,10 @@ code.
 
 ## Extending the DSL
 
+First, let's have a look at what the DSL looks like. The new constructs
+are, `After`, `Rpc`, `GetTime` which are all time-related and `Log`
+which is used for logging.
+
 ``` haskell
 
 type Node s i o = i -> NodeBody s i o ()
@@ -172,6 +176,9 @@ data NodeF s i o x
   | GetTime (Time -> x)
   | Log Text (() -> x)
 ```
+
+The `Get` and `Put` constructs have been generalised slightly, since
+last time, to operate over a so called node stae.
 
 ``` haskell
 data NodeState s = NodeState
