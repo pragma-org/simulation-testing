@@ -130,11 +130,22 @@ production) as possible. However in real deployments we can't fast forward
 time, so `nextTimer` and `advanceToTime` are only part of simulation testing. A
 small shim component takes care of this during simulation. This shim isn't
 part of the deployed node, but otherwise the code that gets tested and deployed
-is identical, with one exception: the timeout in `receive` is mocked/faked and
-can be advanced using `advancetoTime` in order to speed up testing.
+is identical, with one exception: the runtime component. During a real
+deployment, the runtime will be reading and sending bytes from, for example, a
+TCP socket. While during simulation the shim will be writing incoming messages
+to the runtime, for it to `receive`, and reading outgoing messages from the
+runtime, which it `send`s. Timeouts in `receive` are mocked/faked by use of
+`advanceToTime` in order to speed up testing.
 
 
-XXX: 
+The event loop code, which uses the runtime, and the state machine that gets
+fed the incoming messages is the same during simulation and real deployment.
+The state machine is what our DSL gets interpreted into and the effects it
+produces are turned into outgoing messages, for the runtime to send to
+approapriate destination, and timers for the event loop to keep track off.
+
+Hopefully by now we've managed to paint a high-level picture of what's going
+on, next let's try to make things more concrete by looking at the code.
 
 ## The gap between simulation and reality
 

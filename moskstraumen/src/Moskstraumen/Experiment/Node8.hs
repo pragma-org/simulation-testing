@@ -517,6 +517,7 @@ simulationRuntime inputMVar outputMVar = do
       , close = return ()
       }
 
+-- AKA shim
 simulationEventLoop ::
   forall s i o.
   (Show s, Show i, Show o, Read i, Read o) =>
