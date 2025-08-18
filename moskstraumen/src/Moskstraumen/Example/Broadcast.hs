@@ -20,31 +20,41 @@ import Moskstraumen.Topology
 
 ------------------------------------------------------------------------
 
+-- start snippet BroadcastInput
 data BroadcastInput
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
   | Topology {topology :: Map NodeId [NodeId]}
   | Broadcast {message :: Int}
   | Read
+  -- end snippet
   deriving stock (Eq, Ord, Show, Read, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
+-- start snippet BroadcastOutput
 data BroadcastOutput
   = Init_Ok
   | Topology_Ok
   | Broadcast_Ok
   | Read_Ok {messages :: [Int]}
+  -- end snippet
   deriving stock (Eq, Ord, Show, Read, Generic)
   deriving anyclass (ToJSON, FromJSON)
 
+-- start snippet BroadcastState
 data BroadcastState = BroadcastState
   { seen :: Set Int
   , unAcked :: Map Int [NodeId]
   }
+  -- end snippet
   deriving stock (Show)
 
+-- start snippet initialState
 initialState :: BroadcastState
 initialState = BroadcastState Set.empty Map.empty
 
+-- end snippet
+
+-- start snippet broadcast
 broadcast :: Node BroadcastState BroadcastInput BroadcastOutput
 broadcast (Init self nodeIds) = do
   info
@@ -129,12 +139,17 @@ broadcast Read = do
   info ("Read, seen: " <> fromString (show seenMessages))
   reply (Read_Ok (Set.toList seenMessages))
 
+-- end snippet
+
 ------------------------------------------------------------------------
 
+-- start snippet libMain
 libMain :: IO ()
 libMain = do
   runtime <- concurrentConsoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
+
+-- end snippet
 
 simulationLibMain :: IO ()
 simulationLibMain = simulationEventLoop broadcast initialState

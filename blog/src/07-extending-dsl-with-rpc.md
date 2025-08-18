@@ -151,14 +151,43 @@ on, next let's try to make things more concrete by looking at the code.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Node}
 ```
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeF}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeState}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=initialNodeState}
+```
+
+## Broadcast example
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastInput}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastOutput}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastState}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=initialState}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=broadcast}
 ```
 
 ## Semantics
 
-## Plumbing
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runNode}
+```
 
-## Broadcast example
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Effect}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runNodeBody}
+```
+
+## Event loop
 
 ## The gap between simulation and reality
 

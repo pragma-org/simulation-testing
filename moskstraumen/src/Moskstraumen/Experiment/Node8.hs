@@ -83,6 +83,20 @@ data NodeState s = NodeState
   }
 
 -- end snippet
+--
+-- start snippet initialNodeState
+initialNodeState :: s -> NodeState s
+initialNodeState s =
+  NodeState
+    { localState = s
+    , self = "uninitialised"
+    , nodeTime = epoch
+    , neighbours = []
+    , sender = "uninitialised"
+    , inReplyTo = -1
+    }
+
+-- end snippet
 
 instance Functor (NodeF s i o) where
   fmap f (Reply o k) = Reply o (f . k)
@@ -229,20 +243,6 @@ reply output = generic (Reply output)
 -- end snippet
 
 ------------------------------------------------------------------------
-
--- start snippet initialNodeState
-initialNodeState :: s -> NodeState s
-initialNodeState s =
-  NodeState
-    { localState = s
-    , self = "uninitialised"
-    , nodeTime = epoch
-    , neighbours = []
-    , sender = "uninitialised"
-    , inReplyTo = -1
-    }
-
--- end snippet
 
 --    , nextVarId = 0
 --    , rpcs = Map.empty

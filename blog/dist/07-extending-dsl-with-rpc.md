@@ -173,11 +173,218 @@ data NodeF s i o x
   | Log Text (() -> x)
 ```
 
-## Semantics
+``` haskell
+data NodeState s = NodeState
+  { localState :: s
+  , self :: NodeId
+  , nodeTime :: Time
+  , neighbours :: [NodeId]
+  , sender :: NodeId
+  , inReplyTo :: MessageId
+  }
 
-## Plumbing
+```
+
+``` haskell
+initialNodeState :: s -> NodeState s
+initialNodeState s =
+  NodeState
+    { localState = s
+    , self = "uninitialised"
+    , nodeTime = epoch
+    , neighbours = []
+    , sender = "uninitialised"
+    , inReplyTo = -1
+    }
+
+```
 
 ## Broadcast example
+
+``` haskell
+data BroadcastInput
+  = Init {node_id :: NodeId, node_ids :: [NodeId]}
+  | Topology {topology :: Map NodeId [NodeId]}
+  | Broadcast {message :: Int}
+  | Read
+```
+
+``` haskell
+data BroadcastOutput
+  = Init_Ok
+  | Topology_Ok
+  | Broadcast_Ok
+  | Read_Ok {messages :: [Int]}
+```
+
+``` haskell
+data BroadcastState = BroadcastState
+  { seen :: Set Int
+  , unAcked :: Map Int [NodeId]
+  }
+```
+
+``` haskell
+initialState :: BroadcastState
+initialState = BroadcastState Set.empty Map.empty
+
+```
+
+``` haskell
+broadcast :: Node BroadcastState BroadcastInput BroadcastOutput
+broadcast (Init self nodeIds) = do
+  info
+    ( "Initialising: "
+        <> unNodeId self
+        <> ", neighbours: "
+        <> fromString (show nodeIds)
+    )
+  setSelf self
+  setNeighbours nodeIds
+  reply Init_Ok
+broadcast (Topology nodeIds) = do
+  self <- getSelf
+  let newNeighbours =
+        Map.findWithDefault
+          ( error
+              ( "self not in topology, self: "
+                  <> show self
+                  <> ", nodeIds: "
+                  <> show nodeIds
+              )
+          )
+          self
+          nodeIds
+  info ("New neighbours: " <> fromString (show newNeighbours))
+  setNeighbours newNeighbours
+  reply Topology_Ok
+broadcast (Broadcast msg) = do
+  sender <- getSender
+  info
+    ("Acking broadcast " <> textShow msg <> " from " <> textShow sender)
+  -- Acknowledge the request.
+  reply Broadcast_Ok
+  seenMessages <- seen <$> getState
+  when (msg `Set.notMember` seenMessages) $ do
+    modifyState (\s -> s {seen = Set.insert msg s.seen})
+    neighbours <- getNeighbours
+    modifyState
+      (\s -> s {unAcked = Map.insert msg (neighbours \\ [sender]) s.unAcked})
+    let go = do
+          unAckedNodes <- (Map.! msg) . unAcked <$> getState
+          if null unAckedNodes
+            then info ("Done with message: " <> fromString (show msg))
+            else do
+              info
+                ( "Need to replicate \""
+                    <> Text.pack (show msg)
+                    <> "\" to "
+                    <> Text.pack (show unAckedNodes)
+                )
+              forM_ unAckedNodes $ \nodeId -> do
+                info ("Sending RPC to: " <> unNodeId nodeId)
+                rpc
+                  nodeId
+                  (Broadcast msg)
+                  ( \rpcError ->
+                      info
+                        ( "Failed to deliver "
+                            <> fromString (show msg)
+                            <> " to "
+                            <> unNodeId nodeId
+                            <> ": "
+                            <> fromString (show rpcError)
+                        )
+                  )
+                  ( \case
+                      Broadcast_Ok -> do
+                        info ("Got ack from: " <> unNodeId nodeId)
+                        modifyState
+                          (\s -> s {unAcked = Map.adjust (delete nodeId) msg s.unAcked})
+                      msg -> error ("broadcast: unexpected response: " <> show msg)
+                  )
+              s <- getState
+              info ("About to sleep, state " <> textShow s)
+              after 1_000_000 $ do
+                s <- getState
+                info ("Awake again, state: " <> textShow s)
+                go
+    go
+broadcast Read = do
+  seenMessages <- seen <$> getState
+  info ("Read, seen: " <> fromString (show seenMessages))
+  reply (Read_Ok (Set.toList seenMessages))
+
+```
+
+## Semantics
+
+``` haskell
+data Effect s i o
+  = SEND NodeId i
+  | REPLY o
+  | RPC NodeId i (RpcError -> Cont s i o) (o -> Cont s i o)
+  | LOG Text
+  | AFTER Int (Cont s i o)
+
+instance (Show i, Show o) => Show (Effect s i o) where
+  show (SEND nodeId i) = "SEND " <> show nodeId <> show i
+  show (REPLY o) = "REPLY " <> show o
+  show (RPC nodeId i _failure _success) = "RPC " <> show nodeId <> " " <> show i <> " <failure> <success>"
+  show (LOG text) = "LOG " <> show text
+  show (AFTER micros _k) = "AFTER " <> show micros <> " <k>"
+
+runNode ::
+  Node s i o
+  -> NodeState s
+  -> i
+  -> (NodeState s, [Effect s i o])
+runNode node ns i = runNodeBody (node i) (ns, [])
+
+```
+
+``` haskell
+```
+
+``` haskell
+runNodeBody ::
+  forall s i o a.
+  NodeBody s i o a
+  -> (NodeState s, [Effect s i o])
+  -> (NodeState s, [Effect s i o])
+runNodeBody (NodeBody m) = iterM go done m
+  where
+    done ::
+      a -> (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
+    done _x (ns, effects) = (ns, effects)
+
+    go ::
+      Alg
+        (NodeF s i o)
+        ((NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o]))
+    go (Reply o k) (ns, acc) = k () (ns, acc <> [REPLY o])
+    go (Send nodeId i k) (ns, acc) = k () (ns, acc <> [SEND nodeId i])
+    go (Get k) (s, acc) = k s (s, acc)
+    go (Put s' k) (s, acc) = k () (s', acc)
+    go (Rpc nodeId i failure success k) (ns, acc) =
+      k
+        ()
+        ( ns
+        , acc
+            <> [ RPC
+                  nodeId
+                  i
+                  (\rpcError -> runNodeBody (failure rpcError))
+                  (\o -> runNodeBody (success o))
+               ]
+        )
+    go (Log text k) (ns, acc) = k () (ns, acc <> [LOG text])
+    go (GetTime k) (ns, acc) = k ns.nodeTime (ns, acc)
+    go (After micros m k) (ns, acc) =
+      k () (ns, acc <> [AFTER micros (runNodeBody m)])
+```
+
+## Event loop
 
 ## The gap between simulation and reality
 
