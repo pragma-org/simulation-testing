@@ -147,6 +147,19 @@ approapriate destination, and timers for the event loop to keep track off.
 Hopefully by now we've managed to paint a high-level picture of what's going
 on, next let's try to make things more concrete by looking at the code.
 
+## Extending the DSL
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Node}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeF}
+```
+
+## Semantics
+
+## Plumbing
+
+## Broadcast example
+
 ## The gap between simulation and reality
 
 * Event loop code
