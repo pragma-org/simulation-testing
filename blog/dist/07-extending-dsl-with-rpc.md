@@ -199,7 +199,7 @@ initialNodeState s =
 
 ```
 
-## Broadcast example
+## Example: broadcast
 
 ``` haskell
 data BroadcastInput
@@ -320,20 +320,6 @@ broadcast Read = do
 ## Semantics
 
 ``` haskell
-data Effect s i o
-  = SEND NodeId i
-  | REPLY o
-  | RPC NodeId i (RpcError -> Cont s i o) (o -> Cont s i o)
-  | LOG Text
-  | AFTER Int (Cont s i o)
-
-instance (Show i, Show o) => Show (Effect s i o) where
-  show (SEND nodeId i) = "SEND " <> show nodeId <> show i
-  show (REPLY o) = "REPLY " <> show o
-  show (RPC nodeId i _failure _success) = "RPC " <> show nodeId <> " " <> show i <> " <failure> <success>"
-  show (LOG text) = "LOG " <> show text
-  show (AFTER micros _k) = "AFTER " <> show micros <> " <k>"
-
 runNode ::
   Node s i o
   -> NodeState s
@@ -344,6 +330,16 @@ runNode node ns i = runNodeBody (node i) (ns, [])
 ```
 
 ``` haskell
+data Effect s i o
+  = SEND NodeId i
+  | REPLY o
+  | RPC NodeId i (RpcError -> Cont s i o) (o -> Cont s i o)
+  | LOG Text
+  | AFTER Int (Cont s i o)
+
+type Cont s i o =
+  (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
+
 ```
 
 ``` haskell
@@ -386,7 +382,338 @@ runNodeBody (NodeBody m) = iterM go done m
 
 ## Event loop
 
-## The gap between simulation and reality
+``` haskell
+data EventLoopState s i o = EventLoopState
+  { nextMessageId :: MessageId
+  , pendingRpcs :: Map MessageId (o -> Cont s i o)
+  , pendingTimers ::
+      TimerWheel Time (Maybe MessageId, Cont s i o)
+  }
+
+initialEventLoopState :: EventLoopState s i o
+initialEventLoopState =
+  EventLoopState
+    { nextMessageId = 0
+    , pendingRpcs = Map.empty
+    , pendingTimers = emptyTimerWheel
+    }
+
+```
+
+``` haskell
+eventLoop ::
+  forall s i_ i o_ o.
+  (Show s, Show i_, Show i, Show o, Show o_) =>
+  Node s i o
+  -> s
+  -> Codec i_ i o_ o
+  -> Runtime i_ o_
+  -> IO ()
+eventLoop node initialState codec runtime =
+  loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
+  where
+    loop :: NodeState s -> EventLoopState s i o -> IO ()
+    loop ns es = do
+      (ns', es') <- stepEventLoop node codec runtime ns es
+      loop ns' es'
+
+```
+
+``` haskell
+stepEventLoop ::
+  forall s i_ i o_ o.
+  (Show s, Show i_, Show i, Show o, Show o_) =>
+  Node s i o
+  -> Codec i_ i o_ o
+  -> Runtime i_ o_
+  -> NodeState s
+  -> EventLoopState s i o
+  -> IO (NodeState s, EventLoopState s i o)
+stepEventLoop node codec runtime ns es = do
+  -- _now <- runtime.getTime
+  -- runtime.log
+  --   $ "[debug] "
+  --   <> textShow _now
+  --   <> " "
+  --   <> "eventLoop, pendingTimers: "
+  --   <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
+  case popTimer es.pendingTimers of
+    Nothing -> do
+      -- runtime.log
+      --   $ "[debug] "
+      --   <> textShow _now
+      --   <> " "
+      --   <> "eventLoop, waiting to receive (with 20s timeout)"
+      runtime.receive 20_000_000 >>= \case
+        Nothing -> do
+          -- NOTE: This `send` is needed for simulation handle, otherwise
+          -- the call to `takeMVar outputMVar` in simulationNodeHandle.handle
+          -- times out.
+          runtime.send []
+          return (ns, es)
+        Just (arrivalTime, incoming) -> do
+          -- _now <- runtime.getTime
+          -- runtime.log
+          --   $ "[debug] "
+          --   <> textShow _now
+          --   <> " "
+          --   <> "eventLoop, incoming (no timer): "
+          --   <> textShow incoming
+          (ns', es', outgoing) <-
+            handleIncoming
+              node
+              codec
+              runtime
+              ns {nodeTime = arrivalTime}
+              es
+              incoming
+          runtime.send outgoing
+          return (ns', es')
+    Just ((later, (mMessageId, k)), pendingTimers') -> do
+      let now = ns.nodeTime
+      -- NOTE: The `max 0` is needed because if we pass a negative value to
+      -- `timeout` it won't timeout.
+      let micros = max 0 (diffTimeMicros later now)
+      -- runtime.log
+      --   $ "[debug] "
+      --   <> textShow now
+      --   <> " "
+      --   <> "eventLoop, timer at: "
+      --   <> textShow later
+      --   <> ", in "
+      --   <> textShow micros
+      --   <> "µs"
+      --   <> " "
+      --   <> textShow mMessageId
+      runtime.receive micros >>= \case
+        Nothing -> do
+          -- We didn't receive a message within `micros`, and therefor need to
+          -- handle the timer.
+          let now = ns.nodeTime
+          let (ns'', effects) = k (ns {nodeTime = now}, [])
+          -- runtime.log
+          --   $ "[debug] "
+          --   <> textShow now
+          --   <> " "
+          --   <> "eventLoop, timer triggered: "
+          --   <> textShow mMessageId
+          --   <> ", effects: "
+          --   <> textShow effects
+          (es', outgoing) <-
+            handleEffects
+              runtime
+              codec
+              ns''
+              es {pendingTimers = pendingTimers'}
+              effects
+          runtime.send outgoing
+          -- runtime.log
+          --   $ "[debug] "
+          --   <> textShow now
+          --   <> " "
+          --   <> "eventLoop, timer, outgoing: "
+          --   <> textShow outgoing
+          let es'' = es'
+          -- let es'' = es' {pendingTimers = pendingTimers' <> es'.pendingTimers}
+          -- let es'' = es' {pendingTimers = pendingTimers' <> es'.pendingTimers}
+          -- runtime.log
+          --   $ "[debug] "
+          --   <> textShow now
+          --   <> " "
+          --   <> "eventLoop, remaining timers: "
+          --   <> textShow (map (fmap fst) (toListTimer es''.pendingTimers))
+          return (ns'', es'')
+        Just (arrivalTime, incoming) -> do
+          -- runtime.log
+          --   $ "[debug] "
+          --   <> textShow _now
+          --   <> " "
+          --   <> "eventLoop, incoming before timer, incoming: "
+          --   <> textShow incoming
+          (ns', es', outgoing) <-
+            handleIncoming
+              node
+              codec
+              runtime
+              ns {nodeTime = arrivalTime}
+              es
+              incoming
+          runtime.send outgoing
+          return (ns', es')
+
+```
+
+``` haskell
+handleIncoming ::
+  forall s i_ i o_ o.
+  (Show s, Show i_, Show i, Show o) =>
+  Node s i o
+  -> Codec i_ i o_ o
+  -> Runtime i_ o_
+  -> NodeState s
+  -> EventLoopState s i o
+  -> [i_]
+  -> IO (NodeState s, EventLoopState s i o, [o_])
+handleIncoming node codec runtime = go []
+  where
+    go ::
+      [[o_]]
+      -> NodeState s
+      -> EventLoopState s i o
+      -> [i_]
+      -> IO (NodeState s, EventLoopState s i o, [o_])
+    go acc ns es [] = return (ns, es, concatMap reverse acc)
+    go acc ns es (i_ : incoming) = do
+      case codec.decodeIncoming i_ of
+        Left err -> do
+          hPutStrLn
+            stderr
+            ( "Failed to parse input: "
+                <> err
+                <> "\nbody: "
+                <> show i_
+                <> "\npendingRpcs: "
+                <> show (Map.keys es.pendingRpcs)
+            )
+          go acc ns es incoming
+        Right (InMessage message) -> do
+          let now = ns.nodeTime
+          let (ns', effects) =
+                runNode
+                  node
+                  ns
+                    { sender = message.src
+                    , inReplyTo = case message.msgId of
+                        Nothing ->
+                          error
+                            ("handleIncoming: message doesn't have msgId set: " <> show message)
+                        Just msgId -> msgId
+                    , nodeTime = now
+                    }
+                  message.body
+          -- hPutStrLn stderr ("InMessage, effects: " <> show effects)
+          (es', outgoing) <- handleEffects runtime codec ns' es effects
+          go (outgoing : acc) ns' es' incoming
+        Right (InResponse response) ->
+          case Map.lookup response.inReplyTo es.pendingRpcs of
+            Nothing -> undefined
+            Just k -> do
+              let now = ns.nodeTime
+              -- hPutStrLn stderr ("Resuming success with state: " <> show ns.localState)
+              let (ns', effects) = k response.body (ns {nodeTime = now}, [])
+              -- hPutStrLn stderr ("InResponse, effects: " <> show effects)
+              let es' =
+                    es
+                      { pendingRpcs = Map.delete response.inReplyTo (pendingRpcs es)
+                      , pendingTimers =
+                          filterTimer ((/= Just response.inReplyTo) . fst) (pendingTimers es)
+                      }
+              (es'', outgoing) <-
+                handleEffects
+                  runtime
+                  codec
+                  ns' {sender = response.src}
+                  es'
+                  effects
+              go (outgoing : acc) ns' es'' incoming
+        Right InRpcError {} -> undefined
+
+```
+
+``` haskell
+handleEffects ::
+  forall i i_ o o_ s.
+  Runtime i_ o_
+  -> Codec i_ i o_ o
+  -> NodeState s
+  -> EventLoopState s i o
+  -> [Effect s i o]
+  -> IO (EventLoopState s i o, [o_])
+handleEffects runtime codec ns = go []
+  where
+    go ::
+      [o_]
+      -> EventLoopState s i o
+      -> [Effect s i o]
+      -> IO (EventLoopState s i o, [o_])
+    go acc es [] = return (es, acc)
+    go acc es (SEND nodeId i : effects) = do
+      let messageId = es.nextMessageId
+      let outgoing =
+            OutMessage
+              $ Message
+                { src = ns.self
+                , dest = nodeId
+                , msgId = Just messageId
+                , body = i
+                }
+      go
+        (codec.encodeOutgoing outgoing : acc)
+        es {nextMessageId = messageId + 1}
+        effects
+    go acc es (REPLY o : effects) = do
+      let messageId = es.nextMessageId
+      let outgoing =
+            OutResponse
+              $ Response
+                { src = ns.self
+                , dest = ns.sender
+                , msgId = Just messageId
+                , inReplyTo = ns.inReplyTo
+                , body = o
+                }
+      go
+        (codec.encodeOutgoing outgoing : acc)
+        es {nextMessageId = messageId + 1}
+        effects
+    go acc es (RPC nodeId i failure success : effects) = do
+      let messageId = es.nextMessageId
+      let outgoing =
+            OutMessage
+              $ Message
+                { src = ns.self
+                , dest = nodeId
+                , msgId = Just messageId
+                , body = i
+                }
+      let now = ns.nodeTime
+      let es' =
+            es
+              { nextMessageId = messageId + 1
+              , pendingRpcs = Map.insert messageId success (pendingRpcs es)
+              , pendingTimers =
+                  insertTimer
+                    (addTimeMicros rPC_TIMEOUT_MICROS now)
+                    (Just messageId, failure Timeout)
+                    es.pendingTimers
+              }
+      go (codec.encodeOutgoing outgoing : acc) es' effects
+    go acc es (LOG text : effects) = do
+      runtime.log text
+      go acc es effects
+    go acc es (AFTER micros k : effects) = do
+      let now = ns.nodeTime
+      let es' =
+            es
+              { pendingTimers =
+                  insertTimer
+                    (addTimeMicros micros now)
+                    (Nothing, k)
+                    es.pendingTimers
+              }
+      -- Text.hPutStrLn stderr
+      --   $ "INSERTED TIMER AT: "
+      --   <> textShow (addTimeMicros micros now)
+      --   <> ", pendingTimers: "
+      --   <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
+      go acc es' effects
+
+```
+
+## Example: Maelstrom and simulation testing broadcast
+
+## Discussion: the gap between simulation and reality
 
 - Event loop code
 
@@ -403,6 +730,8 @@ runNodeBody (NodeBody m) = iterM go done m
 - XXX: use profiler to check?
 
 - XXX: can we use a faketime version of timeout to have a smaller gap?
+
+## Conclusion and what's next
 
 [^1]: The other main feature that sets deterministic simulation testing
     apart from Jepsen is the fact that the tests are deterministic and

@@ -161,7 +161,7 @@ on, next let's try to make things more concrete by looking at the code.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=initialNodeState}
 ```
 
-## Broadcast example
+## Example: broadcast
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastInput}
 ```
@@ -184,12 +184,29 @@ on, next let's try to make things more concrete by looking at the code.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Effect}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runNodeBody}
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runBody}
 ```
 
 ## Event loop
 
-## The gap between simulation and reality
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=EventLoopState}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=eventLoop}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=stepEventLoop}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=handleIncoming}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=handleEffects}
+```
+
+## Example: Maelstrom and simulation testing broadcast
+
+## Discussion: the gap between simulation and reality
 
 * Event loop code
 * Codec?
@@ -201,6 +218,10 @@ on, next let's try to make things more concrete by looking at the code.
 
 * XXX: use profiler to check?
 * XXX: can we use a faketime version of timeout to have a smaller gap?
+
+## Conclusion and what's next
+
+
 
 [^1]: The other main feature that sets deterministic simulation testing apart
     from Jepsen is the fact that the tests are deterministic and failures can

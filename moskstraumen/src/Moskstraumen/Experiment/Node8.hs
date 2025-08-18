@@ -244,9 +244,6 @@ reply output = generic (Reply output)
 
 ------------------------------------------------------------------------
 
---    , nextVarId = 0
---    , rpcs = Map.empty
-
 -- start snippet Codec
 data Codec i_ i o_ o = Codec
   { decodeIncoming :: i_ -> Either String (Incoming i o)
@@ -257,16 +254,18 @@ data Codec i_ i o_ o = Codec
 
 ------------------------------------------------------------------------
 
-type Cont s i o =
-  (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
-
--- start snippet runNode
+-- start snippet Effect
 data Effect s i o
   = SEND NodeId i
   | REPLY o
   | RPC NodeId i (RpcError -> Cont s i o) (o -> Cont s i o)
   | LOG Text
   | AFTER Int (Cont s i o)
+
+type Cont s i o =
+  (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
+
+-- end snippet
 
 instance (Show i, Show o) => Show (Effect s i o) where
   show (SEND nodeId i) = "SEND " <> show nodeId <> show i
@@ -275,6 +274,7 @@ instance (Show i, Show o) => Show (Effect s i o) where
   show (LOG text) = "LOG " <> show text
   show (AFTER micros _k) = "AFTER " <> show micros <> " <k>"
 
+-- start snippet runNode
 runNode ::
   Node s i o
   -> NodeState s
@@ -284,9 +284,7 @@ runNode node ns i = runNodeBody (node i) (ns, [])
 
 -- end snippet
 
---
-
--- start snippet runNodeBody
+-- start snippet runBody
 runNodeBody ::
   forall s i o a.
   NodeBody s i o a
@@ -331,7 +329,7 @@ runNodeBody (NodeBody m) = iterM go done m
 
 ------------------------------------------------------------------------
 
--- start snippet eventLoop
+-- start snippet EventLoopState
 data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
   , pendingRpcs :: Map MessageId (o -> Cont s i o)
@@ -347,6 +345,31 @@ initialEventLoopState =
     , pendingTimers = emptyTimerWheel
     }
 
+-- end snippet
+
+-- XXX: remove Show and debugging code
+--
+-- start snippet eventLoop
+eventLoop ::
+  forall s i_ i o_ o.
+  (Show s, Show i_, Show i, Show o, Show o_) =>
+  Node s i o
+  -> s
+  -> Codec i_ i o_ o
+  -> Runtime i_ o_
+  -> IO ()
+eventLoop node initialState codec runtime =
+  loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
+  where
+    loop :: NodeState s -> EventLoopState s i o -> IO ()
+    loop ns es = do
+      (ns', es') <- stepEventLoop node codec runtime ns es
+      loop ns' es'
+
+-- end snippet
+
+-- start snippet stepEventLoop
 stepEventLoop ::
   forall s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
@@ -468,24 +491,9 @@ stepEventLoop node codec runtime ns es = do
           runtime.send outgoing
           return (ns', es')
 
--- XXX: remove Show and debugging code
-eventLoop ::
-  forall s i_ i o_ o.
-  (Show s, Show i_, Show i, Show o, Show o_) =>
-  Node s i o
-  -> s
-  -> Codec i_ i o_ o
-  -> Runtime i_ o_
-  -> IO ()
-eventLoop node initialState codec runtime =
-  loop (initialNodeState initialState) initialEventLoopState
-    `finally` runtime.close
-  where
-    loop :: NodeState s -> EventLoopState s i o -> IO ()
-    loop ns es = do
-      (ns', es') <- stepEventLoop node codec runtime ns es
-      loop ns' es'
+-- end snippet
 
+-- start snippet shim
 data SimulationCommand i o
   = Handle Time (Incoming i o)
   | NextTimer
@@ -574,6 +582,9 @@ simulationEventLoop node initialState = do
           loop inputMVar outputMVar runtime ns' es'
         Left err -> error ("simulationEventLoop, failed to parse input: " <> err)
 
+-- end snippet shim
+
+-- start snippet handleIncoming
 handleIncoming ::
   forall s i_ i o_ o.
   (Show s, Show i_, Show i, Show o) =>
@@ -648,6 +659,9 @@ handleIncoming node codec runtime = go []
               go (outgoing : acc) ns' es'' incoming
         Right InRpcError {} -> undefined
 
+-- end snippet
+
+-- start snippet handleEffects
 handleEffects ::
   forall i i_ o o_ s.
   Runtime i_ o_
@@ -734,6 +748,8 @@ handleEffects runtime codec ns = go []
       --   <> ", pendingTimers: "
       --   <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
       go acc es' effects
+
+-- end snippet
 
 rPC_TIMEOUT_MICROS :: Int
 rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
