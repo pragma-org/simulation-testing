@@ -827,6 +827,7 @@ regressionTestWith testConfig node initialState property program = do
       program
   handleResult result seed
 
+-- start snippet outOfProcessSimulationTestWith
 outOfProcessSimulationTestWith ::
   ( Show input
   , Show output
@@ -849,6 +850,8 @@ outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
           }
   result <- runTests testConfig deployment workload prng
   handleResult result seed
+
+-- end snippet
 
 outOfProcessSimulationTest ::
   ( Show input

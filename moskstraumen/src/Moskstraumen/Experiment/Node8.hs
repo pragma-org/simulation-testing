@@ -749,10 +749,19 @@ handleEffects runtime codec ns = go []
       --   <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
       go acc es' effects
 
--- end snippet
-
 rPC_TIMEOUT_MICROS :: Int
 rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
+-- end snippet
+
+-- start snippet Runtime
+type Timeout = Int
+
+data Runtime i o = Runtime
+  { receive :: Timeout -> IO (Maybe (Time, [i]))
+  , send :: [o] -> IO ()
+  , log :: Text -> IO ()
+  , close :: IO ()
+  }
 
 -- end snippet
 
@@ -859,7 +868,17 @@ prodMain port peers = undefined -- eventLoop echoNode () echoCodec =<< tcpRuntim
 
 -- end snippet
 
--- start snippet pipeNodeHandle
+-- start snippet NodeHandle
+data NodeHandle i o = NodeHandle
+  { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
+  , nextTimer :: IO (Maybe Time)
+  , advanceToTime :: Time -> IO (HandleOutput i o)
+  , close :: IO ()
+  }
+
+-- end snippet
+
+-- start snippet HandleOutput
 
 data HandleOutput i o = HandleOutput
   { beforeState :: Text
@@ -868,26 +887,9 @@ data HandleOutput i o = HandleOutput
   , logs :: [Text]
   }
 
--- start snippet Runtime
-
-type Timeout = Int
-
-data Runtime i o = Runtime
-  { receive :: Timeout -> IO (Maybe (Time, [i]))
-  , send :: [o] -> IO ()
-  , log :: Text -> IO ()
-  , close :: IO ()
-  }
-
 -- end snippet
 
-data NodeHandle i o = NodeHandle
-  { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
-  , nextTimer :: IO (Maybe Time)
-  , advanceToTime :: Time -> IO (HandleOutput i o)
-  , close :: IO ()
-  }
-
+-- start snippet simulationNodeHandle
 simulationNodeHandle ::
   forall s i o.
   (Show i, Read i, Show o, Read o) =>
@@ -949,6 +951,8 @@ simulationNodeHandle binaryFilePath arguments = do
             Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
       , close = terminateProcess processHandle
       }
+
+-- end snippet
 
 inProcessSimulationNodeHandle ::
   forall s i o.

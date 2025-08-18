@@ -204,7 +204,32 @@ on, next let's try to make things more concrete by looking at the code.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=handleEffects}
 ```
 
+## Runtime
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Runtime}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=consoleRuntime}
+```
+
+## Node handle
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeHandle}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=HandleOutput}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=simulationNodeHandle}
+```
+
 ## Example: Maelstrom and simulation testing broadcast
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=libMain}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate2.hs snippet=outOfProcessSimulationTestWith}
+```
 
 ## Discussion: the gap between simulation and reality
 

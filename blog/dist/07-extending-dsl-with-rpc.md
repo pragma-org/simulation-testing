@@ -709,9 +709,178 @@ handleEffects runtime codec ns = go []
       --   <> textShow (map (fmap fst) (toListTimer es'.pendingTimers))
       go acc es' effects
 
+rPC_TIMEOUT_MICROS :: Int
+rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
+```
+
+## Runtime
+
+``` haskell
+type Timeout = Int
+
+data Runtime i o = Runtime
+  { receive :: Timeout -> IO (Maybe (Time, [i]))
+  , send :: [o] -> IO ()
+  , log :: Text -> IO ()
+  , close :: IO ()
+  }
+
+```
+
+``` haskell
+consoleRuntime :: IO (Runtime ByteString ByteString)
+consoleRuntime = do
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  return
+    Runtime
+      { receive = \micros -> Timeout.timeout micros consoleReceive
+      , send = consoleSend
+      , log = Text.hPutStrLn stderr
+      , close = return ()
+      }
+  where
+    consoleReceive :: IO (Time, [ByteString])
+    consoleReceive = do
+      line <- BS8.hGetLine stdin
+      if BS8.null line
+        then return (epoch, []) -- XXX: epoch?
+        else do
+          BS8.hPutStrLn stderr ("consoleRuntime: received: " <> line)
+          arrivalTime <- getCurrentTime
+          return (arrivalTime, [line])
+
+    consoleSend :: [ByteString] -> IO ()
+    consoleSend = mapM_ $ \bytes -> do
+      BS8.hPutStrLn stderr ("consoleRuntime: sent: " <> bytes)
+      BS8.hPutStrLn stdout bytes
+
+```
+
+## Node handle
+
+``` haskell
+data NodeHandle i o = NodeHandle
+  { handle :: Time -> Incoming i o -> IO (HandleOutput i o)
+  , nextTimer :: IO (Maybe Time)
+  , advanceToTime :: Time -> IO (HandleOutput i o)
+  , close :: IO ()
+  }
+
+```
+
+``` haskell
+
+data HandleOutput i o = HandleOutput
+  { beforeState :: Text
+  , outgoing :: [Outgoing i o]
+  , afterState :: Text
+  , logs :: [Text]
+  }
+
+```
+
+``` haskell
+simulationNodeHandle ::
+  forall s i o.
+  (Show i, Read i, Show o, Read o) =>
+  FilePath
+  -> [String]
+  -> IO (NodeHandle i o)
+simulationNodeHandle binaryFilePath arguments = do
+  (Just hin, Just hout, _, processHandle) <-
+    createProcess
+      (proc binaryFilePath arguments)
+        { std_in = CreatePipe
+        , std_out = CreatePipe
+        }
+  hSetBuffering hin LineBuffering
+  hSetBuffering hout LineBuffering
+  hSetBuffering stderr LineBuffering
+  return
+    NodeHandle
+      { handle = \arrivalTime incoming -> do
+          hPutStrLn hin (show (Handle arrivalTime incoming))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (HandleResponse outgoing) ->
+              return
+                HandleOutput {beforeState = "", afterState = "", outgoing, logs = []}
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> do
+              hPutStrLn stderr err
+              return
+                HandleOutput
+                  { beforeState = ""
+                  , afterState = ""
+                  , outgoing = []
+                  , logs = []
+                  }
+      , nextTimer = do
+          hPutStrLn hin (show (NextTimer :: SimulationCommand i o))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (NextTimerResponse mTime) -> return mTime
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> error ("simulationNodeHandle, nextTimer error: " <> err)
+      , advanceToTime = \newTime -> do
+          hPutStrLn hin (show (AdvanceToTime newTime :: SimulationCommand i o))
+          hFlush hin
+          line <- hGetLine hout
+          case readEither line :: Either String (SimulationResponse i o) of
+            Right (AdvanceToTimeResponse outgoing) ->
+              return
+                HandleOutput
+                  { beforeState = ""
+                  , afterState = ""
+                  , outgoing
+                  , logs = []
+                  }
+            Right _ -> error "simulationNodeHandle, impossible, bad response"
+            Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
+      , close = terminateProcess processHandle
+      }
+
 ```
 
 ## Example: Maelstrom and simulation testing broadcast
+
+``` haskell
+libMain :: IO ()
+libMain = do
+  runtime <- concurrentConsoleRuntime
+  eventLoop broadcast initialState jsonCodec runtime
+
+```
+
+``` haskell
+outOfProcessSimulationTestWith ::
+  ( Show input
+  , Show output
+  , Read input
+  , Read output
+  , Ord input
+  , Ord output
+  ) =>
+  TestConfig
+  -> FilePath
+  -> [String]
+  -> Workload input output
+  -> IO Bool
+outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
+  (prng, seed) <- newPrng testConfig.replaySeed
+  let deployment =
+        Deployment
+          { numberOfNodes = testConfig.numberOfNodes
+          , spawn = simulationNodeHandle binaryFilePath arguments
+          }
+  result <- runTests testConfig deployment workload prng
+  handleResult result seed
+
+```
 
 ## Discussion: the gap between simulation and reality
 
