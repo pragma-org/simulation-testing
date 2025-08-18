@@ -902,6 +902,11 @@ outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
 
 ## Conclusion and what's next
 
+- Fault injection, network partitions in particular (to test that
+  retries work)
+- Synchronous RPC
+- More examples
+
 [^1]: The other main feature that sets deterministic simulation testing
     apart from Jepsen is the fact that the tests are deterministic and
     failures can be reproduced from a seed.

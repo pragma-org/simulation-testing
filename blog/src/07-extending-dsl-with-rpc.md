@@ -246,6 +246,9 @@ on, next let's try to make things more concrete by looking at the code.
 
 ## Conclusion and what's next
 
+* Fault injection, network partitions in particular (to test that retries work)
+* Synchronous RPC
+* More examples
 
 
 [^1]: The other main feature that sets deterministic simulation testing apart
