@@ -412,6 +412,12 @@ generic op = NodeBody (Free (op Pure))
 
 ```
 
+The type of `generic` is complicated, but all it does it wraps some
+`op`eration in a node body.
+
+The remaining functions used in the broadcast example follow the same
+pattern, and are omitted to save space.
+
 ## Semantics
 
 So now we got a language which is expressive enough to describe
@@ -489,6 +495,10 @@ runNodeBody (NodeBody m) = iterM go done m
 
 ## Event loop
 
+We've now got a state machine which advances the node state given an
+input and produces effects, next we'll define an event loop which drives
+our state machine.
+
 ``` haskell
 data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
@@ -537,21 +547,9 @@ stepEventLoop ::
   -> NodeState s
   -> EventLoopState s i o
   -> IO (NodeState s, EventLoopState s i o)
-stepEventLoop node codec runtime ns es = do
-  -- _now <- runtime.getTime
-  -- runtime.log
-  --   $ "[debug] "
-  --   <> textShow _now
-  --   <> " "
-  --   <> "eventLoop, pendingTimers: "
-  --   <> textShow (map (fmap fst) (toListTimer es.pendingTimers))
+stepEventLoop node codec runtime ns es =
   case popTimer es.pendingTimers of
     Nothing -> do
-      -- runtime.log
-      --   $ "[debug] "
-      --   <> textShow _now
-      --   <> " "
-      --   <> "eventLoop, waiting to receive (with 20s timeout)"
       runtime.receive 20_000_000 >>= \case
         Nothing -> do
           -- NOTE: This `send` is needed for simulation handle, otherwise
@@ -560,13 +558,6 @@ stepEventLoop node codec runtime ns es = do
           runtime.send []
           return (ns, es)
         Just (arrivalTime, incoming) -> do
-          -- _now <- runtime.getTime
-          -- runtime.log
-          --   $ "[debug] "
-          --   <> textShow _now
-          --   <> " "
-          --   <> "eventLoop, incoming (no timer): "
-          --   <> textShow incoming
           (ns', es', outgoing) <-
             handleIncoming
               node
@@ -582,62 +573,22 @@ stepEventLoop node codec runtime ns es = do
       -- NOTE: The `max 0` is needed because if we pass a negative value to
       -- `timeout` it won't timeout.
       let micros = max 0 (diffTimeMicros later now)
-      -- runtime.log
-      --   $ "[debug] "
-      --   <> textShow now
-      --   <> " "
-      --   <> "eventLoop, timer at: "
-      --   <> textShow later
-      --   <> ", in "
-      --   <> textShow micros
-      --   <> "µs"
-      --   <> " "
-      --   <> textShow mMessageId
       runtime.receive micros >>= \case
         Nothing -> do
-          -- We didn't receive a message within `micros`, and therefor need to
+          -- We didn't receive a message within `micros`, and therefore need to
           -- handle the timer.
           let now = ns.nodeTime
-          let (ns'', effects) = k (ns {nodeTime = now}, [])
-          -- runtime.log
-          --   $ "[debug] "
-          --   <> textShow now
-          --   <> " "
-          --   <> "eventLoop, timer triggered: "
-          --   <> textShow mMessageId
-          --   <> ", effects: "
-          --   <> textShow effects
+          let (ns', effects) = k (ns {nodeTime = now}, [])
           (es', outgoing) <-
             handleEffects
               runtime
               codec
-              ns''
+              ns'
               es {pendingTimers = pendingTimers'}
               effects
           runtime.send outgoing
-          -- runtime.log
-          --   $ "[debug] "
-          --   <> textShow now
-          --   <> " "
-          --   <> "eventLoop, timer, outgoing: "
-          --   <> textShow outgoing
-          let es'' = es'
-          -- let es'' = es' {pendingTimers = pendingTimers' <> es'.pendingTimers}
-          -- let es'' = es' {pendingTimers = pendingTimers' <> es'.pendingTimers}
-          -- runtime.log
-          --   $ "[debug] "
-          --   <> textShow now
-          --   <> " "
-          --   <> "eventLoop, remaining timers: "
-          --   <> textShow (map (fmap fst) (toListTimer es''.pendingTimers))
-          return (ns'', es'')
+          return (ns', es')
         Just (arrivalTime, incoming) -> do
-          -- runtime.log
-          --   $ "[debug] "
-          --   <> textShow _now
-          --   <> " "
-          --   <> "eventLoop, incoming before timer, incoming: "
-          --   <> textShow incoming
           (ns', es', outgoing) <-
             handleIncoming
               node
@@ -996,6 +947,8 @@ outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
 - Codec?
 
 - Code paths in stepEventLoop that are never taken in simulation?
+
+  - add asserts to confirm?
 
 - In the node DSL if we do t1 \<- getTime, t2 \<- getTime then t1 == t2
   as time doesn't move during a step

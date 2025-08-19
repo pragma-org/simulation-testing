@@ -231,6 +231,12 @@ Where a "generic operation"[^2] is defined as:
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=generic}
 ```
 
+The type of `generic` is complicated, but all it does it wraps some `op`eration
+in a node body.
+
+The remaining functions used in the broadcast example follow the same pattern,
+and are omitted to save space.
+
 ## Semantics
 
 So now we got a language which is expressive enough to describe interesting
@@ -255,6 +261,10 @@ And running the body of a node is defined as following:
 ```
 
 ## Event loop
+
+We've now got a state machine which advances the node state given an input and
+produces effects, next we'll define an event loop which drives our state machine.
+
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=EventLoopState}
 ```
@@ -303,6 +313,7 @@ And running the body of a node is defined as following:
 * Event loop code
 * Codec?
 * Code paths in stepEventLoop that are never taken in simulation?
+  - add asserts to confirm?
 * In the node DSL if we do t1 <- getTime, t2 <- getTime then t1 == t2 as time
   doesn't move during a step
   - Alternative: We could make getTime into an effect which would suspend and get a callback
