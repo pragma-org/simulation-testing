@@ -137,12 +137,15 @@ instance Monad (NodeBody s i o) where
 
 ------------------------------------------------------------------------
 
+-- start snippet generic
 generic ::
   ( (x -> Free f x)
     -> NodeF state input output (Free (NodeF state input output) a)
   )
   -> NodeBody state input output a
 generic op = NodeBody (Free (op Pure))
+
+-- end snippet
 
 generic_ ::
   ( Free f ()
@@ -151,6 +154,7 @@ generic_ ::
   -> NodeBody state input output a
 generic_ op = NodeBody (Free (op (Pure ())))
 
+-- start snippet state
 getState :: NodeBody s i o s
 getState = localState <$> generic Get
 
@@ -163,6 +167,8 @@ modifyState :: (s -> s) -> NodeBody s i o ()
 modifyState f = do
   s <- getState
   putState (f s)
+
+-- end snippet
 
 setSelf :: NodeId -> NodeBody s i o ()
 setSelf self = do
@@ -183,19 +189,21 @@ getNeighbours = neighbours <$> generic Get
 getSender :: NodeBody s i o NodeId
 getSender = sender <$> generic Get
 
+-- start snippet rpc
 rpc ::
   NodeId
   -> i
   -> (RpcError -> NodeBody s i o ())
   -> (o -> NodeBody s i o ())
   -> NodeBody s i o ()
-rpc nodeId i failure success = do
-  -- info $ "RPC to " <> unNodeId nodeId
-  generic (Rpc nodeId i failure success)
+rpc nodeId i failure success = generic (Rpc nodeId i failure success)
+
+-- end snippet
 
 getNodeTime :: NodeBody s i o Time
 getNodeTime = generic GetTime
 
+-- start snippet info
 info :: Text -> NodeBody s i o ()
 info text = do
   self <- getSelf
@@ -204,6 +212,8 @@ info text = do
     ( Log
         ("[info] (" <> textShow now <> ") [" <> unNodeId self <> "] " <> text)
     )
+
+-- end snippet
 
 after :: Int -> NodeBody s i o () -> NodeBody s i o ()
 after micros body = generic (After micros body)

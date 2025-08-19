@@ -160,36 +160,96 @@ for logging.
 ```
 
 The `Get` and `Put` constructs have been generalised slightly, since last time,
-to operate over a so called node stae.
+to operate over a so called "node state".
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeState}
 ```
+
+Which contains the "local state" of the node, the node id of itself, the
+current time at the node, the neighbour node ids, the node id of the sender and
+the in reply to message id of the message we are currently processing.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=initialNodeState}
 ```
 
 ## Example: broadcast
 
+To illustrate what this extended DSL is capable of, let's have a look at an
+example from Jepsen's [Maelstrom](https://github.com/jepsen-io/maelstrom): a
+gossip based broadcast system.
+
+The broadcast nodes support four messages, initialisation (which supplies the
+node with its unique node id and the node ids of its neighbours), topology
+(which tells the node which neighbours are currencly reachable), broadcast
+(which tells the node to broadcast some integer to its reachable neighbours)
+and read (which returns all the integers that the node has seen):
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastInput}
 ```
+
+The responses to the above messages are all simple acknowledgements, except for
+the read where we get back a list of integers as just mentioned:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastOutput}
 ```
+
+In order to operate as intended the broadcast nodes need to keep track of
+integers that they've seen and for each integer, which reachable neighbours it
+still needs to broadcast them to:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=BroadcastState}
 ```
+
+Initially this state starts of being empty.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=initialState}
 ```
 
+We now got everything we need to define our broadcast nodes:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=broadcast}
+```
+
+All the functions that are used in the broadcast example can be defined using
+our DSL, here's for example the functions operating on the node state:
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=state}
+```
+
+Or the RPC construct:
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=rpc}
+```
+
+Or logging:
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=info}
+```
+
+Where a "generic operation"[^2] is defined as:
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=generic}
 ```
 
 ## Semantics
 
+So now we got a language which is expressive enough to describe interesting
+distributed systems, but so far it's merely a description. Next we'll have a
+look at how we assign meaning to this language in terms of a simple state
+machine.
+
+The state machine takes a node state, an input and produces an updated node
+state as well as a list of effects:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runNode}
 ```
 
+Where the effects are the following:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Effect}
 ```
+
+And running the body of a node is defined as following:
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=runBody}
 ```
@@ -261,3 +321,6 @@ to operate over a so called node stae.
 [^1]: The other main feature that sets deterministic simulation testing apart
     from Jepsen is the fact that the tests are deterministic and failures can
     be reproduced from a seed.
+
+[^2]: Generic operation is Plotkin and Power's terminology from their work on
+    algebraic effects.

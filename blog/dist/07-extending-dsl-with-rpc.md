@@ -178,7 +178,7 @@ data NodeF s i o x
 ```
 
 The `Get` and `Put` constructs have been generalised slightly, since
-last time, to operate over a so called node stae.
+last time, to operate over a so called "node state".
 
 ``` haskell
 data NodeState s = NodeState
@@ -191,6 +191,11 @@ data NodeState s = NodeState
   }
 
 ```
+
+Which contains the "local state" of the node, the node id of itself, the
+current time at the node, the neighbour node ids, the node id of the
+sender and the in reply to message id of the message we are currently
+processing.
 
 ``` haskell
 initialNodeState :: s -> NodeState s
@@ -208,6 +213,18 @@ initialNodeState s =
 
 ## Example: broadcast
 
+To illustrate what this extended DSL is capable of, let's have a look at
+an example from Jepsen's
+[Maelstrom](https://github.com/jepsen-io/maelstrom): a gossip based
+broadcast system.
+
+The broadcast nodes support four messages, initialisation (which
+supplies the node with its unique node id and the node ids of its
+neighbours), topology (which tells the node which neighbours are
+currencly reachable), broadcast (which tells the node to broadcast some
+integer to its reachable neighbours) and read (which returns all the
+integers that the node has seen):
+
 ``` haskell
 data BroadcastInput
   = Init {node_id :: NodeId, node_ids :: [NodeId]}
@@ -215,6 +232,10 @@ data BroadcastInput
   | Broadcast {message :: Int}
   | Read
 ```
+
+The responses to the above messages are all simple acknowledgements,
+except for the read where we get back a list of integers as just
+mentioned:
 
 ``` haskell
 data BroadcastOutput
@@ -224,6 +245,10 @@ data BroadcastOutput
   | Read_Ok {messages :: [Int]}
 ```
 
+In order to operate as intended the broadcast nodes need to keep track
+of integers that they've seen and for each integer, which reachable
+neighbours it still needs to broadcast them to:
+
 ``` haskell
 data BroadcastState = BroadcastState
   { seen :: Set Int
@@ -231,11 +256,15 @@ data BroadcastState = BroadcastState
   }
 ```
 
+Initially this state starts of being empty.
+
 ``` haskell
 initialState :: BroadcastState
 initialState = BroadcastState Set.empty Map.empty
 
 ```
+
+We now got everything we need to define our broadcast nodes:
 
 ``` haskell
 broadcast :: Node BroadcastState BroadcastInput BroadcastOutput
@@ -324,7 +353,74 @@ broadcast Read = do
 
 ```
 
+All the functions that are used in the broadcast example can be defined
+using our DSL, here's for example the functions operating on the node
+state:
+
+``` haskell
+getState :: NodeBody s i o s
+getState = localState <$> generic Get
+
+putState :: s -> NodeBody s i o ()
+putState s' = do
+  ns <- generic Get
+  generic (Put ns {localState = s'})
+
+modifyState :: (s -> s) -> NodeBody s i o ()
+modifyState f = do
+  s <- getState
+  putState (f s)
+
+```
+
+Or the RPC construct:
+
+``` haskell
+rpc ::
+  NodeId
+  -> i
+  -> (RpcError -> NodeBody s i o ())
+  -> (o -> NodeBody s i o ())
+  -> NodeBody s i o ()
+rpc nodeId i failure success = generic (Rpc nodeId i failure success)
+
+```
+
+Or logging:
+
+``` haskell
+info :: Text -> NodeBody s i o ()
+info text = do
+  self <- getSelf
+  now <- getNodeTime
+  generic
+    ( Log
+        ("[info] (" <> textShow now <> ") [" <> unNodeId self <> "] " <> text)
+    )
+
+```
+
+Where a "generic operation"[^2] is defined as:
+
+``` haskell
+generic ::
+  ( (x -> Free f x)
+    -> NodeF state input output (Free (NodeF state input output) a)
+  )
+  -> NodeBody state input output a
+generic op = NodeBody (Free (op Pure))
+
+```
+
 ## Semantics
+
+So now we got a language which is expressive enough to describe
+interesting distributed systems, but so far it's merely a description.
+Next we'll have a look at how we assign meaning to this language in
+terms of a simple state machine.
+
+The state machine takes a node state, an input and produces an updated
+node state as well as a list of effects:
 
 ``` haskell
 runNode ::
@@ -335,6 +431,8 @@ runNode ::
 runNode node ns i = runNodeBody (node i) (ns, [])
 
 ```
+
+Where the effects are the following:
 
 ``` haskell
 data Effect s i o
@@ -348,6 +446,8 @@ type Cont s i o =
   (NodeState s, [Effect s i o]) -> (NodeState s, [Effect s i o])
 
 ```
+
+And running the body of a node is defined as following:
 
 ``` haskell
 runNodeBody ::
@@ -917,3 +1017,6 @@ outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
 [^1]: The other main feature that sets deterministic simulation testing
     apart from Jepsen is the fact that the tests are deterministic and
     failures can be reproduced from a seed.
+
+[^2]: Generic operation is Plotkin and Power's terminology from their
+    work on algebraic effects.
