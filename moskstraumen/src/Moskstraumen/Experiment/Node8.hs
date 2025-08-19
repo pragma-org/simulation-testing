@@ -7,7 +7,7 @@ module Moskstraumen.Experiment.Node8 (module Moskstraumen.Experiment.Node8) wher
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception (SomeException, assert, catch, finally)
+import Control.Monad.Catch
 import Data.Aeson
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Types as Json
@@ -17,6 +17,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.IORef
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Debug.Trace
 import GHC.Generics (Rep)
@@ -361,18 +362,20 @@ initialEventLoopState =
 --
 -- start snippet eventLoop
 eventLoop ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
+  (Monad m) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
-  -> IO ()
+  -> Runtime m i_ o_
+  -> m ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
-    `finally` runtime.close
   where
-    loop :: NodeState s -> EventLoopState s i o -> IO ()
+    -- `finally` runtime.close
+
+    loop :: NodeState s -> EventLoopState s i o -> m ()
     loop ns es = do
       (ns', es') <- stepEventLoop node codec runtime ns es
       loop ns' es'
@@ -381,14 +384,15 @@ eventLoop node initialState codec runtime =
 
 -- start snippet stepEventLoop
 stepEventLoop ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
+  (Monad m) =>
   Node s i o
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
+  -> Runtime m i_ o_
   -> NodeState s
   -> EventLoopState s i o
-  -> IO (NodeState s, EventLoopState s i o)
+  -> m (NodeState s, EventLoopState s i o)
 stepEventLoop node codec runtime ns es =
   case popTimer es.pendingTimers of
     Nothing -> do
@@ -460,7 +464,7 @@ data SimulationResponse i o
 simulationRuntime ::
   MVar (Time, Incoming i o)
   -> MVar [Outgoing i o]
-  -> IO (Runtime (Incoming i o) (Outgoing i o))
+  -> IO (Runtime IO (Incoming i o) (Outgoing i o))
 simulationRuntime inputMVar outputMVar = do
   return
     Runtime
@@ -501,7 +505,7 @@ simulationEventLoop node initialState = do
     loop ::
       MVar (Time, Incoming i o)
       -> MVar [Outgoing i o]
-      -> Runtime (Incoming i o) (Outgoing i o)
+      -> Runtime IO (Incoming i o) (Outgoing i o)
       -> NodeState s
       -> EventLoopState s i o
       -> IO ()
@@ -537,15 +541,16 @@ simulationEventLoop node initialState = do
 
 -- start snippet handleIncoming
 handleIncoming ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o) =>
+  (Monad m) =>
   Node s i o
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
+  -> Runtime m i_ o_
   -> NodeState s
   -> EventLoopState s i o
   -> [i_]
-  -> IO (NodeState s, EventLoopState s i o, [o_])
+  -> m (NodeState s, EventLoopState s i o, [o_])
 handleIncoming node codec runtime = go []
   where
     go ::
@@ -553,19 +558,20 @@ handleIncoming node codec runtime = go []
       -> NodeState s
       -> EventLoopState s i o
       -> [i_]
-      -> IO (NodeState s, EventLoopState s i o, [o_])
+      -> m (NodeState s, EventLoopState s i o, [o_])
     go acc ns es [] = return (ns, es, concatMap reverse acc)
     go acc ns es (i_ : incoming) = do
       case codec.decodeIncoming i_ of
         Left err -> do
-          hPutStrLn
-            stderr
-            ( "Failed to parse input: "
-                <> err
-                <> "\nbody: "
-                <> show i_
-                <> "\npendingRpcs: "
-                <> show (Map.keys es.pendingRpcs)
+          runtime.log
+            ( Text.pack
+                ( "Failed to parse input: "
+                    <> err
+                    <> "\nbody: "
+                    <> show i_
+                    <> "\npendingRpcs: "
+                    <> show (Map.keys es.pendingRpcs)
+                )
             )
           go acc ns es incoming
         Right (InMessage message) -> do
@@ -614,20 +620,21 @@ handleIncoming node codec runtime = go []
 
 -- start snippet handleEffects
 handleEffects ::
-  forall i i_ o o_ s.
-  Runtime i_ o_
+  forall m i i_ o o_ s.
+  (Monad m) =>
+  Runtime m i_ o_
   -> Codec i_ i o_ o
   -> NodeState s
   -> EventLoopState s i o
   -> [Effect s i o]
-  -> IO (EventLoopState s i o, [o_])
+  -> m (EventLoopState s i o, [o_])
 handleEffects runtime codec ns = go []
   where
     go ::
       [o_]
       -> EventLoopState s i o
       -> [Effect s i o]
-      -> IO (EventLoopState s i o, [o_])
+      -> m (EventLoopState s i o, [o_])
     go acc es [] = return (es, acc)
     go acc es (SEND nodeId i : effects) = do
       let messageId = es.nextMessageId
@@ -707,17 +714,17 @@ rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
 -- start snippet Runtime
 type Timeout = Int
 
-data Runtime i o = Runtime
-  { receive :: Timeout -> IO (Maybe (Time, [i]))
-  , send :: [o] -> IO ()
-  , log :: Text -> IO ()
-  , close :: IO ()
+data Runtime m i o = Runtime
+  { receive :: Timeout -> m (Maybe (Time, [i]))
+  , send :: [o] -> m ()
+  , log :: Text -> m ()
+  , close :: m ()
   }
 
 -- end snippet
 
 -- start snippet consoleRuntime
-consoleRuntime :: IO (Runtime ByteString ByteString)
+consoleRuntime :: IO (Runtime IO ByteString ByteString)
 consoleRuntime = do
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
@@ -747,7 +754,7 @@ consoleRuntime = do
 
 -- end snippet
 
-concurrentConsoleRuntime :: IO (Runtime ByteString ByteString)
+concurrentConsoleRuntime :: IO (Runtime IO ByteString ByteString)
 concurrentConsoleRuntime = do
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering
@@ -808,7 +815,7 @@ type Port = Int
 
 -- start snippet prodMain
 tcpRuntime ::
-  Port -> Map NodeId Port -> IO (Runtime BS8.ByteString BS8.ByteString)
+  Port -> Map NodeId Port -> IO (Runtime IO BS8.ByteString BS8.ByteString)
 -- end snippet
 tcpRuntime = undefined
 
@@ -940,7 +947,7 @@ inProcessSimulationNodeHandle node initialState = do
         (_ns, es) <- readIORef ref
         return (TimerWheel.nextTimer es.pendingTimers)
 
-  let runtime :: Runtime (Incoming i o) (Outgoing i o)
+  let runtime :: Runtime IO (Incoming i o) (Outgoing i o)
       runtime =
         Runtime
           { receive = receive_

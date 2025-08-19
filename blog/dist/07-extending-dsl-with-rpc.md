@@ -499,6 +499,8 @@ We've now got a state machine which advances the node state given an
 input and produces effects, next we'll define an event loop which drives
 our state machine.
 
+For the event loop to be able to do its job, it needs a bit of state:
+
 ``` haskell
 data EventLoopState s i o = EventLoopState
   { nextMessageId :: MessageId
@@ -517,20 +519,26 @@ initialEventLoopState =
 
 ```
 
+The next message id will be used to identify all outgoing messages (this
+is needed in case we get a reply, so that we can correlated the reply
+with the original message).
+
 ``` haskell
 eventLoop ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
+  (Monad m) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
-  -> IO ()
+  -> Runtime m i_ o_
+  -> m ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
-    `finally` runtime.close
   where
-    loop :: NodeState s -> EventLoopState s i o -> IO ()
+    -- `finally` runtime.close
+
+    loop :: NodeState s -> EventLoopState s i o -> m ()
     loop ns es = do
       (ns', es') <- stepEventLoop node codec runtime ns es
       loop ns' es'
@@ -539,14 +547,15 @@ eventLoop node initialState codec runtime =
 
 ``` haskell
 stepEventLoop ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
+  (Monad m) =>
   Node s i o
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
+  -> Runtime m i_ o_
   -> NodeState s
   -> EventLoopState s i o
-  -> IO (NodeState s, EventLoopState s i o)
+  -> m (NodeState s, EventLoopState s i o)
 stepEventLoop node codec runtime ns es =
   case popTimer es.pendingTimers of
     Nothing -> do
@@ -604,15 +613,16 @@ stepEventLoop node codec runtime ns es =
 
 ``` haskell
 handleIncoming ::
-  forall s i_ i o_ o.
+  forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o) =>
+  (Monad m) =>
   Node s i o
   -> Codec i_ i o_ o
-  -> Runtime i_ o_
+  -> Runtime m i_ o_
   -> NodeState s
   -> EventLoopState s i o
   -> [i_]
-  -> IO (NodeState s, EventLoopState s i o, [o_])
+  -> m (NodeState s, EventLoopState s i o, [o_])
 handleIncoming node codec runtime = go []
   where
     go ::
@@ -620,19 +630,20 @@ handleIncoming node codec runtime = go []
       -> NodeState s
       -> EventLoopState s i o
       -> [i_]
-      -> IO (NodeState s, EventLoopState s i o, [o_])
+      -> m (NodeState s, EventLoopState s i o, [o_])
     go acc ns es [] = return (ns, es, concatMap reverse acc)
     go acc ns es (i_ : incoming) = do
       case codec.decodeIncoming i_ of
         Left err -> do
-          hPutStrLn
-            stderr
-            ( "Failed to parse input: "
-                <> err
-                <> "\nbody: "
-                <> show i_
-                <> "\npendingRpcs: "
-                <> show (Map.keys es.pendingRpcs)
+          runtime.log
+            ( Text.pack
+                ( "Failed to parse input: "
+                    <> err
+                    <> "\nbody: "
+                    <> show i_
+                    <> "\npendingRpcs: "
+                    <> show (Map.keys es.pendingRpcs)
+                )
             )
           go acc ns es incoming
         Right (InMessage message) -> do
@@ -681,20 +692,21 @@ handleIncoming node codec runtime = go []
 
 ``` haskell
 handleEffects ::
-  forall i i_ o o_ s.
-  Runtime i_ o_
+  forall m i i_ o o_ s.
+  (Monad m) =>
+  Runtime m i_ o_
   -> Codec i_ i o_ o
   -> NodeState s
   -> EventLoopState s i o
   -> [Effect s i o]
-  -> IO (EventLoopState s i o, [o_])
+  -> m (EventLoopState s i o, [o_])
 handleEffects runtime codec ns = go []
   where
     go ::
       [o_]
       -> EventLoopState s i o
       -> [Effect s i o]
-      -> IO (EventLoopState s i o, [o_])
+      -> m (EventLoopState s i o, [o_])
     go acc es [] = return (es, acc)
     go acc es (SEND nodeId i : effects) = do
       let messageId = es.nextMessageId
@@ -776,17 +788,17 @@ rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
 ``` haskell
 type Timeout = Int
 
-data Runtime i o = Runtime
-  { receive :: Timeout -> IO (Maybe (Time, [i]))
-  , send :: [o] -> IO ()
-  , log :: Text -> IO ()
-  , close :: IO ()
+data Runtime m i o = Runtime
+  { receive :: Timeout -> m (Maybe (Time, [i]))
+  , send :: [o] -> m ()
+  , log :: Text -> m ()
+  , close :: m ()
   }
 
 ```
 
 ``` haskell
-consoleRuntime :: IO (Runtime ByteString ByteString)
+consoleRuntime :: IO (Runtime IO ByteString ByteString)
 consoleRuntime = do
   hSetBuffering stdin LineBuffering
   hSetBuffering stdout LineBuffering

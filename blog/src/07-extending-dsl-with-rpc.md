@@ -265,9 +265,16 @@ And running the body of a node is defined as following:
 We've now got a state machine which advances the node state given an input and
 produces effects, next we'll define an event loop which drives our state machine.
 
+For the event loop to be able to do its job, it needs a bit of state:
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=EventLoopState}
 ```
+
+The next message id will be used to identify all outgoing messages (this is
+needed in case we get a reply, so that we can correlated the reply with the
+original message).
+
+
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=eventLoop}
 ```

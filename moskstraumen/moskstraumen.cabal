@@ -117,6 +117,7 @@ library
     , base        >=4.16
     , bytestring
     , containers
+    , exceptions
     , heaps
     , mtl
     , network
