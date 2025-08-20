@@ -272,14 +272,47 @@ For the event loop to be able to do its job, it needs a bit of state:
 
 The next message id will be used to identify all outgoing messages (this is
 needed in case we get a reply, so that we can correlated the reply with the
-original message).
+original message). The pending RPCs field holds the success-continuations of
+RPCs that the node has sent (in a map keyed by the message id of the original
+message). The pending timers field holds RPC timeouts as well as other timers
+that the node has set for itself.
 
-
+The event loop takes a node, it's initial local state, a codec (which decodes
+and encodes incoming and outgoing messages) and a runtime (which receives
+incoming messages and deals with the effects produced by the node).
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=eventLoop}
 ```
 
+At each step of the event loop, we first check if there are any pending timers.
+If there are no pending timers, we start waiting for an incoming message by
+receiving via the runtime. A receive operation takes a timeout value in
+microseconds as a parameter, and if no incoming message is receieved within
+that time it will return `Nothing`, otherwise it returns the the incoming
+message and its arrival time.
+
+It gets more interesting when there's a pending timer. In that case we receieve
+with a timeout which is the difference of what the time is now and when the
+timer goes off, meaning that if we haven't receieved any incoming message by
+the time that the timer goes off we'll get back `Nothing` and can proceed with
+handling the timer.
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=stepEventLoop}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Codec}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Message}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Response}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=RpcError}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Incoming}
+```
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Outgoing}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=handleIncoming}
@@ -294,6 +327,9 @@ original message).
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=consoleRuntime}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=shim}
 ```
 
 ## Node handle

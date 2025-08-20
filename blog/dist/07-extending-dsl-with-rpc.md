@@ -521,7 +521,15 @@ initialEventLoopState =
 
 The next message id will be used to identify all outgoing messages (this
 is needed in case we get a reply, so that we can correlated the reply
-with the original message).
+with the original message). The pending RPCs field holds the
+success-continuations of RPCs that the node has sent (in a map keyed by
+the message id of the original message). The pending timers field holds
+RPC timeouts as well as other timers that the node has set for itself.
+
+The event loop takes a node, it's initial local state, a codec (which
+decodes and encodes incoming and outgoing messages) and a runtime (which
+receives incoming messages and deals with the effects produced by the
+node).
 
 ``` haskell
 eventLoop ::
@@ -544,6 +552,19 @@ eventLoop node initialState codec runtime =
       loop ns' es'
 
 ```
+
+At each step of the event loop, we first check if there are any pending
+timers. If there are no pending timers, we start waiting for an incoming
+message by receiving via the runtime. A receive operation takes a
+timeout value in microseconds as a parameter, and if no incoming message
+is receieved within that time it will return `Nothing`, otherwise it
+returns the the incoming message and its arrival time.
+
+It gets more interesting when there's a pending timer. In that case we
+receieve with a timeout which is the difference of what the time is now
+and when the timer goes off, meaning that if we haven't receieved any
+incoming message by the time that the timer goes off we'll get back
+`Nothing` and can proceed with handling the timer.
 
 ``` haskell
 stepEventLoop ::
@@ -609,6 +630,51 @@ stepEventLoop node codec runtime ns es =
           runtime.send outgoing
           return (ns', es')
 
+```
+
+``` haskell
+data Codec i_ i o_ o = Codec
+  { decodeIncoming :: i_ -> Either String (Incoming i o)
+  , encodeOutgoing :: Outgoing i o -> o_
+  }
+
+```
+
+``` haskell
+data Message i = Message
+  { src :: NodeId
+  , dest :: NodeId
+  , msgId :: Maybe MessageId
+  , body :: i
+  }
+```
+
+``` haskell
+data Response o = Response
+  { src :: NodeId
+  , dest :: NodeId
+  , msgId :: Maybe MessageId
+  , inReplyTo :: MessageId
+  , body :: o
+  }
+```
+
+``` haskell
+data RpcError = Timeout
+```
+
+``` haskell
+data Incoming i o
+  = InMessage (Message i)
+  | InResponse (Response o)
+  | InRpcError RpcError
+```
+
+``` haskell
+data Outgoing i o
+  = OutMessage (Message i)
+  | OutResponse (Response o)
+  | OutRpcError RpcError
 ```
 
 ``` haskell
@@ -825,6 +891,97 @@ consoleRuntime = do
     consoleSend = mapM_ $ \bytes -> do
       BS8.hPutStrLn stderr ("consoleRuntime: sent: " <> bytes)
       BS8.hPutStrLn stdout bytes
+
+```
+
+``` haskell
+data SimulationCommand i o
+  = Handle Time (Incoming i o)
+  | NextTimer
+  | AdvanceToTime Time
+  deriving stock (Show, Read)
+
+data SimulationResponse i o
+  = HandleResponse [Outgoing i o]
+  | NextTimerResponse (Maybe Time)
+  | AdvanceToTimeResponse [Outgoing i o]
+  deriving stock (Show, Read)
+
+simulationRuntime ::
+  MVar (Time, Incoming i o)
+  -> MVar [Outgoing i o]
+  -> IO (Runtime IO (Incoming i o) (Outgoing i o))
+simulationRuntime inputMVar outputMVar = do
+  return
+    Runtime
+      { send = putMVar outputMVar
+      , receive = \timeout -> case timeout of
+          0 -> return Nothing
+          _ -> do
+            (arrivalTime, incoming) <- takeMVar inputMVar
+            -- now <- readFaketime
+            -- assert (now - arrivalTime == 0)
+            return (Just (arrivalTime, [incoming]))
+      , log = Text.hPutStrLn stderr
+      , close = return ()
+      }
+
+-- AKA shim
+simulationEventLoop ::
+  forall s i o.
+  (Show s, Show i, Show o, Read i, Read o) =>
+  Node s i o
+  -> s
+  -> IO ()
+simulationEventLoop node initialState = do
+  inputMVar <- newEmptyMVar
+  outputMVar <- newEmptyMVar
+  runtime <- simulationRuntime inputMVar outputMVar
+  hSetBuffering stdin LineBuffering
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  loop
+    inputMVar
+    outputMVar
+    runtime
+    (initialNodeState initialState)
+    initialEventLoopState
+    `finally` runtime.close
+  where
+    loop ::
+      MVar (Time, Incoming i o)
+      -> MVar [Outgoing i o]
+      -> Runtime IO (Incoming i o) (Outgoing i o)
+      -> NodeState s
+      -> EventLoopState s i o
+      -> IO ()
+    loop inputMVar outputMVar runtime ns es = do
+      line <- hGetLine stdin
+      case readEither line of
+        Right (Handle arrivalTime incoming) -> do
+          putMVar inputMVar (arrivalTime, incoming)
+          (ns', es') <-
+            stepEventLoop node testCodec runtime ns {nodeTime = arrivalTime} es
+          outgoing <- takeMVar outputMVar
+          hPutStrLn
+            stdout
+            (show (HandleResponse outgoing))
+          loop inputMVar outputMVar runtime ns' es'
+        Right NextTimer -> do
+          let mNextTimer = TimerWheel.nextTimer es.pendingTimers
+          hPutStrLn
+            stdout
+            (show (NextTimerResponse mNextTimer :: SimulationResponse i o))
+          loop inputMVar outputMVar runtime ns es
+        Right (AdvanceToTime newTime) -> do
+          (ns', es') <-
+            stepEventLoop node testCodec runtime ns {nodeTime = newTime} es
+          outgoing <- takeMVar outputMVar
+          hPutStrLn
+            stdout
+            (show (AdvanceToTimeResponse outgoing))
+          loop inputMVar outputMVar runtime ns' es'
+        Left err -> error ("simulationEventLoop, failed to parse input: " <> err)
 
 ```
 

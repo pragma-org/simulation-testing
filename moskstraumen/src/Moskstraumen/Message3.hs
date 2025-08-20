@@ -29,14 +29,17 @@ newtype MessageId = MessageId Word64
   deriving stock (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- start snippet Message
 data Message i = Message
   { src :: NodeId
   , dest :: NodeId
   , msgId :: Maybe MessageId
   , body :: i
   }
+  -- end snippet
   deriving stock (Show, Read, Eq, Ord)
 
+-- start snippet Response
 data Response o = Response
   { src :: NodeId
   , dest :: NodeId
@@ -44,17 +47,24 @@ data Response o = Response
   , inReplyTo :: MessageId
   , body :: o
   }
+  -- end snippet
   deriving stock (Show, Read, Eq, Ord)
 
+-- start snippet RpcError
 data RpcError = Timeout
+  -- end snippet
   deriving stock (Show, Read, Eq, Ord, Generic)
   deriving anyclass (FromJSON)
 
+-- start snippet Incoming
 data Incoming i o
   = InMessage (Message i)
   | InResponse (Response o)
   | InRpcError RpcError
-  | InFault Fault
+  | -- end snippet
+
+    InFault
+  | Fault
   | InTimer NodeId
   deriving stock (Show, Read, Eq, Ord)
 
@@ -90,11 +100,13 @@ instance HasField "body" (Outgoing i o) (Either i o) where
   getField (OutResponse resp) = Right resp.body
   getField (OutRpcError _err) = error "Outgoing.body InRpcError"
 
+-- start snippet Outgoing
 data Outgoing i o
   = OutMessage (Message i)
   | OutResponse (Response o)
   | OutRpcError RpcError
-  | OutFault Fault
+  | -- end snippet
+    OutFault Fault
   | Dropped (Incoming i o)
   deriving stock (Show, Read, Eq)
 
