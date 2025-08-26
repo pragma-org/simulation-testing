@@ -145,13 +145,18 @@ produces are turned into outgoing messages, for the runtime to send to
 approapriate destination, and timers for the event loop to keep track off.
 
 Hopefully by now we've managed to paint a high-level picture of what's going
-on, next let's try to make things more concrete by looking at the code.
+on, next let's try to make things more concrete by looking at the code. We'll
+look at each of the boxes in the above diagrams separately.
 
 ## Extending the DSL
 
-First, let's have a look at what the DSL looks like. The new constructs are,
-`After`, `Rpc`, `GetTime` which are all time-related and `Log` which is used
-for logging.
+First, let's have a look at what the DSL looks like. The new constructs are:
+
+* `After`: which sets a timer and runs a provided action when it expires;
+* `Rpc`: for making an RPC call, takes two continuations, so that it can handle
+  both the failure and success case;
+* `GetTime`: which returns the current node time;
+* `Log`: which is used for logging.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Node}
 ```
@@ -300,7 +305,25 @@ handling the timer.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=stepEventLoop}
 ```
 
+The above code contains four pieces which we haven't seen yet: 
+
+* `Codec`: for encoding and decoding messages;
+* `handleIncoming`: for handling incoming messages;
+* `handleEffects`: for handing the effects that our node produces when it
+  processes an incoming message.
+* `Runtime`: which is used for receiving and sending messages and logging.
+
+Let's have a look at each of these in turn.
+
+## Messages and their codec
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Codec}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Incoming}
+```
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Outgoing}
 ```
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Message}
@@ -310,10 +333,7 @@ handling the timer.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=RpcError}
 ```
 
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Incoming}
-```
-``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Outgoing}
-```
+## Handling incoming messages and effects
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=handleIncoming}
 ```
