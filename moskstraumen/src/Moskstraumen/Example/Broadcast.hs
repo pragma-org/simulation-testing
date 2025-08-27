@@ -146,7 +146,7 @@ broadcast Read = do
 -- start snippet libMain
 libMain :: IO ()
 libMain = do
-  runtime <- concurrentConsoleRuntime
+  runtime <- consoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
 
 -- end snippet

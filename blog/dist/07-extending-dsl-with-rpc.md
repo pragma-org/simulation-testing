@@ -872,6 +872,9 @@ rPC_TIMEOUT_MICROS = 5_000_000 -- 5s.
 
 ## Runtime
 
+All the side-effects made by the event loop come from the so called
+runtime.
+
 ``` haskell
 type Timeout = Int
 
@@ -883,6 +886,14 @@ data Runtime m i o = Runtime
   }
 
 ```
+
+The reason for this interface is so that we can use different instances
+of it during simulation testing and real deployment, without having to
+otherwise change the event loop code.
+
+For example where's a runtime that recieves messages on `stdin`, sends
+messages on `stdout` and does logging on `stderr` (this is how Maelstrom
+talks to the SUT it's testing).
 
 ``` haskell
 consoleRuntime :: IO (Runtime IO ByteString ByteString)
@@ -914,6 +925,10 @@ consoleRuntime = do
       BS8.hPutStrLn stdout bytes
 
 ```
+
+Another instance of the runtime interface is the simultion runtime,
+which is used during simulation testing. This is the box called "shim"
+in the diagrams from the overview.
 
 ``` haskell
 data SimulationCommand i o
@@ -1006,7 +1021,25 @@ simulationEventLoop node initialState = do
 
 ```
 
+Like the console runtime used by Maelstrom we use `stdin` and `stdout`,
+but since simulation requires control over time we've extended the
+Maelstrom "protocol" to also be able to get the next timer that a node
+is waiting for as well as advance the time.
+
+For a real deployment the runtime would use, for example, a TCP socket
+to do the receiving and sending of messages and perhaps the signature
+would be something like the following.
+
+``` haskell
+tcpRuntime ::
+  Port -> Map NodeId Port -> IO (Runtime IO ByteString ByteString)
+```
+
 ## Node handle
+
+The so called node handle, which is spawned by the simulator and allows
+it to communicate with the SUT, needs to be extended to also be able to
+ask for the next timer and advance the time.
 
 ``` haskell
 data NodeHandle i o = NodeHandle
@@ -1019,14 +1052,14 @@ data NodeHandle i o = NodeHandle
 ```
 
 ``` haskell
-
 data HandleOutput i o = HandleOutput
-  { beforeState :: Text
-  , outgoing :: [Outgoing i o]
-  , afterState :: Text
-  , logs :: [Text]
+  { outgoing :: [Outgoing i o]
   }
 
+noHandleOutput :: HandleOutput i o
+noHandleOutput = HandleOutput
+  { outgoing = []
+  }
 ```
 
 ``` haskell
@@ -1059,13 +1092,7 @@ simulationNodeHandle binaryFilePath arguments = do
             Right _ -> error "simulationNodeHandle, impossible, bad response"
             Left err -> do
               hPutStrLn stderr err
-              return
-                HandleOutput
-                  { beforeState = ""
-                  , afterState = ""
-                  , outgoing = []
-                  , logs = []
-                  }
+              return noHandleOutput
       , nextTimer = do
           hPutStrLn hin (show (NextTimer :: SimulationCommand i o))
           hFlush hin
@@ -1079,14 +1106,7 @@ simulationNodeHandle binaryFilePath arguments = do
           hFlush hin
           line <- hGetLine hout
           case readEither line :: Either String (SimulationResponse i o) of
-            Right (AdvanceToTimeResponse outgoing) ->
-              return
-                HandleOutput
-                  { beforeState = ""
-                  , afterState = ""
-                  , outgoing
-                  , logs = []
-                  }
+            Right (AdvanceToTimeResponse outgoing) -> return noHandleOutput
             Right _ -> error "simulationNodeHandle, impossible, bad response"
             Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
       , close = terminateProcess processHandle
@@ -1094,12 +1114,14 @@ simulationNodeHandle binaryFilePath arguments = do
 
 ```
 
+## Changes to the simulator
+
 ## Example: Maelstrom and simulation testing broadcast
 
 ``` haskell
 libMain :: IO ()
 libMain = do
-  runtime <- concurrentConsoleRuntime
+  runtime <- consoleRuntime
   eventLoop broadcast initialState jsonCodec runtime
 
 ```
@@ -1152,10 +1174,20 @@ outOfProcessSimulationTestWith testConfig binaryFilePath arguments workload = do
 
 ## Conclusion and what's next
 
-- Fault injection, network partitions in particular (to test that
-  retries work)
-- Synchronous RPC
-- More examples
+We've added constructs to our DSL for dealing with time, a key part of
+distributed systems, and made the simulator able to fake the passage of
+time in order to speed up testing involving timers.
+
+The next step would be to add fault injection, e.g. network partitions
+or latency, which would trigger timeout timers associated with RPC
+requests which in turn would cause retries. This will ensure that our
+nodes are robust in the presence of failures.
+
+Another possible improvement is to extend the DSL to allow synchronous
+(or blocking) RPC calls, which would make it easier to express some use
+cases (e.g. the Datomic transactor
+[example](https://github.com/jepsen-io/maelstrom/blob/main/doc/05-datomic/index.md)
+from Maelstrom).
 
 [^1]: The other main feature that sets deterministic simulation testing
     apart from Jepsen is the fact that the tests are deterministic and

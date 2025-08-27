@@ -813,9 +813,9 @@ jsonCodec =
 
 type Port = Int
 
--- start snippet prodMain
+-- start snippet tcpRuntime
 tcpRuntime ::
-  Port -> Map NodeId Port -> IO (Runtime IO BS8.ByteString BS8.ByteString)
+  Port -> Map NodeId Port -> IO (Runtime IO ByteString ByteString)
 -- end snippet
 tcpRuntime = undefined
 
@@ -837,13 +837,25 @@ data NodeHandle i o = NodeHandle
 -- end snippet
 
 -- start snippet HandleOutput
-
 data HandleOutput i o = HandleOutput
-  { beforeState :: Text
-  , outgoing :: [Outgoing i o]
+  { outgoing :: [Outgoing i o]
+-- end snippet
+  , beforeState :: Text
   , afterState :: Text
   , logs :: [Text]
+-- start snippet HandleOutput
   }
+
+noHandleOutput :: HandleOutput i o
+noHandleOutput = HandleOutput
+  { outgoing = []
+-- end snippet
+  , beforeState :: Text
+  , afterState :: Text
+  , logs :: [Text]
+-- start snippet HandleOutput
+  }
+-- end snippet
 
 -- end snippet
 
@@ -877,13 +889,7 @@ simulationNodeHandle binaryFilePath arguments = do
             Right _ -> error "simulationNodeHandle, impossible, bad response"
             Left err -> do
               hPutStrLn stderr err
-              return
-                HandleOutput
-                  { beforeState = ""
-                  , afterState = ""
-                  , outgoing = []
-                  , logs = []
-                  }
+              return noHandleOutput
       , nextTimer = do
           hPutStrLn hin (show (NextTimer :: SimulationCommand i o))
           hFlush hin
@@ -897,14 +903,7 @@ simulationNodeHandle binaryFilePath arguments = do
           hFlush hin
           line <- hGetLine hout
           case readEither line :: Either String (SimulationResponse i o) of
-            Right (AdvanceToTimeResponse outgoing) ->
-              return
-                HandleOutput
-                  { beforeState = ""
-                  , afterState = ""
-                  , outgoing
-                  , logs = []
-                  }
+            Right (AdvanceToTimeResponse outgoing) -> return noHandleOutput
             Right _ -> error "simulationNodeHandle, impossible, bad response"
             Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
       , close = terminateProcess processHandle

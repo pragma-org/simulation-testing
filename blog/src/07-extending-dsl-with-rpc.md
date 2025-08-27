@@ -343,16 +343,46 @@ Let's have a look at each of these in turn.
 
 ## Runtime
 
+All the side-effects made by the event loop come from the so called runtime.
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Runtime}
 ```
+
+The reason for this interface is so that we can use different instances of it
+during simulation testing and real deployment, without having to otherwise
+change the event loop code.
+
+For example where's a runtime that recieves messages on `stdin`, sends messages
+on `stdout` and does logging on `stderr` (this is how Maelstrom talks to the
+SUT it's testing).
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=consoleRuntime}
 ```
 
+Another instance of the runtime interface is the simultion runtime, which is
+used during simulation testing. This is the box called "shim" in the diagrams
+from the overview.
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=shim}
 ```
 
+Like the console runtime used by Maelstrom we use `stdin` and `stdout`, but
+since simulation requires control over time we've extended the Maelstrom
+"protocol" to also be able to get the next timer that a node is waiting for as
+well as advance the time.
+
+For a real deployment the runtime would use, for example, a TCP socket to do
+the receiving and sending of messages and perhaps the signature would be
+something like the following.
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=tcpRuntime}
+```
+
 ## Node handle
+
+The so called node handle, which is spawned by the simulator and allows it to
+communicate with the SUT, needs to be extended to also be able to ask for the
+next timer and advance the time.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=NodeHandle}
 ```
@@ -362,6 +392,9 @@ Let's have a look at each of these in turn.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=simulationNodeHandle}
 ```
+
+## Changes to the simulator
+
 
 ## Example: Maelstrom and simulation testing broadcast
 
@@ -387,9 +420,20 @@ Let's have a look at each of these in turn.
 
 ## Conclusion and what's next
 
-* Fault injection, network partitions in particular (to test that retries work)
-* Synchronous RPC
-* More examples
+We've added constructs to our DSL for dealing with time, a key part of
+distributed systems, and made the simulator able to fake the passage of time in
+order to speed up testing involving timers.
+
+The next step would be to add fault injection, e.g. network partitions or
+latency, which would trigger timeout timers associated with RPC requests which
+in turn would cause retries. This will ensure that our nodes are robust in the
+presence of failures.
+
+Another possible improvement is to extend the DSL to allow synchronous (or
+blocking) RPC calls, which would make it easier to express some use cases (e.g.
+the Datomic transactor
+[example](https://github.com/jepsen-io/maelstrom/blob/main/doc/05-datomic/index.md)
+from Maelstrom).
 
 
 [^1]: The other main feature that sets deterministic simulation testing apart
