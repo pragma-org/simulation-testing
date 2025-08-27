@@ -541,7 +541,7 @@ node).
 eventLoop ::
   forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
-  (Monad m) =>
+  (Monad m, MonadMask m) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
@@ -549,9 +549,8 @@ eventLoop ::
   -> m ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
   where
-    -- `finally` runtime.close
-
     loop :: NodeState s -> EventLoopState s i o -> m ()
     loop ns es = do
       (ns', es') <- stepEventLoop node codec runtime ns es
@@ -635,6 +634,30 @@ stepEventLoop node codec runtime ns es =
               incoming
           runtime.send outgoing
           return (ns', es')
+
+```
+
+The above code just takes one step in the event loop, to actually run
+the event loop we loop the step function as follows:
+
+``` haskell
+eventLoop ::
+  forall m s i_ i o_ o.
+  (Show s, Show i_, Show i, Show o, Show o_) =>
+  (Monad m, MonadMask m) =>
+  Node s i o
+  -> s
+  -> Codec i_ i o_ o
+  -> Runtime m i_ o_
+  -> m ()
+eventLoop node initialState codec runtime =
+  loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
+  where
+    loop :: NodeState s -> EventLoopState s i o -> m ()
+    loop ns es = do
+      (ns', es') <- stepEventLoop node codec runtime ns es
+      loop ns' es'
 
 ```
 
@@ -1057,9 +1080,11 @@ data HandleOutput i o = HandleOutput
   }
 
 noHandleOutput :: HandleOutput i o
-noHandleOutput = HandleOutput
-  { outgoing = []
-  }
+noHandleOutput =
+  HandleOutput
+    { outgoing = []
+    }
+
 ```
 
 ``` haskell

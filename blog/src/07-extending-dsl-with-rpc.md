@@ -305,6 +305,12 @@ handling the timer.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=stepEventLoop}
 ```
 
+The above code just takes one step in the event loop, to actually run the event
+loop we loop the step function as follows:
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=eventLoop}
+```
+
 The above code contains four pieces which we haven't seen yet: 
 
 * `Codec`: for encoding and decoding messages;
@@ -344,6 +350,7 @@ Let's have a look at each of these in turn.
 ## Runtime
 
 All the side-effects made by the event loop come from the so called runtime.
+
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=Runtime}
 ```
@@ -394,6 +401,8 @@ next timer and advance the time.
 ```
 
 ## Changes to the simulator
+
+
 
 
 ## Example: Maelstrom and simulation testing broadcast

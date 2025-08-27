@@ -364,7 +364,7 @@ initialEventLoopState =
 eventLoop ::
   forall m s i_ i o_ o.
   (Show s, Show i_, Show i, Show o, Show o_) =>
-  (Monad m) =>
+  (Monad m, MonadMask m) =>
   Node s i o
   -> s
   -> Codec i_ i o_ o
@@ -372,9 +372,8 @@ eventLoop ::
   -> m ()
 eventLoop node initialState codec runtime =
   loop (initialNodeState initialState) initialEventLoopState
+    `finally` runtime.close
   where
-    -- `finally` runtime.close
-
     loop :: NodeState s -> EventLoopState s i o -> m ()
     loop ns es = do
       (ns', es') <- stepEventLoop node codec runtime ns es
@@ -839,22 +838,24 @@ data NodeHandle i o = NodeHandle
 -- start snippet HandleOutput
 data HandleOutput i o = HandleOutput
   { outgoing :: [Outgoing i o]
--- end snippet
-  , beforeState :: Text
+  , -- end snippet
+    beforeState :: Text
   , afterState :: Text
   , logs :: [Text]
--- start snippet HandleOutput
+  -- start snippet HandleOutput
   }
 
 noHandleOutput :: HandleOutput i o
-noHandleOutput = HandleOutput
-  { outgoing = []
--- end snippet
-  , beforeState :: Text
-  , afterState :: Text
-  , logs :: [Text]
--- start snippet HandleOutput
-  }
+noHandleOutput =
+  HandleOutput
+    { outgoing = []
+    , -- end snippet
+      beforeState = ""
+    , afterState = ""
+    , logs = []
+    -- start snippet HandleOutput
+    }
+
 -- end snippet
 
 -- end snippet

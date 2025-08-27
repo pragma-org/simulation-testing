@@ -62,9 +62,7 @@ data Incoming i o
   | InResponse (Response o)
   | InRpcError RpcError
   | -- end snippet
-
-    InFault
-  | Fault
+    InFault Fault
   | InTimer NodeId
   deriving stock (Show, Read, Eq, Ord)
 
