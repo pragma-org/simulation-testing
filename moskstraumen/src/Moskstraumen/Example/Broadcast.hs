@@ -151,8 +151,11 @@ libMain = do
 
 -- end snippet
 
+-- start snippet simulationLibMain
 simulationLibMain :: IO ()
 simulationLibMain = simulationEventLoop broadcast initialState
+
+-- end snippet
 
 ------------------------------------------------------------------------
 
@@ -164,7 +167,7 @@ unit_simTestBroadcastReplay seed = unit_simTestBroadcast' (Just seed)
 
 unit_simTestBroadcast' :: Maybe Int -> IO Bool
 unit_simTestBroadcast' mSeed =
-  simulationTestWith
+  inProcessSimulationTestWith
     config
     broadcast
     initialState

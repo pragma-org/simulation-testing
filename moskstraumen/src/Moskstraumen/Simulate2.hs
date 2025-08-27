@@ -377,7 +377,7 @@ runWorld ::
   (Show i, Show o, Ord i, Ord o) =>
   World i o
   -> IO (Maybe StepFailure, World i o)
-runWorld = go 10000
+runWorld = go 1000000
   where
     go 0 world = return (Just StepTooManySteps, world)
     go n world =
@@ -777,14 +777,14 @@ blackboxTest binary = blackboxTestWith defaultTestConfig binary (const [])
 
 -- end snippet
 
-simulationTestWith ::
+inProcessSimulationTestWith ::
   (Show state, Show input, Show output, Ord input, Ord output) =>
   TestConfig
   -> Node state input output
   -> state
   -> Workload input output
   -> IO Bool
-simulationTestWith testConfig node initialState workload = do
+inProcessSimulationTestWith testConfig node initialState workload = do
   (prng, seed) <- newPrng testConfig.replaySeed
   let deployment =
         Deployment
@@ -794,13 +794,13 @@ simulationTestWith testConfig node initialState workload = do
   result <- runTests testConfig deployment workload prng
   handleResult result seed
 
-simulationTest ::
+inProcessSimulationTest ::
   (Show state, Show input, Show output, Ord input, Ord output) =>
   Node state input output
   -> state
   -> Workload input output
   -> IO Bool
-simulationTest = simulationTestWith defaultTestConfig
+inProcessSimulationTest = inProcessSimulationTestWith defaultTestConfig
 
 regressionTestWith ::
   (Show state, Show input, Show output, Ord input, Ord output) =>

@@ -904,7 +904,9 @@ simulationNodeHandle binaryFilePath arguments = do
           hFlush hin
           line <- hGetLine hout
           case readEither line :: Either String (SimulationResponse i o) of
-            Right (AdvanceToTimeResponse outgoing) -> return noHandleOutput
+            Right (AdvanceToTimeResponse outgoing) ->
+              return
+                HandleOutput {beforeState = "", afterState = "", outgoing, logs = []}
             Right _ -> error "simulationNodeHandle, impossible, bad response"
             Left err -> error ("simulationNodeHandle, advanceToTime error: " <> err)
       , close = terminateProcess processHandle

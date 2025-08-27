@@ -407,11 +407,109 @@ next timer and advance the time.
 
 ## Example: Maelstrom and simulation testing broadcast
 
+The final thing left to do is to run our example. We can run it in two ways:
+
+  1. Using the console runtime, which allows us to blackbox test it with
+     Maelstrom;
+  2. Using the simulation runtime, which allows us to simulation test it with
+     the simulator.
+
+Let's start with the console runtime:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=libMain}
 ```
 
+If we let this be the `main` and compile a binary out of it, we can then test
+it with Maelstrom as follows:
+
+```bash
+./maelstrom test -w broadcast --bin "$BINARY_PATH" --time-limit 5 --log-stderr --rate 10
+
+[...]
+
+INFO [2025-08-27 13:25:25,136] jepsen test runner - jepsen.core {:perf {:latency-graph {:valid? true},
+        :rate-graph {:valid? true},
+        :valid? true},
+ :timeline {:valid? true},
+ :exceptions {:valid? true},
+ :stats {:valid? true,
+         :count 54,
+         :ok-count 54,
+         :fail-count 0,
+         :info-count 0,
+         :by-f {:broadcast {:valid? true,
+                            :count 22,
+                            :ok-count 22,
+                            :fail-count 0,
+                            :info-count 0},
+                :read {:valid? true,
+                       :count 32,
+                       :ok-count 32,
+                       :fail-count 0,
+                       :info-count 0}}},
+ :availability {:valid? true, :ok-fraction 1.0},
+ :net {:all {:send-count 392,
+             :recv-count 392,
+             :msg-count 392,
+             :msgs-per-op 7.259259},
+       :clients {:send-count 128, :recv-count 128, :msg-count 128},
+       :servers {:send-count 264,
+                 :recv-count 264,
+                 :msg-count 264,
+                 :msgs-per-op 4.888889},
+       :valid? true},
+ :workload {:worst-stale (),
+            :duplicated-count 0,
+            :valid? true,
+            :lost-count 0,
+            :lost (),
+            :stable-count 22,
+            :stale-count 0,
+            :stale (),
+            :never-read-count 0,
+            :stable-latencies {0 0, 0.5 0, 0.95 0, 0.99 0, 1 0},
+            :attempt-count 22,
+            :never-read (),
+            :duplicated {}},
+ :valid? true}
+
+Everything looks good! ヽ(‘ー`)ノ
+```
+
+For simulation testing we instead stick the following into the `main` function
+and compile a binary. This is almost the same as the above, with the exception
+of the shim which allows the simulator to query the next timer and advance
+time.
+
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Example/Broadcast.hs snippet=simulationLibMain}
+```
+
+We can then use this binary when calling our simulator from the REPL as
+follows:
+
+```
+>>> let config = defaultTestConfig { numberOfTests = 10 }
+>>> binary <- filter (/= '\n') <$> readProcess "cabal" ["list-bin", "broadcast-simulation"] ""
+>>> outOfProcessSimulationTestWith config binary [] (broadcastWorkload config)
+
+[...]
+
+Metrics {droppedMessages = 424, partitions = 55, numberOfTests = 10}
+
+Success!
+```
+
+Where out-of-process simulation testing is defined as follows:
+
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate2.hs snippet=outOfProcessSimulationTestWith}
 ```
+
+For completeness we should also mention that it's possible to write an
+in-process simulator, which uses a node handle which doesn't spawn an external
+process but rather calls `stepEventLoop` in the same thread as the simulator.
+This only works if the SUT is written in the same language as the simulator
+though, so what we showed above is more general albeit probably a bit slower
+due to the serialisation overhead.
 
 ## Discussion: the gap between simulation and reality
 
