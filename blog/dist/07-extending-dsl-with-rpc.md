@@ -1148,6 +1148,13 @@ We've already had a look at how to write the simulator component in a
 post, so we'll try to not repeat ourselves unnecessarily and merely look
 at what has to be changed in order to simulate time.
 
+Recall that the job of the simulator is to generate test cases using the
+workload, then simulate the "world" for each test case, which finally
+results in a history of client requests and responses from the SUT,
+which then the property is checked against.
+
+The only part that needs to be changed is the step world function:
+
 ``` haskell
 
 data StepSuccess i o
@@ -1266,6 +1273,10 @@ stepWorld world = do
                         }
 
 ```
+
+Notice how the heap now contains incoming messages as well as timers,
+and how we check what the next timer is and merge the timer events into
+the heap.
 
 ## Example: Maelstrom and simulation testing broadcast
 
