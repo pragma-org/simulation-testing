@@ -137,23 +137,12 @@ data StepResult i o
   = StepFailure StepFailure
   | StepSuccess (StepSuccess i o)
 
-displayStepFailure :: StepFailure -> String
-displayStepFailure (StepSomeException err) = displayException err
-displayStepFailure (StepUnknownDestination nodeId) =
-  "unknown destination node: " <> Text.unpack (unNodeId nodeId)
-displayStepFailure (StepTimeoutWhenHandling incoming) =
-  "timeout when handling: " <> incoming
-displayStepFailure StepTooManySteps = "too many steps"
-
 stepWorld ::
   (Show i, Show o, Ord i, Ord o) => World i o -> IO (StepResult i o)
 stepWorld world = do
-  --  putStrLn $ "STEP WORLD, messages: "
-  --  mapM_ (putStrLn . ("  " ++) . show) (Heap.toList world.messages)
   case Heap.pop world.messages of
     Nothing -> return (StepSuccess StepDone)
     Just ((arrivalTime, incoming), messages') -> do
-      -- putStrLn ("[debug] stepWorld, popped: " <> show (arrivalTime, incoming))
       case incoming of
         InTimer nodeId -> case Map.lookup nodeId world.nodes of
           Nothing ->
@@ -163,8 +152,6 @@ stepWorld world = do
               )
           Just nodeHandle -> do
             handleOutput <- nodeHandle.advanceToTime arrivalTime
-            -- XXX: don't always show logs
-            -- mapM_ Text.putStrLn handleOutput.logs
             mTime <- nodeHandle.nextTimer
             let (clientResponses, nodeMessages) =
                   List.partition (isClientNodeId . (.dest)) handleOutput.outgoing
@@ -176,9 +163,6 @@ stepWorld world = do
                     meanMicros
                     (map outgoingToIncoming nodeMessages)
                     world.prng
-            -- print
-            --  $ messages'
-            -- print mTime
             return
               $ StepSuccess
               $ StepContinue
@@ -199,6 +183,7 @@ stepWorld world = do
                           ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                           )
                           clientResponses
+-- end snippet
                   , journal =
                       world.journal
                         <> Vector.singleton
@@ -240,6 +225,7 @@ stepWorld world = do
                           )
                   , partition = world.partition
                   , metrics = world.metrics
+-- start snippet stepWorld
                   }
         InFault fault@(PartitionFault partition) ->
           return
@@ -249,11 +235,13 @@ stepWorld world = do
                       { partition
                       , messages = messages'
                       , history = world.history <> [(arrivalTime, OutFault fault)]
+-- end snippet
                       , metrics =
                           world.metrics
                             { partitions =
                                 world.metrics.partitions + (if partition == None then 0 else 1)
                             }
+-- start snippet stepWorld
                       }
                 )
             )
@@ -327,7 +315,8 @@ stepWorld world = do
                                 ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                                 )
                                 clientResponses
-                        , journal =
+-- end snippet
+                          journal =
                             world.journal
                               <> Vector.singleton
                                 ( DebugEvent
@@ -368,9 +357,18 @@ stepWorld world = do
                                 )
                         , partition = world.partition
                         , metrics = world.metrics
+                        -- start snippet stepWorld
                         }
 
 -- end snippet
+
+displayStepFailure :: StepFailure -> String
+displayStepFailure (StepSomeException err) = displayException err
+displayStepFailure (StepUnknownDestination nodeId) =
+  "unknown destination node: " <> Text.unpack (unNodeId nodeId)
+displayStepFailure (StepTimeoutWhenHandling incoming) =
+  "timeout when handling: " <> incoming
+displayStepFailure StepTooManySteps = "too many steps"
 
 -- start snippet runWorld
 runWorld ::

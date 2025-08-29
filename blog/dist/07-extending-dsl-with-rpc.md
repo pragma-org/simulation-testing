@@ -1143,6 +1143,159 @@ simulationNodeHandle binaryFilePath arguments = do
 
 ## Changes to the simulator
 
+We've already had a look at how to write the simulator component in a
+[previous](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/04-simulation-testing-main-loop.md)
+post, so we'll try to not repeat ourselves unnecessarily and merely look
+at what has to be changed in order to simulate time.
+
+``` haskell
+
+data StepSuccess i o
+  = StepDone
+  | StepContinue (World i o)
+
+data StepFailure
+  = StepSomeException SomeException
+  | StepUnknownDestination NodeId
+  | StepTimeoutWhenHandling String
+  | StepTooManySteps
+
+data StepResult i o
+  = StepFailure StepFailure
+  | StepSuccess (StepSuccess i o)
+
+stepWorld ::
+  (Show i, Show o, Ord i, Ord o) => World i o -> IO (StepResult i o)
+stepWorld world = do
+  case Heap.pop world.messages of
+    Nothing -> return (StepSuccess StepDone)
+    Just ((arrivalTime, incoming), messages') -> do
+      case incoming of
+        InTimer nodeId -> case Map.lookup nodeId world.nodes of
+          Nothing ->
+            return
+              ( StepFailure
+                  (StepUnknownDestination nodeId)
+              )
+          Just nodeHandle -> do
+            handleOutput <- nodeHandle.advanceToTime arrivalTime
+            mTime <- nodeHandle.nextTimer
+            let (clientResponses, nodeMessages) =
+                  List.partition (isClientNodeId . (.dest)) handleOutput.outgoing
+            -- XXX: Make this configurable via workload?
+            let meanMicros = 200_000 -- 200ms
+            let ((nodeMessages', _time), prng') =
+                  generateRandomArrivalTimes
+                    arrivalTime
+                    meanMicros
+                    (map outgoingToIncoming nodeMessages)
+                    world.prng
+            return
+              $ StepSuccess
+              $ StepContinue
+                World
+                  { nodes = world.nodes
+                  , messages =
+                      -- NOTE: only add timer event if there already isn't one.
+                      messages'
+                        `Heap.union` Heap.fromList
+                          ( (map (\time -> (time, InTimer nodeId)) (maybeToList mTime))
+                              ++ nodeMessages'
+                          )
+                  , prng = prng'
+                  , -- XXX: the arrival time for client responses is arbitrary
+                    history =
+                      world.history
+                        ++ map
+                          ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                          )
+                          clientResponses
+                  }
+        InFault fault@(PartitionFault partition) ->
+          return
+            ( StepSuccess
+                ( StepContinue
+                    world
+                      { partition
+                      , messages = messages'
+                      , history = world.history <> [(arrivalTime, OutFault fault)]
+                      }
+                )
+            )
+        -- XXX: enable faults:
+        _otherwise
+          | affected incoming.src incoming.dest world.partition -> do
+              -- putStrLn
+              --   ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
+              --   )
+              return
+                ( StepSuccess
+                    ( StepContinue
+                        world
+                          { messages = messages'
+                          , history =
+                              world.history <> [(arrivalTime, Dropped incoming)]
+                          , metrics =
+                              world.metrics {droppedMessages = world.metrics.droppedMessages + 1}
+                          }
+                    )
+                )
+        _otherwise ->
+          case Map.lookup incoming.dest world.nodes of
+            Nothing ->
+              return
+                ( StepFailure
+                    (StepUnknownDestination incoming.dest)
+                )
+            Just nodeHandle ->
+              timeout 5_000_000 (try (nodeHandle.handle arrivalTime incoming)) >>= \case
+                Nothing ->
+                  return
+                    ( StepFailure
+                        (StepTimeoutWhenHandling (show incoming))
+                    )
+                Just (Left err) -> do
+                  putStrLn
+                    ( "stepWorld, failed on: "
+                        <> show (arrivalTime, incoming, messages')
+                    )
+                  return (StepFailure (StepSomeException err))
+                Just (Right handleOutput) -> do
+                  -- mapM_ Text.putStrLn handleOutput.logs
+                  let (clientResponses, nodeMessages) =
+                        List.partition (isClientNodeId . (.dest)) handleOutput.outgoing
+                  let meanMicros = 20000 -- 20ms
+                  let ((nodeMessages', _time), prng') =
+                        generateRandomArrivalTimes
+                          arrivalTime
+                          meanMicros
+                          (map outgoingToIncoming nodeMessages)
+                          world.prng
+                  mTime <- nodeHandle.nextTimer
+                  -- XXX: code duplication from above...
+                  return
+                    $ StepSuccess
+                    $ StepContinue
+                      World
+                        { nodes = world.nodes
+                        , messages =
+                            messages'
+                              `Heap.union` Heap.fromList
+                                ( (map (\time -> (time, InTimer incoming.dest)) (maybeToList mTime))
+                                    ++ nodeMessages'
+                                )
+                        , prng = prng'
+                        , -- XXX: the arrival time for client responses is arbitrary
+                          history =
+                            world.history ++ (arrivalTime, incomingToOutgoing incoming)
+                              : map
+                                ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
+                                )
+                                clientResponses
+                        }
+
+```
+
 ## Example: Maelstrom and simulation testing broadcast
 
 The final thing left to do is to run our example. We can run it in two
@@ -1167,7 +1320,7 @@ If we let this be the `main` and compile a binary out of it, we can then
 test it with Maelstrom as follows:
 
 ``` bash
-./maelstrom test -w broadcast --bin "$BINARY_PATH" --time-limit 5 --log-stderr --rate 10
+./maelstrom test -w broadcast --bin $(cabal list-bin broadcast) --time-limit 5 --log-stderr --rate 10
 
 [...]
 

@@ -402,8 +402,14 @@ next timer and advance the time.
 
 ## Changes to the simulator
 
+We've already had a look at how to write the simulator component in a
+[previous](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/04-simulation-testing-main-loop.md)
+post, so we'll try to not repeat ourselves unnecessarily and merely look at
+what has to be changed in order to simulate time.
 
 
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate2.hs snippet=stepWorld}
+```
 
 ## Example: Maelstrom and simulation testing broadcast
 
@@ -423,7 +429,7 @@ If we let this be the `main` and compile a binary out of it, we can then test
 it with Maelstrom as follows:
 
 ```bash
-./maelstrom test -w broadcast --bin "$BINARY_PATH" --time-limit 5 --log-stderr --rate 10
+./maelstrom test -w broadcast --bin $(cabal list-bin broadcast) --time-limit 5 --log-stderr --rate 10
 
 [...]
 
