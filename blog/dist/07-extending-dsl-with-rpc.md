@@ -1211,35 +1211,6 @@ stepWorld world = do
                           )
                           clientResponses
                   }
-        InFault fault@(PartitionFault partition) ->
-          return
-            ( StepSuccess
-                ( StepContinue
-                    world
-                      { partition
-                      , messages = messages'
-                      , history = world.history <> [(arrivalTime, OutFault fault)]
-                      }
-                )
-            )
-        -- XXX: enable faults:
-        _otherwise
-          | affected incoming.src incoming.dest world.partition -> do
-              -- putStrLn
-              --   ( "Dropping: " <> show incoming <> ", partition: " <> show world.partition
-              --   )
-              return
-                ( StepSuccess
-                    ( StepContinue
-                        world
-                          { messages = messages'
-                          , history =
-                              world.history <> [(arrivalTime, Dropped incoming)]
-                          , metrics =
-                              world.metrics {droppedMessages = world.metrics.droppedMessages + 1}
-                          }
-                    )
-                )
         _otherwise ->
           case Map.lookup incoming.dest world.nodes of
             Nothing ->

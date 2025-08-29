@@ -227,6 +227,7 @@ stepWorld world = do
                   , metrics = world.metrics
 -- start snippet stepWorld
                   }
+-- end snippet
         InFault fault@(PartitionFault partition) ->
           return
             ( StepSuccess
@@ -235,13 +236,11 @@ stepWorld world = do
                       { partition
                       , messages = messages'
                       , history = world.history <> [(arrivalTime, OutFault fault)]
--- end snippet
                       , metrics =
                           world.metrics
                             { partitions =
                                 world.metrics.partitions + (if partition == None then 0 else 1)
                             }
--- start snippet stepWorld
                       }
                 )
             )
@@ -263,6 +262,7 @@ stepWorld world = do
                           }
                     )
                 )
+-- start snippet stepWorld
         _otherwise ->
           case Map.lookup incoming.dest world.nodes of
             Nothing ->

@@ -407,7 +407,6 @@ We've already had a look at how to write the simulator component in a
 post, so we'll try to not repeat ourselves unnecessarily and merely look at
 what has to be changed in order to simulate time.
 
-
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Simulate2.hs snippet=stepWorld}
 ```
 
