@@ -8,6 +8,7 @@ pkgs.mkShell {
     haskell.compiler.ghc9101
     cabal-install
     haskellPackages.cabal-fmt
+    haskellPackages.hpc
     haskellPackages.fourmolu
   ];
 }

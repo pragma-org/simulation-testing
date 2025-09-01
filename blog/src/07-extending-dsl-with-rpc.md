@@ -1,7 +1,7 @@
 ---
 author: Stevan A
-date: 2025-08-13
-status: sketch
+date: 2025-09-01
+status: draft
 ---
 
 # Dealing with the notion of time when simulating distributed systems
@@ -542,8 +542,8 @@ is not being deployed.
 The code for the shim itself is pretty short, and unlikely to contain any major
 bugs, however there's a risk that the way we handle time is too simplicit. In
 particular we take a very discrete approach and don't simulate parallel
-execution of nodes. The argument here is that it should be fine as nodes don't
-share data anyway.
+execution of nodes[^3]. The argument here is that it should be fine as nodes
+don't share data anyway.
 
 Apart from the shim component, the other difference between simulation and
 what's being deployed is the runtime interface instance. During simulation
@@ -565,16 +565,6 @@ One last thing worth mentioning here is that in the current in-memory runtime
 approach, the codec isn't used, so using a more realistic runtime could also
 exersise these code paths during simulation. However testing the codec
 separately using a round-trip property is likely good enough.
-
-* Code paths in stepEventLoop that are never taken in simulation?
-  - add asserts to confirm?
-* In the node DSL if we do t1 <- getTime, t2 <- getTime then t1 == t2 as time
-  doesn't move during a step
-  - Alternative: We could make getTime into an effect which would suspend and get a callback
-    once runtime.getTime finishes
-
-* XXX: use profiler to check?
-* XXX: can we use a faketime version of timeout to have a smaller gap?
 
 ## Conclusion and what's next
 
@@ -600,3 +590,10 @@ from Maelstrom).
 
 [^2]: Generic operation is Plotkin and Power's terminology from their work on
     algebraic effects.
+
+[^3]: A consequence of processing inputs in discrete steps is that in the node
+    DSL if we do `t1 <- getTime`, `t2 <- getTime` then `t1 == t2` as time
+    doesn't move during "a step". This is a limitation on the expressivity of
+    the DSL, but shouldn't lead to inconsistencies. We could lift this
+    restriction by treating `getTime` into an effect which would suspend and
+    get a callback once `runtime.getTime` finishes.

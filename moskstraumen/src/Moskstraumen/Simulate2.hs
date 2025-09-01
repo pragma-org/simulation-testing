@@ -183,8 +183,8 @@ stepWorld world = do
                           ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                           )
                           clientResponses
--- end snippet
-                  , journal =
+                  , -- end snippet
+                    journal =
                       world.journal
                         <> Vector.singleton
                           ( DebugEvent
@@ -225,9 +225,9 @@ stepWorld world = do
                           )
                   , partition = world.partition
                   , metrics = world.metrics
--- start snippet stepWorld
+                  -- start snippet stepWorld
                   }
--- end snippet
+        -- end snippet
         InFault fault@(PartitionFault partition) ->
           return
             ( StepSuccess
@@ -262,7 +262,7 @@ stepWorld world = do
                           }
                     )
                 )
--- start snippet stepWorld
+        -- start snippet stepWorld
         _otherwise ->
           case Map.lookup incoming.dest world.nodes of
             Nothing ->
@@ -315,7 +315,7 @@ stepWorld world = do
                                 ( \clientResponse -> (addTimeMicros (round meanMicros) arrivalTime, clientResponse)
                                 )
                                 clientResponses
--- end snippet
+                        , -- end snippet
                           journal =
                             world.journal
                               <> Vector.singleton

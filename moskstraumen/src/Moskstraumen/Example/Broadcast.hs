@@ -7,6 +7,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import System.Process (readProcess)
 
 import Moskstraumen.Experiment.Node8
 import Moskstraumen.Fault
@@ -183,6 +184,18 @@ unit_simTestBroadcast' mSeed =
         , minSize = 30
         , maxSize = 100
         }
+
+unit_externalSimTestBroadcast :: IO Bool
+unit_externalSimTestBroadcast = do
+  let config = defaultTestConfig {numberOfTests = 10}
+  binary <-
+    filter (/= '\n')
+      <$> readProcess "cabal" ["list-bin", "broadcast-simulation"] ""
+  outOfProcessSimulationTestWith
+    config
+    binary
+    []
+    (broadcastWorkload config)
 
 broadcastWorkload ::
   TestConfig -> Workload BroadcastInput BroadcastOutput

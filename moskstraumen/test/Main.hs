@@ -28,8 +28,11 @@ unitTests =
     , testGroup
         "Simulation"
         [ testCase
-            "Broadcast"
+            "InProcessBroadcast"
             (assertBool "" =<< unit_simTestBroadcast)
+        , testCase
+            "OutOfProcessBroadcast"
+            (assertBool "" =<< unit_externalSimTestBroadcast)
         ]
     , testGroup
         "Regression"
