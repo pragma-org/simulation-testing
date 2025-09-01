@@ -737,6 +737,11 @@ failures, e.g. "resource not found", etc (see Maelstrom for details).
 
 ## Handling incoming messages and effects
 
+The main work of the event loop is done in the following two functions.
+The first is `handleIncoming` which applies an incoming message to the
+appropriate state machine and then the effects that result from handling
+the incoming message is handled with `handleEffects`.
+
 ``` haskell
 handleIncoming ::
   forall m s i_ i o_ o.
