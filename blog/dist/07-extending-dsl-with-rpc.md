@@ -674,6 +674,11 @@ Let's have a look at each of these in turn.
 
 ## Messages and their codec
 
+The codec decodes (or unserialises) some low-level input type `i_` into
+an `Incoming` or an error, and encodes (or serialises) an `Outgoing`
+into a low-level output type `o_`. Typically the low-level input and
+output types are `ByteString`.
+
 ``` haskell
 data Codec i_ i o_ o = Codec
   { decodeIncoming :: i_ -> Either String (Incoming i o)
@@ -681,6 +686,12 @@ data Codec i_ i o_ o = Codec
   }
 
 ```
+
+The types `Incoming` and `Outgoing` are essentially the same type,
+either an incoming or outgoing message or response. An `InMessage` is an
+incoming message *to a node*, `OutMessage` is an outgoing message *from
+a node*, whereas `InResponse` is an incoming response to a RPC call, and
+`OutResponse` is an outgoing RPC response.
 
 ``` haskell
 data Incoming i o
@@ -715,9 +726,14 @@ data Response o = Response
   }
 ```
 
+The RPC call can fail, currenly only by timing out.
+
 ``` haskell
 data RpcError = Timeout
 ```
+
+One can imagine a richer RPC error type which includes other generic
+failures, e.g. "resource not found", etc (see Maelstrom for details).
 
 ## Handling incoming messages and effects
 
