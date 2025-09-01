@@ -528,8 +528,44 @@ due to the serialisation overhead.
 
 ## Discussion: the gap between simulation and reality
 
-* Event loop code
-* Codec?
+We want the difference between what we simulate and deploy to be as small as
+possible, in order to be able to catch as many bugs as possible during
+simulation testing.
+
+Because of this we've tried to design for as much reuse as possible, however
+there are a few notable gaps which we worth mentioning.
+
+We've already talked about the "shim" component which allows us to speed up the
+passage of time in the event loop. This code is only part of the simulation and
+is not being deployed. 
+
+The code for the shim itself is pretty short, and unlikely to contain any major
+bugs, however there's a risk that the way we handle time is too simplicit. In
+particular we take a very discrete approach and don't simulate parallel
+execution of nodes. The argument here is that it should be fine as nodes don't
+share data anyway.
+
+Apart from the shim component, the other difference between simulation and
+what's being deployed is the runtime interface instance. During simulation
+testing the runtime receives and sends messages using `MVar`s via the shim,
+whereas when deployed the runtime will be using TCP sockets instead. Arguebly
+receieving and sending messages is a narrow interface, with little room for
+bugs to sneak in, however the TCP runtime itself (which we haven't implemented
+yet) is a non-trivial piece of code and should therefore be tested carefully on
+its own.
+
+One could also imagine doing the simulation with real TCP connections to the
+nodes, this would increase the code overlap between simulation and what's being
+deployed, however it would also add overhead compared to the in-memory
+approach. The simulator would have to be extended in order to simulate
+realisitic concurrent TCP connections, and overall it's not clear if all of
+this is worth the effort.
+
+One last thing worth mentioning here is that in the current in-memory runtime
+approach, the codec isn't used, so using a more realistic runtime could also
+exersise these code paths during simulation. However testing the codec
+separately using a round-trip property is likely good enough.
+
 * Code paths in stepEventLoop that are never taken in simulation?
   - add asserts to confirm?
 * In the node DSL if we do t1 <- getTime, t2 <- getTime then t1 == t2 as time
