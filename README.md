@@ -15,6 +15,8 @@ See the following series of posts:
 5. *Draft*: [Using "workloads" to test distributed
    systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/05-workloads.md);
 6. *Draft*: [A domain-specific language for simulation testing distributed systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/06-distributed-systems-dsl.md).
+7. [Dealing with the notion of time when simulating distributed
+   systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/07-extending-dsl-with-rpc.md)
 
 ## Running
 

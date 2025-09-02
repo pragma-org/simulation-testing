@@ -1,7 +1,6 @@
 ---
 author: Stevan A
-date: 2025-09-01
-status: draft
+date: 2025-09-02
 ---
 
 # Dealing with the notion of time when simulating distributed systems
