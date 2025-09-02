@@ -31,7 +31,7 @@ sends a message, if we don't have the notion of time, how can we tell that we
 eventually get a reply? The message might get lost and we wouldn't be able to
 tell.
 
-Typically what we want to to start some timer after sending the message and if
+Typically what we want to start some timer after sending the message and if
 that timer fires before we got a reply then we assume that the message got
 lost.
 
@@ -74,7 +74,7 @@ Let's start by recalling how the simulator interacts with the system under test
           +-------------------------------------+     +-------------------+
 ```
 
-The simulation testing process starts by the developer prodiving a workload,
+The simulation testing process starts by the developer providing a workload,
 which is comprised of a generator of incoming messages to the SUT and a
 property to check. The simulator generates some initial incoming messages and
 their arrival times using the generator from the workload and spawns so called
@@ -142,7 +142,7 @@ The event loop code, which uses the runtime, and the state machine that gets
 fed the incoming messages is the same during simulation and real deployment.
 The state machine is what our DSL gets interpreted into and the effects it
 produces are turned into outgoing messages, for the runtime to send to
-approapriate destination, and timers for the event loop to keep track off.
+appropriate destination, and timers for the event loop to keep track off.
 
 Hopefully by now we've managed to paint a high-level picture of what's going
 on, next let's try to make things more concrete by looking at the code. We'll
@@ -185,7 +185,7 @@ gossip based broadcast system.
 
 The broadcast nodes support four messages, initialisation (which supplies the
 node with its unique node id and the node ids of its neighbours), topology
-(which tells the node which neighbours are currencly reachable), broadcast
+(which tells the node which neighbours are currently reachable), broadcast
 (which tells the node to broadcast some integer to its reachable neighbours)
 and read (which returns all the integers that the node has seen):
 
@@ -292,13 +292,13 @@ incoming messages and deals with the effects produced by the node).
 At each step of the event loop, we first check if there are any pending timers.
 If there are no pending timers, we start waiting for an incoming message by
 receiving via the runtime. A receive operation takes a timeout value in
-microseconds as a parameter, and if no incoming message is receieved within
-that time it will return `Nothing`, otherwise it returns the the incoming
-message and its arrival time.
+microseconds as a parameter, and if no incoming message is received within
+that time it will return `Nothing`, otherwise it returns the incoming message
+and its arrival time.
 
-It gets more interesting when there's a pending timer. In that case we receieve
+It gets more interesting when there's a pending timer. In that case we receive
 with a timeout which is the difference of what the time is now and when the
-timer goes off, meaning that if we haven't receieved any incoming message by
+timer goes off, meaning that if we haven't received any incoming message by
 the time that the timer goes off we'll get back `Nothing` and can proceed with
 handling the timer.
 
@@ -323,7 +323,7 @@ Let's have a look at each of these in turn.
 
 ## Messages and their codec
 
-The codec decodes (or unserialises) some low-level input type `i_` into an
+The codec decodes (or deserialises) some low-level input type `i_` into an
 `Incoming` or an error, and encodes (or serialises) an `Outgoing` into a
 low-level output type `o_`. Typically the low-level input and output types are
 `ByteString`.
@@ -348,7 +348,7 @@ outgoing RPC response.
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=Response}
 ```
 
-The RPC call can fail, currenly only by timing out.
+The RPC call can fail, currently only by timing out.
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Message3.hs snippet=RpcError}
 ```
@@ -381,14 +381,14 @@ The reason for this interface is so that we can use different instances of it
 during simulation testing and real deployment, without having to otherwise
 change the event loop code.
 
-For example where's a runtime that recieves messages on `stdin`, sends messages
+For example where's a runtime that receives messages on `stdin`, sends messages
 on `stdout` and does logging on `stderr` (this is how Maelstrom talks to the
 SUT it's testing).
 
 ``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/Node8.hs snippet=consoleRuntime}
 ```
 
-Another instance of the runtime interface is the simultion runtime, which is
+Another instance of the runtime interface is the simulation runtime, which is
 used during simulation testing. This is the box called "shim" in the diagrams
 from the overview.
 
@@ -562,7 +562,7 @@ passage of time in the event loop. This code is only part of the simulation and
 is not being deployed. 
 
 The code for the shim itself is pretty short, and unlikely to contain any major
-bugs, however there's a risk that the way we handle time is too simplicit. In
+bugs, however there's a risk that the way we handle time is too simplistic. In
 particular we take a very discrete approach and don't simulate parallel
 execution of nodes[^3]. The argument here is that it should be fine as nodes
 don't share data anyway.
@@ -570,8 +570,8 @@ don't share data anyway.
 Apart from the shim component, the other difference between simulation and
 what's being deployed is the runtime interface instance. During simulation
 testing the runtime receives and sends messages using `MVar`s via the shim,
-whereas when deployed the runtime will be using TCP sockets instead. Arguebly
-receieving and sending messages is a narrow interface, with little room for
+whereas when deployed the runtime will be using TCP sockets instead. Arguably
+receiving and sending messages is a narrow interface, with little room for
 bugs to sneak in, however the TCP runtime itself (which we haven't implemented
 yet) is a non-trivial piece of code and should therefore be tested carefully on
 its own.
@@ -580,12 +580,12 @@ One could also imagine doing the simulation with real TCP connections to the
 nodes, this would increase the code overlap between simulation and what's being
 deployed, however it would also add overhead compared to the in-memory
 approach. The simulator would have to be extended in order to simulate
-realisitic concurrent TCP connections, and overall it's not clear if all of
+realistic concurrent TCP connections, and overall it's not clear if all of
 this is worth the effort.
 
 One last thing worth mentioning here is that in the current in-memory runtime
 approach, the codec isn't used, so using a more realistic runtime could also
-exersise these code paths during simulation. However testing the codec
+exercise these code paths during simulation. However testing the codec
 separately using a round-trip property is likely good enough.
 
 ## Conclusion and what's next
