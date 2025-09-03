@@ -14,6 +14,30 @@ the timeouts happen.
 ## Big picture
 
 - Model links between nodes (and clients?)
+- Or closer to Jepsen:
+
+``` haskell
+data Partition
+  = None
+  | Split SplitKind [NodeId]
+  deriving stock (Show, Read, Eq, Ord)
+
+data SplitKind = Single | Majority | Minority | MinorityThird
+  deriving stock (Show, Read, Eq, Ord)
+
+affected :: NodeId -> NodeId -> Partition -> Bool
+affected src _dest _partition | isClientNodeId src = False
+affected src dest (Split _kind nodes) =
+  src
+    `elem` nodes
+    && dest
+    `notElem` nodes
+    || src
+    `notElem` nodes
+    && dest
+    `elem` nodes
+affected _src _dest None = False
+```
 
 ## Metrics
 
