@@ -71,10 +71,20 @@ affected _src _dest None = False
 - faults shouldn't be injected before topology messages (in Maelstorm
   init and topology are part of db/node and client setup)
 
-- overlapping faults? (not needed yet)
+- faults also need to stop before the very end of the test so that the
+  system has enough time to recover. The jepsen approach to this problem
+  is to generate in phases, something like:
 
-- What we want is: phases
-  `sequence [ setup, stagger (1 / rate) ops | stagger (1/ partition rate) partitions, final ]`?
+``` haskell
+  sequence 
+    [ setup -- init/topology in the broadcast case
+    , stagger (1 / rate) ops <|> stagger (1/ partition rate) partitions
+    , final  -- last round of reads to each node, to ensure that they got all
+             -- the broadcasts
+    ]
+```
+
+Where stagger controls the frequency (arrival time) of the operations.
 
 ## Shrinking with partitions
 
