@@ -16,7 +16,9 @@ See the following series of posts:
    systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/05-workloads.md);
 6. *Draft*: [A domain-specific language for simulation testing distributed systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/06-distributed-systems-dsl.md).
 7. [Dealing with the notion of time when simulating distributed
-   systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/07-extending-dsl-with-rpc.md)
+   systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/07-extending-dsl-with-rpc.md);
+8. *Draft*: [Introducing faults to test resilience of a distributed
+   system](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/08-fault-injection.md)
 
 ## Running
 
