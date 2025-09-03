@@ -13,7 +13,24 @@ the timeouts happen.
 
 ## Big picture
 
-- Model links between nodes (and clients?)
+- Model links between nodes (and clients?), e.g.
+
+``` haskell
+type Network = Map (NodeOrClient, NodeOrClient) Connection
+
+data NodeOrClient = Node NodeId | Client ClientId
+
+data Connection = Link 
+  { connected :: Bool
+  , baseLatency :: Double
+  , jitterLatency :: Double
+  , dropProbability :: Double
+  , duplicationProbability :: Double
+  , reorderProbability :: Double
+  }
+}
+```
+
 - Or closer to Jepsen:
 
 ``` haskell
