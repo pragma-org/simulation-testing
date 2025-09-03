@@ -6,6 +6,9 @@ status: sketch
 
 # Using "workloads" to test distributed systems
 
+*This is work in progress, please don't share just yet, but do feel free to get
+involved!*
+
 In the previous post, we started the implementation of our language agnostic
 simulator.
 
