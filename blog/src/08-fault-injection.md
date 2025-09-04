@@ -16,7 +16,35 @@ happen.
 
 ## Motivation
 
+One of the main motivations for introducing a distributed system is to
+achieve fault tolarance. If the system runs on a single node and that node
+fails then the system is unavailable. If on the other hand the system is
+distributed across nodes, then it can handle some amound of nodes failing while
+still being available and functioning correctly.
+
+That's what we want to ensure in this post, and we'll do so by simulating
+failures and see if the system keeps being available and correct.
+
 ## Big picture
+
+```
+                        +------------------------------------------+
+                        |                                      SUT |
+     +----------+       |   +--------+       +--------+            |
+     | Client 1 +------>|   | Node 1 +------>| Node 3 |            |
+     |          |<------+   |        |<------+        |            |
+     +----------+       |   +-----+--+       +-----+--+            |
+           ⋮            |     ^   |             ^  |               |
+     +----------+       |     |   v             |  |               |
+     | Client N +------>|   +-+------+          |  |               |
+     |          |<------+   | Node 2 +----------+  |               |
+     +----------+       |   |        |<------------+               |
+                        |   +--------+                             |
+                        |                                          |
+                        +------------------------------------------+
+```
+
+## How it works
 
 * Model links between nodes (and clients?), e.g.
 
@@ -134,5 +162,46 @@ QuickCheck!](https://smallbone.se/papers/more-bugs.pdf) paper by Hughes et al
 
 ## Conclusion and what's next
 
+There's a lot more faults that can be introduced and faults can be made more
+realistic.
 
+### More faults
 
+#### Crash faults
+
+* Node crashes and restarts (loss of volatile memory). The simulator spawns
+  nodes, so implementing crashes and restarts can be done by dropping and
+  respawning a node;
+
+* I/O and GC pauses can sometimes be slower than normal due to other stuff
+  happening on the computer that the node is running on. One way to simulate
+  slow I/O is to implement it as message passing to the stable storage, then
+  increasing latency would simulate the I/O pause. 
+
+* Time skews (the clock of nodes drifts apart). The simulator controls the
+  clock of the nodes, so skews can be implemented by advancing some node's
+  clocks more than others;
+
+* Disk failures, to test this the simulator can inject the following disk
+  faults on nodes:
+  - Delete the whole database;
+  - Flip bits in the database;
+  - Truncate the write-ahead-log of the database (to simulate a crash where the
+    last entry wasn't fully fsynced to disk). For more details, see
+    the *Protocol-Aware Recovery for Consensus-Based Distributed Storage*
+    paper.
+
+#### Byzantine faults
+
+The space of possibilities here is infinite. Any combination of changing any
+message or any piece of state on a faulty node is allowed. Coordinated attacks
+(among byzantine nodes) on the protocol level makes things even more
+interesting.
+
+### More realistic faults
+
+* Simulate data centers with nodes in them
+* Higher latency between data centers than within data centers
+* Improvements in fault duration and overlap
+* Correlated faults
+* More realistic probability distributions for introducing faults
