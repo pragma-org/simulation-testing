@@ -61,6 +61,9 @@ data Connection = Link
 - Or closer to Jepsen:
 
 ``` haskell
+data Fault = PartitionFault Partition
+  deriving stock (Show, Read, Eq, Ord)
+
 data Partition
   = None
   | Split SplitKind [NodeId]
@@ -81,6 +84,7 @@ affected src dest (Split _kind nodes) =
     && dest
     `elem` nodes
 affected _src _dest None = False
+
 ```
 
 ## Metrics

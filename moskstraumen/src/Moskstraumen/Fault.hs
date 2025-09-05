@@ -9,6 +9,7 @@ import Moskstraumen.Time
 
 ------------------------------------------------------------------------
 
+-- start snippet Fault
 data Fault = PartitionFault Partition
   deriving stock (Show, Read, Eq, Ord)
 
@@ -19,8 +20,6 @@ data Partition
 
 data SplitKind = Single | Majority | Minority | MinorityThird
   deriving stock (Show, Read, Eq, Ord)
-
-------------------------------------------------------------------------
 
 affected :: NodeId -> NodeId -> Partition -> Bool
 affected src _dest _partition | isClientNodeId src = False
@@ -34,6 +33,8 @@ affected src dest (Split _kind nodes) =
     && dest
     `elem` nodes
 affected _src _dest None = False
+
+-- end snippet
 
 ------------------------------------------------------------------------
 
