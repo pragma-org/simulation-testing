@@ -29,3 +29,6 @@ are sufficiently random or long, we'll rarely generate the same test
 twice. This is something that would need to be measured. On the other
 hand it might make sense to try to enumerate all test cases upto some
 length.
+
+If the hash map size ever becomes a problem, perhaps it might makes
+sense to replace with with a bloom filter?
