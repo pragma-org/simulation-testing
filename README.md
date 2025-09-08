@@ -24,7 +24,7 @@ See the following series of posts:
 10. *Draft*: [Domain-specific
     debugger](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/10-domain-specific-debugger.md)
 11. *Draft*: [Optimisation: pipelining
-    parallelism](https://github.com/pragma-org/simulation-testing/blob/main/blog/11-optimisation-pipeline-parallelism.md)
+    parallelism](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/11-optimisation-pipeline-parallelism.md)
 12. *Draft*: [Optimisation: running simulations in
     parallel](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/12-optimisation-parallel-simulations.md)
 
