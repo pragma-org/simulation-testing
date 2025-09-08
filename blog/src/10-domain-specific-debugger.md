@@ -10,5 +10,13 @@ status: sketch
 
 ## Motivation
 
+Most people associate the word debugger with some stepping through a program
+and being able to inspect how the memory (variables) change over time.
+
+In our case we got a DSL for writing nodes in a distributed system. Our DSL is
+deterministic and each node processes a single input at the time
+
 
 ## Big picture
+
+![Debugger screenshot](../image/debugger.png)

@@ -12,11 +12,9 @@ the call and immediately continue doing more things within the node.
 However sometimes it's useful to be able to block until the RPC call
 finishes, that's what we'll cover below.
 
-## Big picture
-
 ## How it works
 
-First we extend our `data NodeF s i o x` with:
+First we extend our `data NodeF s i o x` with variables:
 
 ``` haskell
     NewVar (VarId -> x)
@@ -42,7 +40,13 @@ syncRpc nodeId i failure = do
 
 ```
 
+For the semantics of variables see the [older
+version](https://github.com/pragma-org/simulation-testing/blob/main/moskstraumen/src/Moskstraumen/Node4.hs).
+
 ## Example: Datomic
 
 Maelstom's Datomic
-[example](https://github.com/jepsen-io/maelstrom/blob/main/doc/05-datomic/index.md).
+[example](https://github.com/jepsen-io/maelstrom/blob/main/doc/05-datomic/index.md)
+and an
+[implementation](https://github.com/pragma-org/simulation-testing/blob/main/moskstraumen/src/Moskstraumen/Example/KeyValueStore.hs)
+of it in an older version of our DSL.
