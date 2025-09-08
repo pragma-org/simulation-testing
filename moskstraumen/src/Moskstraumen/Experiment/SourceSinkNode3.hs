@@ -31,6 +31,7 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
+-- start snippet Node
 type Node s k o a = Free (NodeF s k o) a
 
 data NodeF s k o x
@@ -41,6 +42,8 @@ data NodeF s k o x
   | forall a. LiftIO (IO a) (a -> x)
   | Stop
   | RPC NodeId Json.Value (RPCError -> x) (Json.Value -> x) (() -> x)
+
+-- end snippet
 
 type RPCError = String
 
@@ -197,10 +200,12 @@ initialNodeState s0 nodeId = NodeState s0 nodeId [] 0 Map.empty
 
 infixr 1 >>>
 
+-- start snippet compose
 (>>>) ::
   Node (NodeState s) (Is a) b ()
   -> Node (NodeState s) (Is b) c ()
   -> Node (NodeState s) (Is a) c ()
+-- end snippet
 f >>> g = case runNode g of
   Stop -> stop
   Yield c k -> yield' c >> (f >>> k ())

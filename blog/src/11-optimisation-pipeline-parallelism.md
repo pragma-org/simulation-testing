@@ -23,4 +23,8 @@ CPU/core is used.
 
 ## How it works
 
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/SourceSinkNode3.hs snippet=Node}
+```
 
+``` {.haskell include=../moskstraumen/src/Moskstraumen/Experiment/SourceSinkNode3.hs snippet=compose}
+```

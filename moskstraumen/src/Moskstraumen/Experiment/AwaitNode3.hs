@@ -11,12 +11,15 @@ import Moskstraumen.Prelude
 
 ------------------------------------------------------------------------
 
+-- start snippet NodeF
 data NodeF s k o x
   = forall i. Awaits (k i) (i -> x)
   | Yield o (() -> x)
   | (:<|>) ~x ~x
   | Get (s -> x)
   | Put s (() -> x)
+
+-- end snippet
 
 instance Functor (NodeF s k o) where
   fmap f (Awaits ki k) = Awaits ki (f . k)
