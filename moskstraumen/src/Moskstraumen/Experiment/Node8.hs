@@ -68,10 +68,12 @@ data NodeF s i o x
   | Log Text (() -> x)
   | -- end snippet
     -- Fail String
+    -- start snippet Vars
     NewVar (VarId -> x)
   | forall v. DeliverVar VarId v x
   | forall v. AwaitVar VarId (v -> x)
-  | At Time x (() -> x)
+  | -- end snippet
+    At Time x (() -> x)
 
 -- start snippet NodeState
 data NodeState s = NodeState
@@ -219,6 +221,7 @@ info text = do
 after :: Int -> NodeBody s i o () -> NodeBody s i o ()
 after micros body = generic (After micros body)
 
+-- start snippet syncRpc
 syncRpc ::
   NodeId
   -> i
@@ -233,6 +236,8 @@ syncRpc nodeId i failure = do
       failure
       (\o -> generic_ (DeliverVar varId o))
   generic (AwaitVar varId)
+
+-- end snippet
 
 ------------------------------------------------------------------------
 
