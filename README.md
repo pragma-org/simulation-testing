@@ -19,6 +19,14 @@ See the following series of posts:
    systems](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/07-extending-dsl-with-rpc.md);
 8. *Draft*: [Introducing faults to test resilience of a distributed
    system](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/08-fault-injection.md)
+9. *Draft*: [Extending the domain-specific language with synchronous
+   RPCs](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/09-synchronous-rpc.md)
+10. *Draft*: [Domain-specific
+    debugger](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/10-domain-specific-debugger.md)
+11. *Draft*: [Optimisation: pipelining
+    parallelism](https://github.com/pragma-org/simulation-testing/blob/main/blog/11-optimisation-pipeline-parallelism.md)
+12. *Draft*: [Optimisation: running simulations in
+    parallel](https://github.com/pragma-org/simulation-testing/blob/main/blog/dist/12-optimisation-parallel-simulations.md)
 
 ## Running
 
