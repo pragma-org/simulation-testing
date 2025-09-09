@@ -100,3 +100,27 @@ sleep etc. For example should each stage have its own state type? How
 are RPC responses made by some stage propagated back to that stage,
 should they go through all the prior stages? Should intermediate stages
 even be allowed to sleep?
+
+These changes will also need to be propagated into the event loop. One
+potentially nice consequence of this is that deserialising incoming and
+serialising outgoing messages could just be another two stages in the
+pipeline. One could also imagine that reading and sending messages from
+and to a TCP socket could also just be stages, and so even trivial nodes
+with just one stage could be turned into five stage pipelines that make
+better use of the hardware.
+
+Another question is how do we add fan-out, fan-in and potentially
+feedback to our pipelines? One option might be to take inspiration from
+Haskell's arrows:
+
+``` haskell
+data Pipeline a b where
+  [...]
+  (:&&&) :: Pipeline a b -> Pipeline a c -> Pipeline a (b, c)
+  (:***) :: Pipeline a c -> Pipeline b d -> Pipeline (a, b) (c, d)
+  (:|||) :: Pipeline a c -> Pipeline b c -> Pipeline (Either a b) c
+  Loop   :: Pipeline (a, s) (b, s) -> Pipeline a b
+```
+
+Again how exactly all these pipeline extension interact with the DSL
+extensions we mentioned above, isn't clear.
